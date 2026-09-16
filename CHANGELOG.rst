@@ -31,3 +31,8 @@ Added
 * Formalized Master Business Specification (`docs/business/spec.rst`) and User Personas (`docs/business/specs/user-personas.rst`) for Rénich (Human) and Gemini (AI).
 * Catalogs of 20 User Stories (`[US-REN-001]`..`[US-REN-010]` and `[US-GEM-001]`..`[US-GEM-010]`) covering typed shell automation, zero-libc determinism, binary telemetry, UKI delivery, and Immix GC.
 * Automated Unified Kernel Image (UKI) packaging target (`make uki`) and direct UEFI/OVMF QEMU test harness (`make test-uki`).
+* Complete implementation of the MicrOS Substrate Toolchain:
+  - `micros-fb-verify`: Deterministic pure Zig PPM framebuffer visual validator with bounding box auditing.
+  - `micros-sym`: Pure Zig freestanding ELF symbol table parser and callstack address resolver.
+  - `micros-telem`: Native 64-byte `TelemetryToken` binary ABI generator and decoder.
+  - `micros-spec-trace`: Automated bidirectional specification traceability auditor.
