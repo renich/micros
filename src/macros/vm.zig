@@ -60,7 +60,7 @@ pub const VM = struct {
     frame_count: usize,
     globals: std.StringHashMap(Value),
 
-    pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) VM {
+    pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !VM {
         var vm = VM{
             .allocator = allocator,
             .chunk = ch,
@@ -71,9 +71,9 @@ pub const VM = struct {
             .stack = undefined,
             .globals = std.StringHashMap(Value).init(allocator),
         };
-        vm.globals.put("push", Value{ .native = nativePush }) catch {};
-        vm.globals.put("len", Value{ .native = nativeLen }) catch {};
-        vm.globals.put("substr", Value{ .native = nativeSubstr }) catch {};
+        try vm.globals.put("push", Value{ .native = nativePush });
+        try vm.globals.put("len", Value{ .native = nativeLen });
+        try vm.globals.put("substr", Value{ .native = nativeSubstr });
         return vm;
     }
 
@@ -156,22 +156,7 @@ pub const VM = struct {
     }
 
     pub fn run(self: *VM) !void {
-        std.debug.print("--- DISASSEMBLY ---\n", .{});
-        var disasm_i: usize = 0;
-        while (disasm_i < self.chunk.code.items.len) {
-            const byte = self.chunk.code.items[disasm_i];
-            const op: OpCode = @enumFromInt(byte);
-            std.debug.print("{}: {s}\n", .{disasm_i, @tagName(op)});
-            if (op == .constant or op == .get_global or op == .set_global or op == .jump or op == .jump_if_false or op == .loop) {
-                disasm_i += 3;
-            } else if (op == .get_local or op == .set_local or op == .call or op == .build_array) {
-                disasm_i += 2;
-            } else {
-                disasm_i += 1;
-            }
-        }
-        std.debug.print("-------------------\n", .{});
-        while (true) {
+                while (true) {
             if (self.ip >= self.chunk.code.items.len) break;
             const ip_old = self.ip;
             const byte = self.readByte();
@@ -433,15 +418,17 @@ test "vm basic math" {
     const idx2 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 20 });
 
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, idx1);
+    try chunk.writeChunk(std.testing.allocator, @intCast((idx1 >> 8) & 0xFF));
+    try chunk.writeChunk(std.testing.allocator, @intCast(idx1 & 0xFF));
 
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, idx2);
+    try chunk.writeChunk(std.testing.allocator, @intCast((idx2 >> 8) & 0xFF));
+    try chunk.writeChunk(std.testing.allocator, @intCast(idx2 & 0xFF));
 
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.add));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
 
-    var vm = VM.init(std.testing.allocator, &chunk);
+    var vm = try VM.init(std.testing.allocator, &chunk);
     defer vm.deinit();
     try vm.run();
 

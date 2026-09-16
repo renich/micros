@@ -4,15 +4,16 @@ const macros = @import("../macros.zig");
 
 pub const Shell = struct {
     allocator: std.mem.Allocator,
-    env: macros.eval.Environment,
+    vm: macros.vm.VM,
     in_fd: i32,
     out_fd: i32,
     running: bool,
 
-    pub fn init(allocator: std.mem.Allocator, in_fd: i32, out_fd: i32) Shell {
+    pub fn init(allocator: std.mem.Allocator, in_fd: i32, out_fd: i32) !Shell {
+        const dummy_chunk: *macros.chunk.Chunk = undefined;
         return Shell{
             .allocator = allocator,
-            .env = macros.eval.Environment.init(allocator),
+            .vm = try macros.vm.VM.init(allocator, dummy_chunk),
             .in_fd = in_fd,
             .out_fd = out_fd,
             .running = true,
@@ -20,7 +21,7 @@ pub const Shell = struct {
     }
 
     pub fn deinit(self: *Shell) void {
-        self.env.deinit();
+        self.vm.deinit();
     }
 
     pub fn writeOut(self: *Shell, bytes: []const u8) void {
@@ -35,7 +36,7 @@ pub const Shell = struct {
             \\  echo <text>   - Output text directly to stdout
             \\  vars          - List active environment bindings
             \\  mem           - Display substrate memory stats
-            \\  exit / quit   - Terminate current shell session
+            \\  exit/quit     - Terminate current shell session
             \\
             \\Macros Expressions:
             \\  <var> = <expr> (e.g. x = 10 + 20)
@@ -47,7 +48,7 @@ pub const Shell = struct {
 
     fn printVars(self: *Shell) void {
         self.writeOut("Active Environment Bindings:\n");
-        var it = self.env.bindings.iterator();
+        var it = self.vm.globals.iterator();
         var buf: [128]u8 = undefined;
         while (it.next()) |entry| {
             if (std.fmt.bufPrint(&buf, "  {s} = {}\n", .{ entry.key_ptr.*, entry.value_ptr.* })) |msg| {
@@ -79,9 +80,27 @@ pub const Shell = struct {
         sys.mem.unmap(ptr, test_pages * page_size) catch {};
     }
 
+    fn printVersion(self: *Shell) void {
+        const v_text =
+            \\MicrOS (µOS) Substrate v0.1.0 (Phase 0 Userspace Sandbox)
+            \\Macros Language Runtime v0.1.0 | MicroShell (msh)
+            \\Architecture: x86_64 freestanding (Zero-Libc)
+            \\
+        ;
+        self.writeOut(v_text);
+    }
+
     fn handleBuiltin(self: *Shell, cmd: []const u8, args: []const u8) bool {
         if (std.mem.eql(u8, cmd, "help")) {
             self.printHelp();
+            return true;
+        }
+        if (std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "about")) {
+            self.printVersion();
+            return true;
+        }
+        if (std.mem.eql(u8, cmd, "clear")) {
+            self.writeOut("\x1b[2J\x1b[H");
             return true;
         }
         if (std.mem.eql(u8, cmd, "exit") or std.mem.eql(u8, cmd, "quit")) {
@@ -104,41 +123,66 @@ pub const Shell = struct {
         return false;
     }
 
-    fn evalMacrosLine(self: *Shell, line: []const u8) void {
-        var parser = macros.parser.Parser.init(self.allocator, line);
-        const node = parser.parseStatement() catch {
-            self.writeOut("msh: parse error\n");
-            return;
-        };
-        defer self.freeNode(node);
-
-        var evaluator = macros.eval.Evaluator.init(self.allocator, &self.env);
-        const val = evaluator.eval(node) catch |err| {
-            var buf: [64]u8 = undefined;
-            if (std.fmt.bufPrint(&buf, "msh: eval error: {}\n", .{err})) |msg| {
-                self.writeOut(msg);
-            } else |_| {}
-            return;
-        };
-
-        var val_buf: [128]u8 = undefined;
-        if (std.fmt.bufPrint(&val_buf, "=> {}\n", .{val})) |msg| {
+    fn writeEvalError(self: *Shell, err: anyerror) void {
+        var buf: [64]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "\x1b[31mmsh: eval error: {}\x1b[0m\n", .{err})) |msg| {
             self.writeOut(msg);
         } else |_| {}
     }
 
-    fn freeNode(self: *Shell, node: *macros.ast.Node) void {
-        switch (node.*) {
-            .binary_expr => |bin| {
-                self.freeNode(bin.left);
-                self.freeNode(bin.right);
-            },
-            .assignment => |assign| {
-                self.freeNode(assign.value);
-            },
+    fn writeEvalResult(self: *Shell, val: macros.eval.Value) void {
+        if (val == .nil) {
+            self.writeOut("\x1b[90m=> nil\x1b[0m\n");
+            return;
+        }
+        
+        var color_prefix: []const u8 = "\x1b[37m=> ";
+        switch (val) {
+            .integer => color_prefix = "\x1b[36m=> ",
+            .boolean => color_prefix = "\x1b[33m=> ",
+            .string => color_prefix = "\x1b[32m=> ",
+            .function => color_prefix = "\x1b[35m=> ",
+            .array => color_prefix = "\x1b[34m=> ",
             else => {},
         }
-        self.allocator.destroy(node);
+        
+        self.writeOut(color_prefix);
+        val.printToFd(self.out_fd);
+        self.writeOut("\x1b[0m\n");
+    }
+
+    fn evalMacrosStream(self: *Shell, code: []const u8) void {
+        var parser = macros.parser.Parser.init(self.allocator, code);
+        
+        var chunk = macros.chunk.Chunk.init();
+        defer chunk.deinit(self.allocator);
+        var compiler = macros.compiler.Compiler.init(self.allocator, &chunk);
+
+        while (parser.current_token.token_type != .eof) {
+            const stmt = parser.parseStatement() catch {
+                self.writeOut("msh: parse error\n");
+                return;
+            };
+
+            compiler.compile(stmt) catch {
+                self.writeOut("msh: compile error\n");
+                return;
+            };
+        }
+
+        self.vm.chunk = &chunk;
+        self.vm.ip = 0;
+        self.vm.sp = 0;
+        self.vm.run() catch |err| {
+            self.writeEvalError(err);
+        };
+        
+        if (self.vm.sp > 0) {
+            const val = self.vm.pop() catch return;
+            if (val != .nil) {
+                self.writeEvalResult(val);
+            }
+        }
     }
 
     pub fn executeLine(self: *Shell, raw_line: []const u8) void {
@@ -154,7 +198,7 @@ pub const Shell = struct {
 
         if (self.handleBuiltin(first_word, remainder)) return;
 
-        self.evalMacrosLine(trimmed);
+        self.evalMacrosStream(trimmed);
     }
 
     pub fn executeStream(self: *Shell, stream: []const u8) void {
@@ -165,10 +209,27 @@ pub const Shell = struct {
         }
     }
 
+    pub fn executeFile(self: *Shell, path: [:0]const u8) void {
+        const fd = sys.io.open(path, sys.io.OpenFlags.rdonly, 0) catch {
+            self.writeOut("msh: unable to open source file\n");
+            return;
+        };
+        defer sys.io.close(fd) catch {};
+
+        var buf: [64 * 1024]u8 = undefined;
+        const bytes = sys.io.read(fd, &buf) catch {
+            self.writeOut("msh: unable to read source file\n");
+            return;
+        };
+        if (bytes == 0) return;
+
+        self.evalMacrosStream(buf[0..bytes]);
+    }
+
     pub fn run(self: *Shell) void {
         var line_buf: [512]u8 = undefined;
         while (self.running) {
-            self.writeOut("msh> ");
+            self.writeOut("\x1b[1;36mµOS\x1b[0m \x1b[34mmsh\x1b[0m \x1b[32m❯\x1b[0m ");
             const bytes_read = sys.io.read(self.in_fd, &line_buf) catch break;
             if (bytes_read == 0) break;
             self.executeStream(line_buf[0..bytes_read]);
@@ -179,6 +240,33 @@ pub const Shell = struct {
 const testing = std.testing;
 
 test "MicroShell builtin execution" {
+        const fds = try sys.io.pipe();
+    const read_fd = fds[0];
+    const write_fd = fds[1];
+    defer {
+        sys.io.close(read_fd) catch {};
+        sys.io.close(write_fd) catch {};
+    }
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var sh = try Shell.init(arena.allocator(), read_fd, write_fd);
+    defer sh.deinit();
+
+        sh.executeLine("echo MicroShell Test");
+    try testing.expect(sh.running);
+
+        sh.executeLine("val = 10 + 32");
+    const val = sh.vm.globals.get("val");
+    try testing.expect(val != null);
+    try testing.expectEqual(@as(i64, 42), val.?.integer);
+
+        sh.executeLine("exit");
+    try testing.expect(!sh.running);
+    }
+
+test "MicroShell version and clear builtins" {
     const fds = try sys.io.pipe();
     const read_fd = fds[0];
     const write_fd = fds[1];
@@ -187,17 +275,15 @@ test "MicroShell builtin execution" {
         sys.io.close(write_fd) catch {};
     }
 
-    var sh = Shell.init(testing.allocator, read_fd, write_fd);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var sh = try Shell.init(arena.allocator(), read_fd, write_fd);
     defer sh.deinit();
 
-    sh.executeLine("echo MicroShell Test");
+    sh.executeLine("version");
     try testing.expect(sh.running);
 
-    sh.executeLine("val = 10 + 32");
-    const val = sh.env.get("val");
-    try testing.expect(val != null);
-    try testing.expectEqual(@as(i64, 42), val.?.integer);
-
-    sh.executeLine("exit");
-    try testing.expect(!sh.running);
+    sh.executeLine("clear");
+    try testing.expect(sh.running);
 }

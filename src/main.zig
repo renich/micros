@@ -16,16 +16,22 @@ fn printBanner() void {
     };
 }
 
-fn runSelfTest(allocator: std.mem.Allocator) bool {
-    var env = macros.eval.Environment.init(allocator);
-    defer env.deinit();
+fn runSelfTest(allocator: std.mem.Allocator) !bool {
+    var chunk = macros.chunk.Chunk.init();
+    defer chunk.deinit(allocator);
 
-    var evaluator = macros.eval.Evaluator.init(allocator, &env);
+    var compiler = macros.compiler.Compiler.init(allocator, &chunk);
     var p = macros.parser.Parser.init(allocator, "boot_check = 20 + 22");
     const node = p.parseStatement() catch return false;
     defer allocator.destroy(node);
 
-    const val = evaluator.eval(node) catch return false;
+    compiler.compile(node) catch return false;
+    var vm = try macros.vm.VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    vm.run() catch return false;
+
+    const val = vm.globals.get("boot_check") orelse return false;
     if (val != .integer or val.integer != 42) return false;
 
     _ = sys.io.write(1, "[micros-init] Substrate self-test verified (Macros 20+22=42).\n") catch {};
@@ -36,13 +42,13 @@ pub fn main() !void {
     printBanner();
 
     const allocator = std.heap.page_allocator;
-    if (!runSelfTest(allocator)) {
+    if (!(try runSelfTest(allocator))) {
         _ = sys.io.write(2, "[micros-init] ERROR: Substrate self-test failed.\n") catch {};
         sys.process.exit(1);
     }
 
     _ = sys.io.write(1, "[micros-init] Spawning MicroShell (msh)...\n\n") catch {};
-    var shell = msh.Shell.init(allocator, 0, 1);
+    var shell = try msh.Shell.init(allocator, 0, 1);
     defer shell.deinit();
 
     shell.executeLine("echo MicroShell initialized by PID 1.");
