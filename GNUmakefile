@@ -38,6 +38,37 @@ run: all
 	@echo "=> Executing MicrOS Sandbox..."
 	@./zig-out/bin/micros-init || true
 
+
+## tools: Compile the substrate toolchain
+tools:
+	@echo "=> Building tools..."
+	$(ZIG) build tools
+
+## fmt: Format Zig code
+fmt:
+	@echo "=> Formatting Zig code..."
+	$(ZIG) fmt src/ build.zig
+
+## fmt-check: Check Zig code formatting
+fmt-check:
+	@echo "=> Checking Zig code formatting..."
+	$(ZIG) fmt --check src/ build.zig
+
+## lint: Run micros-lint and shellcheck
+lint: tools
+	@echo "=> Linting codebase..."
+	./zig-out/bin/micros-lint src/
+	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck tools/*.bash; 	else 		echo "shellcheck not found, skipping bash linting"; 	fi
+
+## spec-trace: Verify 100% specification traceability
+spec-trace:
+	@echo "=> Running specification traceability auditor..."
+	./tools/micros-spec-trace.bash --check
+
+## check: Run all verifications (test, lint, fmt-check, spec-trace)
+check: test lint fmt-check spec-trace
+	@echo "=> All checks passed successfully."
+
 ## help: Print this help message
 help:
 	@echo "MicrOS (µOS) Build System"
