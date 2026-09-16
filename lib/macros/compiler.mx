@@ -1,0 +1,250 @@
+// Macros Self-Hosted Bytecode Compiler (Phase 5)
+
+fn op_constant() { return 0; }
+fn op_add() { return 1; }
+fn op_sub() { return 2; }
+fn op_print() { return 3; }
+fn op_return() { return 4; }
+fn op_get_global() { return 5; }
+fn op_set_global() { return 6; }
+fn op_get_local() { return 7; }
+fn op_set_local() { return 8; }
+fn op_pop() { return 9; }
+fn op_call() { return 10; }
+fn op_jump() { return 11; }
+fn op_jump_if_false() { return 12; }
+fn op_loop() { return 13; }
+fn op_build_array() { return 14; }
+
+fn init_compiler() {
+    // state: [chunk_code, chunk_constants, locals, scope_depth]
+    return [[], [], [], 0];
+}
+
+fn add_constant(state, val) {
+    constants = state[1];
+    idx = len(constants);
+    new_constants = push(constants, val);
+    return [[state[0], new_constants, state[2], state[3]], idx];
+}
+
+fn write_byte(state, byte) {
+    new_code = push(state[0], byte);
+    return [[new_code, state[1], state[2], state[3]], state];
+}
+
+fn compile_number(state, num_str) {
+    num = str_to_int(num_str);
+    res = add_constant(state, num);
+    state = res[0];
+    idx = res[1];
+    
+    res = write_byte(state, op_constant());
+    state = res[0];
+    
+    high_byte = bit_and(bit_shr(idx, 8), 255);
+    low_byte = bit_and(idx, 255);
+    
+    res = write_byte(state, high_byte);
+    state = res[0];
+    res = write_byte(state, low_byte);
+    state = res[0];
+    
+    return state;
+}
+
+fn compile_expr(state, node) {
+    if (len(node) == 0) { return state; }
+    type = node[0];
+    
+    if (type == "number") {
+        return compile_number(state, node[1]);
+    }
+    
+    if (type == "binary_expr") {
+        op = node[1];
+        state = compile_expr(state, node[2]); // left
+        state = compile_expr(state, node[3]); // right
+        if (op == "plus") {
+            res = write_byte(state, op_add());
+            state = res[0];
+        } else if (op == "minus") {
+            res = write_byte(state, op_sub());
+            state = res[0];
+        }
+        return state;
+    }
+    
+    // Fallback for unhandled expressions
+    return state;
+}
+
+fn compile_statement(state, node) {
+    type = node[0];
+    
+    if (type == "return_statement") {
+        state = compile_expr(state, node[1]);
+        res = write_byte(state, op_return());
+        state = res[0];
+        return state;
+    }
+    
+    if (type == "expr_statement") {
+        state = compile_expr(state, node[1]);
+        res = write_byte(state, op_pop());
+        state = res[0];
+        return state;
+    }
+    
+    return state;
+}
+
+fn compile_block(state, stmts) {
+    stmts_len = len(stmts);
+    i = 0;
+    while (i < stmts_len) {
+        state = compile_statement(state, stmts[i]);
+        i = i + 1;
+    }
+    return state;
+}
+
+fn compile_function(state, name, args, body) {
+    // For now, we compile it directly into the chunk
+    // Real implementation requires emitting a Function object
+    // with its own code chunk or managing jumps.
+    // To match our VM, the function object stores `ip_start`.
+    // We emit OP_JUMP over the function body, then emit the body.
+    
+    res = write_byte(state, op_jump());
+    state = res[0];
+    // Write dummy jump offset
+    res = write_byte(state, 0);
+    state = res[0];
+    res = write_byte(state, 0);
+    state = res[0];
+    
+    // Compile body
+    stmts = body[1];
+    state = compile_block(state, stmts);
+    
+    // Add return nil
+    res = add_constant(state, []);
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_constant());
+    state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+    state = res[0];
+    res = write_byte(state, bit_and(idx, 255));
+    state = res[0];
+    res = write_byte(state, op_return());
+    state = res[0];
+    
+    // TODO: patch jump and emit OP_CONSTANT with function object
+    
+    return state;
+}
+
+fn compile_program(ast) {
+    state = init_compiler();
+    if (ast[0] == "program") {
+        decls = ast[1];
+        decls_len = len(decls);
+        i = 0;
+        while (i < decls_len) {
+            decl = decls[i];
+            if (decl[0] == "function_decl") {
+                state = compile_function(state, decl[1], decl[2], decl[3]);
+            }
+            i = i + 1;
+        }
+    }
+    return state;
+}
+
+fn emit_jump(state, instruction) {
+    res = write_byte(state, instruction);
+    state = res[0];
+    
+    code = state[0];
+    jump_idx = len(code);
+    
+    res = write_byte(state, 0);
+    state = res[0];
+    res = write_byte(state, 0);
+    state = res[0];
+    
+    return [state, jump_idx];
+}
+
+fn patch_jump(state, jump_idx) {
+    code = state[0];
+    len_code = len(code);
+    diff = len_code - jump_idx - 2;
+    code[jump_idx] = bit_and(bit_shr(diff, 8), 255);
+    code[jump_idx + 1] = bit_and(diff, 255);
+    return state;
+}
+
+fn compile_if_expr(state, node) {
+    cond = node[1];
+    then_br = node[2];
+    else_br = node[3];
+    
+    state = compile_expr(state, cond);
+    
+    res = emit_jump(state, op_jump_if_false());
+    state = res[0];
+    then_jump = res[1];
+    
+    state = compile_expr(state, then_br);
+    
+    if (len(else_br) > 0) {
+        res = emit_jump(state, op_jump());
+        state = res[0];
+        else_jump = res[1];
+        
+        state = patch_jump(state, then_jump);
+        state = compile_expr(state, else_br);
+        state = patch_jump(state, else_jump);
+    } else {
+        res = emit_jump(state, op_jump());
+        state = res[0];
+        else_jump = res[1];
+        
+        state = patch_jump(state, then_jump);
+        
+        // Push nil
+        res = add_constant(state, make_nil());
+        state = res[0];
+        idx = res[1];
+        res = write_byte(state, op_constant());
+        state = res[0];
+        res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+        state = res[0];
+        res = write_byte(state, bit_and(idx, 255));
+        state = res[0];
+        
+        state = patch_jump(state, else_jump);
+    }
+    return state;
+}
+
+// Just append this test logic
+fn test_compiler() {
+    print("Testing Macros Compiler Phase 5");
+    ast = ["program", [
+        ["function_decl", "main", [], [
+            "block", [
+                ["expr_statement", ["binary_expr", "plus", ["number", "10"], ["number", "20"]]]
+            ]
+        ]]
+    ]];
+    state = compile_program(ast);
+    print("Compilation finished. Code size:");
+    print(len(state[0]));
+    print("Constants size:");
+    print(len(state[1]));
+}
+test_compiler();

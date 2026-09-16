@@ -15,6 +15,97 @@ pub const InterpretError = error{
     StackUnderflow,
 };
 
+
+fn nativeStrToInt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1) return InterpretError.RuntimeError;
+    if (args[0] != .string) return InterpretError.RuntimeError;
+    const val = std.fmt.parseInt(i64, args[0].string, 10) catch return InterpretError.RuntimeError;
+    return eval.Value{ .integer = val };
+}
+
+fn nativeBitShr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 2) return InterpretError.RuntimeError;
+    if (args[0] != .integer or args[1] != .integer) return InterpretError.RuntimeError;
+    // zig requires shift amounts to be unsigned and bounded
+    const amount: u6 = @intCast(args[1].integer & 63);
+    const result = args[0].integer >> amount;
+    return eval.Value{ .integer = result };
+}
+
+fn nativeBitAnd(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 2) return InterpretError.RuntimeError;
+    if (args[0] != .integer or args[1] != .integer) return InterpretError.RuntimeError;
+    const result = args[0].integer & args[1].integer;
+    return eval.Value{ .integer = result };
+}
+
+
+fn nativeBuildFunction(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 4) return InterpretError.RuntimeError;
+    if (args[0] != .string) return InterpretError.RuntimeError;
+    if (args[1] != .integer) return InterpretError.RuntimeError;
+    if (args[2] != .integer) return InterpretError.RuntimeError;
+    if (args[3] != .integer) return InterpretError.RuntimeError;
+    
+    const vm_func = eval.Function{
+        .name = args[0].string,
+        .arity = @intCast(args[1].integer),
+        .local_count = @intCast(args[2].integer),
+        .ip_start = @intCast(args[3].integer),
+    };
+    return eval.Value{ .function = vm_func };
+}
+
+
+fn nativeMakeNil(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr; _ = args;
+    return eval.Value{ .nil = {} };
+}
+
+fn nativeMakeBool(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1) return InterpretError.RuntimeError;
+    if (args[0] != .integer) return InterpretError.RuntimeError;
+    return eval.Value{ .boolean = args[0].integer != 0 };
+}
+
+
+fn nativeExecChunk(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 2) return InterpretError.RuntimeError;
+    if (args[0] != .array or args[1] != .array) return InterpretError.RuntimeError;
+    
+    var new_chunk = chunk_mod.Chunk.init();
+    // We should not defer deinit here because constants might be referenced.
+    // In a real GC language, this chunk should be GC allocated.
+    // For now we just leak the ArrayLists of the chunk since we don't have tracing GC yet.
+    
+    for (args[0].array) |val| {
+        if (val != .integer) return InterpretError.RuntimeError;
+        try new_chunk.writeChunk(vm.allocator, @intCast(val.integer));
+    }
+    for (args[1].array) |val| {
+        _ = try new_chunk.addConstant(vm.allocator, val);
+    }
+    
+    const old_chunk = vm.chunk;
+    const old_ip = vm.ip;
+    
+    vm.chunk = &new_chunk;
+    vm.ip = 0;
+    
+    vm.run() catch return InterpretError.RuntimeError;
+    
+    vm.chunk = old_chunk;
+    vm.ip = old_ip;
+    
+    return eval.Value{ .nil = {} };
+}
+
 fn nativePush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2) return InterpretError.RuntimeError;
@@ -77,6 +168,13 @@ pub const VM = struct {
         try vm.globals.put("push", Value{ .native = nativePush });
         try vm.globals.put("len", Value{ .native = nativeLen });
         try vm.globals.put("substr", Value{ .native = nativeSubstr });
+        try vm.globals.put("str_to_int", Value{ .native = nativeStrToInt });
+        try vm.globals.put("bit_shr", Value{ .native = nativeBitShr });
+        try vm.globals.put("bit_and", Value{ .native = nativeBitAnd });
+        try vm.globals.put("build_function", Value{ .native = nativeBuildFunction });
+        try vm.globals.put("make_nil", Value{ .native = nativeMakeNil });
+        try vm.globals.put("make_bool", Value{ .native = nativeMakeBool });
+        try vm.globals.put("exec_chunk", Value{ .native = nativeExecChunk });
         return vm;
     }
 
