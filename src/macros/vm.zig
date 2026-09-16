@@ -55,6 +55,7 @@ fn nativeBuildFunction(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .name = args[0].string,
         .arity = @intCast(args[1].integer),
         .local_count = @intCast(args[2].integer),
+        .upvalue_count = 0, // TODO Phase 7: parse upvalue count from builder
         .ip_start = @intCast(args[3].integer),
     };
     return eval.Value{ .function = vm_func };
@@ -139,6 +140,7 @@ fn nativeSubstr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 pub const CallFrame = struct {
+    closure: *eval.Closure,
     function: eval.Function,
     ip: usize,
     slots_offset: usize,
@@ -153,6 +155,7 @@ pub const VM = struct {
     frames: [64]CallFrame,
     frame_count: usize,
     globals: std.StringHashMap(Value),
+    open_upvalues: ?*eval.Upvalue = null,
 
     pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !VM {
         var vm = VM{
@@ -233,9 +236,47 @@ pub const VM = struct {
         return self.chunk.constants.items[idx];
     }
 
-    pub fn pushFrame(self: *VM, func: eval.Function, arg_count: usize) !void {
+    pub 
+    fn captureUpvalue(self: *VM, local: *Value) !*eval.Upvalue {
+        var prev_upvalue: ?*eval.Upvalue = null;
+        var upvalue: ?*eval.Upvalue = self.open_upvalues;
+        while (upvalue != null and @intFromPtr(upvalue.?.location) > @intFromPtr(local)) {
+            prev_upvalue = upvalue;
+            upvalue = upvalue.?.next;
+        }
+
+        if (upvalue != null and upvalue.?.location == local) {
+            return upvalue.?;
+        }
+
+        var created_upvalue = try self.allocator.create(eval.Upvalue);
+        created_upvalue.location = local;
+        created_upvalue.closed = .{ .nil = {} };
+        created_upvalue.next = upvalue;
+
+        if (prev_upvalue == null) {
+            self.open_upvalues = created_upvalue;
+        } else {
+            prev_upvalue.?.next = created_upvalue;
+        }
+
+        return created_upvalue;
+    }
+
+    fn closeUpvalues(self: *VM, last: *Value) void {
+        while (self.open_upvalues != null and @intFromPtr(self.open_upvalues.?.location) >= @intFromPtr(last)) {
+            var upvalue = self.open_upvalues.?;
+            upvalue.closed = upvalue.location.*;
+            upvalue.location = &upvalue.closed;
+            self.open_upvalues = upvalue.next;
+        }
+    }
+
+    pub fn pushFrame(self: *VM, closure: *eval.Closure, arg_count: usize) !void {
+        const func = closure.function.*;
         if (self.frame_count >= self.frames.len) return InterpretError.StackOverflow;
         self.frames[self.frame_count] = CallFrame{
+            .closure = closure,
             .function = func,
             .ip = self.ip,
             .slots_offset = self.sp - arg_count,
@@ -252,6 +293,7 @@ pub const VM = struct {
     pub fn popFrame(self: *VM) void {
         self.frame_count -= 1;
         const frame = self.frames[self.frame_count];
+        self.closeUpvalues(&self.stack[frame.slots_offset]);
         self.ip = frame.ip;
         self.sp = frame.slots_offset;
     }
@@ -286,8 +328,58 @@ pub const VM = struct {
                 .set_local => try self.execSetLocal(),
                 .pop => _ = try self.pop(),
                 .call => try self.execCall(),
+
+                .closure => try self.execClosure(),
+                .get_upvalue => try self.execGetUpvalue(),
+                .set_upvalue => try self.execSetUpvalue(),
+                .close_upvalue => try self.execCloseUpvalue(),
+
             }
         }
+    }
+
+    
+    fn execClosure(self: *VM) !void {
+        const constant = self.readConstant();
+        if (constant != .function) return InterpretError.RuntimeError;
+        
+        var closure = try self.allocator.create(eval.Closure);
+        closure.function = try self.allocator.create(eval.Function);
+        closure.function.* = constant.function;
+        closure.upvalues = try self.allocator.alloc(*eval.Upvalue, constant.function.upvalue_count);
+        
+        var i: usize = 0;
+        while (i < closure.function.upvalue_count) : (i += 1) {
+            const is_local = self.readByte();
+            const index = self.readByte();
+            if (is_local == 1) {
+                const frame = self.frames[self.frame_count - 1];
+                closure.upvalues[i] = try self.captureUpvalue(&self.stack[frame.slots_offset + index]);
+            } else {
+                const frame = self.frames[self.frame_count - 1];
+                closure.upvalues[i] = frame.closure.upvalues[index];
+            }
+        }
+        
+        try self.push(.{ .closure = closure });
+    }
+
+    fn execGetUpvalue(self: *VM) !void {
+        const slot = self.readByte();
+        const frame = self.frames[self.frame_count - 1];
+        try self.push(frame.closure.upvalues[slot].location.*);
+    }
+
+    fn execSetUpvalue(self: *VM) !void {
+        const slot = self.readByte();
+        const frame = self.frames[self.frame_count - 1];
+        const val = self.stack[self.sp - 1];
+        frame.closure.upvalues[slot].location.* = val;
+    }
+
+    fn execCloseUpvalue(self: *VM) !void {
+        self.closeUpvalues(&self.stack[self.sp - 1]);
+        _ = try self.pop();
     }
 
     fn execGetLocal(self: *VM) !void {
@@ -479,7 +571,7 @@ pub const VM = struct {
         const callee = self.stack[self.sp - arg_count - 1];
         if (callee == .function) {
             if (callee.function.arity != arg_count) return InterpretError.RuntimeError;
-            try self.pushFrame(callee.function, arg_count + 1);
+            try self.pushFrame(callee.closure, arg_count + 1);
         } else if (callee == .native) {
             const args = self.stack[self.sp - arg_count .. self.sp];
             const result = try callee.native(@ptrCast(self), args);

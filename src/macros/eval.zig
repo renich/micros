@@ -11,10 +11,23 @@ pub const EvalError = error{
     OutOfMemory,
 };
 
+
+pub const Upvalue = struct {
+    location: *Value,
+    closed: Value,
+    next: ?*Upvalue,
+};
+
+pub const Closure = struct {
+    function: *Function,
+    upvalues: []*Upvalue,
+};
+
 pub const Function = struct {
     name: []const u8,
     arity: usize,
     local_count: usize,
+    upvalue_count: usize,
     ip_start: usize,
 };
 
@@ -25,6 +38,7 @@ pub const Value = union(enum) {
     boolean: bool,
     string: []const u8,
     function: Function,
+    closure: *Closure,
     native: NativeFn,
     array: []Value,
     nil: void,
@@ -68,6 +82,7 @@ pub const Value = union(enum) {
             .integer => |v| printInt(fd, v),
             .boolean => |v| printBool(fd, v),
             .string => |v| printStr(fd, v),
+            .closure => writeFd(fd, "<closure>"),
             .function => |f| printFunc(fd, f.name),
             .native => writeFd(fd, "<native fn>"),
             .array => |arr| printArr(fd, arr),

@@ -141,6 +141,7 @@ pub const Shell = struct {
             .integer => color_prefix = "\x1b[36m=> ",
             .boolean => color_prefix = "\x1b[33m=> ",
             .string => color_prefix = "\x1b[32m=> ",
+            .closure => color_prefix = "\x1b[35m=> ",
             .function => color_prefix = "\x1b[35m=> ",
             .array => color_prefix = "\x1b[34m=> ",
             else => {},
@@ -227,7 +228,15 @@ pub const Shell = struct {
         const code_dupe = self.allocator.dupe(u8, code) catch return;
         self.vm.push(.{ .string = code_dupe }) catch return;
         
-        self.vm.pushFrame(func, 2) catch return;
+        
+        // Create an empty top-level closure wrapper for eval so pushFrame works
+        var wrapper = self.allocator.create(macros.eval.Closure) catch return;
+        const wrapper_func = self.allocator.create(macros.eval.Function) catch return;
+        wrapper_func.* = func;
+        wrapper.function = wrapper_func;
+        wrapper.upvalues = &[_]*macros.eval.Upvalue{};
+        self.vm.pushFrame(wrapper, 2) catch return;
+
         const old_ip = self.vm.ip;
         self.vm.ip = func.ip_start;
         
