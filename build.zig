@@ -34,15 +34,15 @@ pub fn build(b: *std.Build) void {
     // Tests
     const test_step = b.step("test", "Run unit tests");
 
-    const syscall_test = b.addTest(.{
+    const sys_test = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sys/syscall_test.zig"),
+            .root_source_file = b.path("src/sys/test.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    const run_syscall_test = b.addRunArtifact(syscall_test);
-    test_step.dependOn(&run_syscall_test.step);
+    const run_sys_test = b.addRunArtifact(sys_test);
+    test_step.dependOn(&run_sys_test.step);
 
     const lexer_tests = b.addTest(.{
         .root_module = b.createModule(.{
