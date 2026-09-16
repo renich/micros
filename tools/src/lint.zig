@@ -6,6 +6,13 @@ const RULES = struct {
     const max_nesting = 3;
 };
 
+const TokenState = struct {
+    current_nesting: usize = 0,
+    struct_literal_depth: usize = 0,
+    in_function: bool = false,
+    func_start_line: usize = 0,
+};
+
 const Linter = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -20,26 +27,90 @@ const Linter = struct {
         const basename = std.fs.path.basename(path);
         if (std.mem.eql(u8, basename, "utils.zig") or
             std.mem.eql(u8, basename, "common.zig") or
-            std.mem.eql(u8, basename, "helpers.zig")) {
+            std.mem.eql(u8, basename, "helpers.zig"))
+        {
             self.reportError(path, 1, "Forbidden filename. Use domain-driven names.");
+        }
+    }
+
+    fn checkLineCount(self: *Linter, path: []const u8, source: [:0]const u8) !void {
+        const line_count = std.mem.count(u8, source, "\n") + 1;
+        if (line_count <= RULES.max_file_lines) return;
+
+        var buf: [128]u8 = undefined;
+        const msg = try std.fmt.bufPrint(&buf, "File exceeds {} lines ({}).", .{ RULES.max_file_lines, line_count });
+        self.reportError(path, 1, msg);
+    }
+
+    fn checkCatchUnreachable(self: *Linter, path: []const u8, ast: *const std.zig.Ast, i: usize, line: usize) void {
+        if (i + 1 >= ast.tokens.len) return;
+        if (ast.tokens.items(.tag)[i + 1] != .keyword_unreachable) return;
+        self.reportError(path, line, "Forbidden 'catch unreachable'. Explicitly handle errors.");
+    }
+
+    fn isStructInit(ast: *const std.zig.Ast, i: usize) bool {
+        if (i == 0) return false;
+        const prev = ast.tokens.items(.tag)[i - 1];
+        if (prev == .period) return true;
+        if (prev == .identifier) {
+            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .period) return true;
+            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .keyword_const) return true;
+            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .keyword_var) return true;
+        }
+        return false;
+    }
+
+    fn handleRBrace(self: *Linter, path: []const u8, state: *TokenState, line: usize) !void {
+        if (state.struct_literal_depth > 0) {
+            state.struct_literal_depth -= 1;
+            return;
+        }
+        if (state.current_nesting > 0) state.current_nesting -= 1;
+        if (!state.in_function or state.current_nesting != 1) return;
+
+        const func_len = line - state.func_start_line;
+        if (func_len > RULES.max_func_lines) {
+            var buf: [128]u8 = undefined;
+            const msg = try std.fmt.bufPrint(&buf, "Function exceeds {} lines ({}).", .{ RULES.max_func_lines, func_len });
+            self.reportError(path, state.func_start_line, msg);
+        }
+        state.in_function = false;
+    }
+
+    fn handleLBrace(self: *Linter, path: []const u8, ast: *const std.zig.Ast, state: *TokenState, i: usize, line: usize) void {
+        if (isStructInit(ast, i)) {
+            state.struct_literal_depth += 1;
+            return;
+        }
+        state.current_nesting += 1;
+        if (state.current_nesting > RULES.max_nesting + 1) {
+            self.reportError(path, line, "Nesting depth exceeds maximum of 3 levels.");
+        }
+    }
+
+    fn analyzeToken(self: *Linter, path: []const u8, ast: *const std.zig.Ast, state: *TokenState, tag: std.zig.Token.Tag, i: usize) !void {
+        const loc = ast.tokenLocation(0, @intCast(i));
+        const line = loc.line + 1;
+
+        if (tag == .keyword_catch) {
+            self.checkCatchUnreachable(path, ast, i, line);
+        } else if (tag == .keyword_fn) {
+            state.in_function = true;
+            state.func_start_line = line;
+        } else if (tag == .l_brace) {
+            self.handleLBrace(path, ast, state, i, line);
+        } else if (tag == .r_brace) {
+            try self.handleRBrace(path, state, line);
         }
     }
 
     fn analyzeFile(self: *Linter, path: []const u8) !void {
         self.checkForbiddenNames(path);
 
-        const file = try std.Io.Dir.openFile(std.Io.Dir.cwd(), self.io, path, .{});
-        defer file.close(self.io);
-        
-        const len = try file.length(self.io);
-        var source = try self.allocator.alloc(u8, len + 1);
+        const source = try std.Io.Dir.cwd().readFileAllocOptions(self.io, path, self.allocator, .limited(1024 * 1024 * 10), .of(u8), 0);
         defer self.allocator.free(source);
-        
-        _ = try file.readPositionalAll(self.io, source[0..len], 0);
-        source[len] = 0;
-        const source_z = source[0..len :0];
 
-        var ast = try std.zig.Ast.parse(self.allocator, source_z, .zig);
+        var ast = try std.zig.Ast.parse(self.allocator, source, .zig);
         defer ast.deinit(self.allocator);
 
         if (ast.errors.len > 0) {
@@ -47,58 +118,31 @@ const Linter = struct {
             return;
         }
 
-        const line_count = std.mem.count(u8, source_z, "\n") + 1;
-        if (line_count > RULES.max_file_lines) {
-            var buf: [128]u8 = undefined;
-            const msg = try std.fmt.bufPrint(&buf, "File exceeds {} lines ({}).", .{RULES.max_file_lines, line_count});
-            self.reportError(path, 1, msg);
-        }
+        try self.checkLineCount(path, source);
 
-        var current_nesting: usize = 0;
-        var in_function = false;
-        var func_start_line: usize = 0;
-
+        var state = TokenState{};
         for (ast.tokens.items(.tag), 0..) |tag, i| {
-            const loc = ast.tokenLocation(0, @intCast(i));
-            
-            if (tag == .keyword_catch) {
-                if (i + 1 < ast.tokens.len and ast.tokens.items(.tag)[i + 1] == .keyword_unreachable) {
-                    self.reportError(path, loc.line + 1, "Forbidden 'catch unreachable'. Explicitly handle errors.");
-                }
-            }
+            try self.analyzeToken(path, &ast, &state, tag, i);
+        }
+    }
 
-            if (tag == .keyword_fn) {
-                in_function = true;
-                func_start_line = loc.line + 1;
-            }
+    fn walkDirectory(self: *Linter, dir_path: []const u8, dir: *std.Io.Dir) !void {
+        var walker = try std.Io.Dir.walk(dir.*, self.allocator);
+        defer walker.deinit();
 
-            if (tag == .l_brace) {
-                current_nesting += 1;
-                if (current_nesting > RULES.max_nesting + 1) {
-                    self.reportError(path, loc.line + 1, "Nesting depth exceeds maximum of 3 levels.");
-                }
-            } else if (tag == .r_brace) {
-                if (current_nesting > 0) {
-                    current_nesting -= 1;
-                }
-                
-                if (in_function and current_nesting == 1) {
-                    const func_len = (loc.line + 1) - func_start_line;
-                    if (func_len > RULES.max_func_lines) {
-                        var buf: [128]u8 = undefined;
-                        const msg = try std.fmt.bufPrint(&buf, "Function exceeds {} lines ({}).", .{RULES.max_func_lines, func_len});
-                        self.reportError(path, func_start_line, msg);
-                    }
-                    in_function = false;
-                }
-            }
+        const trimmed_dir = std.mem.trimEnd(u8, dir_path, "/");
+
+        while (try walker.next(self.io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            const full_path = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ trimmed_dir, entry.path });
+            try self.analyzeFile(full_path);
         }
     }
 };
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
-    
     var args = init.minimal.args.iterate();
     _ = args.skip(); // skip executable name
 
@@ -107,11 +151,17 @@ pub fn main(init: std.process.Init) !void {
 
     while (args.next()) |path| {
         has_args = true;
-        try linter.analyzeFile(path);
+        if (std.Io.Dir.openDir(std.Io.Dir.cwd(), init.io, path, .{ .iterate = true })) |dir| {
+            var d = dir;
+            defer d.close(init.io);
+            try linter.walkDirectory(path, &d);
+        } else |_| {
+            try linter.analyzeFile(path);
+        }
     }
 
     if (!has_args) {
-        std.debug.print("Usage: micros-lint <file1.zig> [file2.zig...]\n", .{});
+        std.debug.print("Usage: micros-lint <files/directories...>\n", .{});
         std.process.exit(1);
     }
 

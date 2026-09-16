@@ -113,7 +113,7 @@ Core Systems Primitives
 Phase 0 delivers three foundational userspace binaries:
 
 #. **MicrOS Init (PID 1)**: Minimal process supervisor handling signal disposition (``SIGCHLD``), reaping orphaned child processes, and mounting ``/dev``, ``/proc``, and ``/sys``.
-#. **MicrOS Shell (ash)**: Composable command interpreter supporting pipeline execution, file descriptor redirection, and job control with zero external library linkages.
+#. **MicroShell (msh / ush)**: Composable typed command interpreter and Macros scripting frontend supporting pipeline execution over memory rings, file descriptor/capability redirection, and job control with zero external library linkages.
 #. **MicrOS Coreutils**: Essential POSIX-compliant binary primitives (``ls``, ``cat``, ``cp``, ``mv``, ``mkdir``, ``ps``, ``kill``) built strictly on direct syscall abstractions and explicit memory allocators.
 
 Verification Milestone
@@ -296,7 +296,7 @@ The implementation track is governed by four gated milestone reviews:
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+
    | Milestone | Subsystem Focus      | Primary Artifact                              | Verification Gate                       |
    +===========+======================+===============================================+=========================================+
-   | M0        | Host Sandbox         | Direct-syscall ``init``, ``ash``, coreutils   | Boots under host kernel in QEMU         |
+   | M0        | Host Sandbox         | Direct-syscall ``init``, ``msh``, coreutils   | Boots under host kernel in QEMU         |
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+
    | M1        | Microkernel & Memory | ``boot.efi``, PMM, VMM, Scheduler, VirtIO-Con | Boots via UEFI; preemptive multitasking |
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+

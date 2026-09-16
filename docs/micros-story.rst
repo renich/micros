@@ -62,11 +62,12 @@ The Typed Shell: Memory Over Text Streams
 =========================================
 Unix introduced the pipe, but Unix pipes pass unstructured byte streams. Developers spend their careers writing brittle regular expressions and wrestling with ``awk``, ``sed``, and ``grep`` to parse text that breaks on whitespace.
 
-In MicrOS’s shell (``ash``), pipes are lock-free shared-memory ring buffers:
+In MicrOS’s **MicroShell** (``msh`` / ``ush``), pipes are lock-free shared-memory ring buffers, serving as both the interactive command shell and the scripting execution mode for the Macros runtime:
 
 * **Zero Serialization Overhead**: Data streams are typed binary structures, not ASCII characters.
 * **Structural Pipelining**: When running a process filter pipeline, typed process descriptor structs pass directly through memory-mapped FIFO rings without serialization or string allocation.
 * **Immunity to Injection**: Because commands operate on typed memory representations rather than parsed strings, an entire class of command-injection vulnerabilities is eradicated at the architectural level.
+* **Unified Scripting**: Shell scripts and automation routines are native Macros scripts (``#!/bin/msh``), enjoying full type inference, sub-millisecond startup, and green-fiber concurrency without an ad-hoc secondary scripting language.
 
 Macros: The Application Experience
 ======================================

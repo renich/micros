@@ -18,5 +18,5 @@ Milestones
   - Build the Immix GC and Green Thread scheduler.
   - Implement the `/bin/macros` CLI and interactive REPL.
 
-* **M0.4: Apeiron Init**
-  - Build PID 1 and a basic `ash` shell.
+* **M0.4: MicrOS Init & MicroShell**
+  - Build PID 1 (``micros-init``) and ``msh`` (MicroShell) as the typed command interpreter.

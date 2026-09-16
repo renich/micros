@@ -15,10 +15,10 @@ CACHE_DIR := .zig-cache
 # Default goal
 .DEFAULT_GOAL := all
 
-.PHONY: all clean test help run
+.PHONY: all clean test help run tools fmt fmt-check lint spec-trace check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
-all:
+all: tools
 	@echo "=> Building MicrOS (Phase 0)..."
 	$(ZIG) build
 
@@ -26,10 +26,12 @@ all:
 test:
 	@echo "=> Running tests..."
 	$(ZIG) build test
+	$(MAKE) -C tools test
 
 ## clean: Remove build artifacts and Zig caches
 clean:
 	@echo "=> Cleaning workspace..."
+	$(MAKE) -C tools clean
 	rm -rf $(OUT_DIR) $(CACHE_DIR)
 	@echo "=> Clean complete."
 
@@ -38,32 +40,33 @@ run: all
 	@echo "=> Executing MicrOS Sandbox..."
 	@./zig-out/bin/micros-init || true
 
-
 ## tools: Compile the substrate toolchain
 tools:
 	@echo "=> Building tools..."
-	$(ZIG) build tools
+	$(MAKE) -C tools
 
 ## fmt: Format Zig code
 fmt:
 	@echo "=> Formatting Zig code..."
 	$(ZIG) fmt src/ build.zig
+	$(MAKE) -C tools fmt
 
 ## fmt-check: Check Zig code formatting
 fmt-check:
 	@echo "=> Checking Zig code formatting..."
 	$(ZIG) fmt --check src/ build.zig
+	$(MAKE) -C tools fmt-check
 
-## lint: Run micros-lint and shellcheck
+## lint: Run micros-lint and shellcheck across workspace
 lint: tools
 	@echo "=> Linting codebase..."
-	./zig-out/bin/micros-lint src/
-	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck tools/*.bash; 	else 		echo "shellcheck not found, skipping bash linting"; 	fi
+	./tools/micros-lint src/
+	$(MAKE) -C tools lint
 
 ## spec-trace: Verify 100% specification traceability
 spec-trace:
 	@echo "=> Running specification traceability auditor..."
-	./tools/micros-spec-trace.bash --check
+	./tools/micros-spec-trace --check
 
 ## check: Run all verifications (test, lint, fmt-check, spec-trace)
 check: test lint fmt-check spec-trace
@@ -75,4 +78,3 @@ help:
 	@echo "-------------------------"
 	@echo "Available targets:"
 	@awk '/^## / { sub(/^## /, ""); split($$0, t, ": "); printf "  \033[36m%-15s\033[0m %s\n", t[1], t[2] }' $(MAKEFILE_LIST)
-
