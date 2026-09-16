@@ -38,6 +38,8 @@ pub fn main(init: std.process.Init) !void {
     var shell = try msh.Shell.init(heap.allocator(), 0, 1);
     defer shell.deinit();
 
+    shell.loadStage1();
+
     if (!dispatchArgs(&shell, init)) {
         printBanner();
         shell.run();
