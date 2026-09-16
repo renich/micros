@@ -19,17 +19,20 @@ fn nativePush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2) return InterpretError.RuntimeError;
     if (args[0] != .array) return InterpretError.RuntimeError;
-    try args[0].array.append(vm.allocator, args[1]);
-    return args[0];
+    const old_slice = args[0].array;
+    const new_slice = try vm.allocator.alloc(eval.Value, old_slice.len + 1);
+    @memcpy(new_slice[0..old_slice.len], old_slice);
+    new_slice[old_slice.len] = args[1];
+    return eval.Value{ .array = new_slice };
 }
 
 fn nativeLen(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1) return InterpretError.RuntimeError;
     if (args[0] == .array) {
-        return Value{ .integer = @intCast(args[0].array.items.len) };
+        return eval.Value{ .integer = @intCast(args[0].array.len) };
     } else if (args[0] == .string) {
-        return Value{ .integer = @intCast(args[0].string.len) };
+        return eval.Value{ .integer = @intCast(args[0].string.len) };
     }
     return InterpretError.RuntimeError;
 }
@@ -219,11 +222,11 @@ pub const VM = struct {
             @memcpy(new_str[a.string.len..], b.string);
             try self.push(.{ .string = new_str });
         } else if (a == .array and b == .array) {
-            const list_ptr = try self.allocator.create(std.ArrayList(Value));
-            list_ptr.* = .empty;
-            try list_ptr.appendSlice(self.allocator, a.array.items);
-            try list_ptr.appendSlice(self.allocator, b.array.items);
-            try self.push(.{ .array = list_ptr });
+            const new_len = a.array.len + b.array.len;
+            const new_arr = try self.allocator.alloc(eval.Value, new_len);
+            @memcpy(new_arr[0..a.array.len], a.array);
+            @memcpy(new_arr[a.array.len..], b.array);
+            try self.push(.{ .array = new_arr });
         } else {
             return InterpretError.RuntimeError;
         }
@@ -336,15 +339,13 @@ pub const VM = struct {
 
     fn execBuildArray(self: *VM) !void {
         const count = self.readByte();
-        var list: std.ArrayList(Value) = .empty;
+        const new_arr = try self.allocator.alloc(eval.Value, count);
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            try list.append(self.allocator, self.stack[self.sp - count + i]);
+            new_arr[i] = self.stack[self.sp - count + i];
         }
         self.sp -= count;
-        const list_ptr = try self.allocator.create(std.ArrayList(Value));
-        list_ptr.* = list;
-        try self.push(.{ .array = list_ptr });
+        try self.push(.{ .array = new_arr });
     }
 
     fn execIndexGet(self: *VM) !void {
@@ -353,8 +354,8 @@ pub const VM = struct {
         if (index_val != .integer) return InterpretError.RuntimeError;
         const idx: usize = @intCast(index_val.integer);
         if (target_val == .array) {
-            if (idx >= target_val.array.items.len) return InterpretError.RuntimeError;
-            try self.push(target_val.array.items[idx]);
+            if (idx >= target_val.array.len) return InterpretError.RuntimeError;
+            try self.push(target_val.array[idx]);
         } else if (target_val == .string) {
             if (idx >= target_val.string.len) return InterpretError.RuntimeError;
             try self.push(.{ .integer = target_val.string[idx] });
@@ -370,8 +371,8 @@ pub const VM = struct {
         if (index_val != .integer) return InterpretError.RuntimeError;
         const idx: usize = @intCast(index_val.integer);
         if (target_val != .array) return InterpretError.RuntimeError;
-        if (idx >= target_val.array.items.len) return InterpretError.RuntimeError;
-        target_val.array.items[idx] = value;
+        if (idx >= target_val.array.len) return InterpretError.RuntimeError;
+        target_val.array[idx] = value;
         try self.push(value);
     }
 

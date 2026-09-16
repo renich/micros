@@ -78,7 +78,7 @@ pub const Compiler = struct {
         try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
     }
     fn compileNumberLiteral(self: *Compiler, num: ast.NumberLiteral) anyerror!void {
-        const val = std.fmt.parseInt(i64, num.value, 10) catch 0;
+        const val = try std.fmt.parseInt(i64, num.value, 10);
         const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .integer = val });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
         try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
@@ -127,7 +127,11 @@ pub const Compiler = struct {
         }
 
         if (self.scope_depth > 0) {
+            if (self.local_count >= 256) return error.TooManyLocals;
             self.locals[self.local_count] = decl.name;
+            try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.set_local));
+            try self.chunk.writeChunk(self.allocator, @intCast(self.local_count));
+            try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.pop));
             self.local_count += 1;
         } else {
             const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = decl.name });
@@ -228,8 +232,13 @@ pub const Compiler = struct {
         try self.compile(while_node.condition);
         const exit_jump = try self.emitJump(@intFromEnum(OpCode.jump_if_false));
         try self.compile(while_node.body);
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.pop));
         try self.emitLoop(loop_start);
         try self.patchJump(exit_jump);
+        const nil_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .nil = {} });
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
+        try self.chunk.writeChunk(self.allocator, @intCast((nil_idx >> 8) & 0xFF));
+        try self.chunk.writeChunk(self.allocator, @intCast(nil_idx & 0xFF));
     }
 
     fn compileFunctionDecl(self: *Compiler, func: ast.FunctionDecl) anyerror!void {

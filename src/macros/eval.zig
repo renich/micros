@@ -1,213 +1,78 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const sys = @import("../sys.zig");
 
 pub const EvalError = error{
     UndefinedVariable,
+    UndefinedFunction,
     TypeMismatch,
     DivisionByZero,
     InvalidLiteral,
     OutOfMemory,
 };
 
+pub const Function = struct {
+    name: []const u8,
+    arity: usize,
+    local_count: usize,
+    ip_start: usize,
+};
+
+pub const NativeFn = *const fn (vm: *anyopaque, args: []Value) anyerror!Value;
+
 pub const Value = union(enum) {
     integer: i64,
     boolean: bool,
     string: []const u8,
+    function: Function,
+    native: NativeFn,
+    array: []Value,
     nil: void,
 
-    pub fn format(
-        self: Value,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    fn writeFd(fd: i32, bytes: []const u8) void {
+        _ = sys.io.write(fd, bytes) catch {};
+    }
+
+    fn printInt(fd: i32, v: i64) void {
+        var buf: [128]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "{}", .{v})) |m| writeFd(fd, m) else |_| {}
+    }
+
+    fn printBool(fd: i32, v: bool) void {
+        var buf: [128]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "{}", .{v})) |m| writeFd(fd, m) else |_| {}
+    }
+
+    fn printFunc(fd: i32, name: []const u8) void {
+        var buf: [128]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "<fn {s}>", .{name})) |m| writeFd(fd, m) else |_| {}
+    }
+
+    fn printStr(fd: i32, v: []const u8) void {
+        writeFd(fd, "\"");
+        writeFd(fd, v);
+        writeFd(fd, "\"");
+    }
+
+    fn printArr(fd: i32, arr: []Value) void {
+        writeFd(fd, "[");
+        for (arr, 0..) |item, i| {
+            if (i > 0) writeFd(fd, ", ");
+            item.printToFd(fd);
+        }
+        writeFd(fd, "]");
+    }
+
+    pub fn printToFd(self: Value, fd: i32) void {
         switch (self) {
-            .integer => |v| try writer.print("{}", .{v}),
-            .boolean => |v| try writer.print("{}", .{v}),
-            .string => |v| try writer.print("{s}", .{v}),
-            .nil => try writer.print("nil", .{}),
+            .integer => |v| printInt(fd, v),
+            .boolean => |v| printBool(fd, v),
+            .string => |v| printStr(fd, v),
+            .function => |f| printFunc(fd, f.name),
+            .native => writeFd(fd, "<native fn>"),
+            .array => |arr| printArr(fd, arr),
+            .nil => writeFd(fd, "nil"),
         }
     }
 };
 
-pub const Environment = struct {
-    allocator: std.mem.Allocator,
-    bindings: std.StringHashMap(Value),
-
-    pub fn init(allocator: std.mem.Allocator) Environment {
-        return Environment{
-            .allocator = allocator,
-            .bindings = std.StringHashMap(Value).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Environment) void {
-        var it = self.bindings.keyIterator();
-        while (it.next()) |k| {
-            self.allocator.free(k.*);
-        }
-        self.bindings.deinit();
-    }
-
-    pub fn set(self: *Environment, name: []const u8, val: Value) !void {
-        const gop = try self.bindings.getOrPut(name);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = try self.allocator.dupe(u8, name);
-        }
-        gop.value_ptr.* = val;
-    }
-
-    pub fn get(self: *const Environment, name: []const u8) ?Value {
-        return self.bindings.get(name);
-    }
-};
-
-pub const Evaluator = struct {
-    allocator: std.mem.Allocator,
-    env: *Environment,
-
-    pub fn init(allocator: std.mem.Allocator, env: *Environment) Evaluator {
-        return Evaluator{
-            .allocator = allocator,
-            .env = env,
-        };
-    }
-
-    fn evalNumber(node: *const ast.Node) EvalError!Value {
-        const raw = node.number_literal.value;
-        const num = std.fmt.parseInt(i64, raw, 10) catch {
-            return EvalError.InvalidLiteral;
-        };
-        return Value{ .integer = num };
-    }
-
-    fn evalIdentifier(self: *Evaluator, node: *const ast.Node) EvalError!Value {
-        const name = node.identifier.name;
-        if (self.env.get(name)) |val| {
-            return val;
-        }
-        return EvalError.UndefinedVariable;
-    }
-
-    fn evalPlus(left: Value, right: Value) EvalError!Value {
-        if (left == .integer and right == .integer) {
-            return Value{ .integer = left.integer + right.integer };
-        }
-        return EvalError.TypeMismatch;
-    }
-
-    fn evalMinus(left: Value, right: Value) EvalError!Value {
-        if (left == .integer and right == .integer) {
-            return Value{ .integer = left.integer - right.integer };
-        }
-        return EvalError.TypeMismatch;
-    }
-
-    fn evalEqualEqual(left: Value, right: Value) EvalError!Value {
-        if (left == .integer and right == .integer) {
-            return Value{ .boolean = (left.integer == right.integer) };
-        }
-        if (left == .boolean and right == .boolean) {
-            return Value{ .boolean = (left.boolean == right.boolean) };
-        }
-        if (left == .string and right == .string) {
-            const eq = std.mem.eql(u8, left.string, right.string);
-            return Value{ .boolean = eq };
-        }
-        return Value{ .boolean = false };
-    }
-
-    fn evalBinary(self: *Evaluator, node: *const ast.Node) EvalError!Value {
-        const bin = node.binary_expr;
-        const left_val = try self.eval(bin.left);
-        const right_val = try self.eval(bin.right);
-
-        switch (bin.operator) {
-            .plus => return evalPlus(left_val, right_val),
-            .minus => return evalMinus(left_val, right_val),
-            .equal_equal => return evalEqualEqual(left_val, right_val),
-        }
-    }
-
-    fn evalAssignment(self: *Evaluator, node: *const ast.Node) EvalError!Value {
-        const assign = node.assignment;
-        const val = try self.eval(assign.value);
-        try self.env.set(assign.target.name, val);
-        return val;
-    }
-
-    pub fn eval(self: *Evaluator, node: *const ast.Node) EvalError!Value {
-        switch (node.*) {
-            .number_literal => return evalNumber(node),
-            .identifier => return self.evalIdentifier(node),
-            .binary_expr => return self.evalBinary(node),
-            .assignment => return self.evalAssignment(node),
-        }
-    }
-};
-
-const testing = std.testing;
-
-test "Evaluator evaluates integer arithmetic" {
-    var env = Environment.init(testing.allocator);
-    defer env.deinit();
-
-    var evaluator = Evaluator.init(testing.allocator, &env);
-
-    var left = ast.Node{ .number_literal = ast.NumberLiteral{ .value = "20" } };
-    var right = ast.Node{ .number_literal = ast.NumberLiteral{ .value = "22" } };
-    const bin = ast.Node{
-        .binary_expr = ast.BinaryExpr{
-            .left = &left,
-            .operator = .plus,
-            .right = &right,
-        },
-    };
-
-    const res = try evaluator.eval(&bin);
-    try testing.expectEqual(Value{ .integer = 42 }, res);
-}
-
-test "Evaluator variable assignment and resolution" {
-    var env = Environment.init(testing.allocator);
-    defer env.deinit();
-
-    var evaluator = Evaluator.init(testing.allocator, &env);
-
-    var val_node = ast.Node{ .number_literal = ast.NumberLiteral{ .value = "100" } };
-    const assign = ast.Node{
-        .assignment = ast.Assignment{
-            .target = ast.Identifier{ .name = "x" },
-            .value = &val_node,
-        },
-    };
-
-    const assign_res = try evaluator.eval(&assign);
-    try testing.expectEqual(Value{ .integer = 100 }, assign_res);
-
-    const lookup_node = ast.Node{ .identifier = ast.Identifier{ .name = "x" } };
-    const lookup_res = try evaluator.eval(&lookup_node);
-    try testing.expectEqual(Value{ .integer = 100 }, lookup_res);
-}
-
-test "Evaluator equality comparison" {
-    var env = Environment.init(testing.allocator);
-    defer env.deinit();
-
-    var evaluator = Evaluator.init(testing.allocator, &env);
-
-    var left = ast.Node{ .number_literal = ast.NumberLiteral{ .value = "7" } };
-    var right = ast.Node{ .number_literal = ast.NumberLiteral{ .value = "7" } };
-    const eq_node = ast.Node{
-        .binary_expr = ast.BinaryExpr{
-            .left = &left,
-            .operator = .equal_equal,
-            .right = &right,
-        },
-    };
-
-    const res = try evaluator.eval(&eq_node);
-    try testing.expectEqual(Value{ .boolean = true }, res);
-}

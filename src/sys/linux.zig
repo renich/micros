@@ -60,14 +60,24 @@ pub fn munmap(addr: *anyopaque, length: usize) !void {
 
 pub fn read(fd: i32, buf: []u8) !usize {
     const fd_arg: usize = @bitCast(@as(isize, fd));
-    const rc = linux.syscall3(.read, fd_arg, @intFromPtr(buf.ptr), buf.len);
-    return try check(rc);
+    while (true) {
+        const rc = linux.syscall3(.read, fd_arg, @intFromPtr(buf.ptr), buf.len);
+        if (check(rc)) |sz| return sz else |err| {
+            if (err == error.Interrupted) continue;
+            return err;
+        }
+    }
 }
 
 pub fn write(fd: i32, buf: []const u8) !usize {
     const fd_arg: usize = @bitCast(@as(isize, fd));
-    const rc = linux.syscall3(.write, fd_arg, @intFromPtr(buf.ptr), buf.len);
-    return try check(rc);
+    while (true) {
+        const rc = linux.syscall3(.write, fd_arg, @intFromPtr(buf.ptr), buf.len);
+        if (check(rc)) |sz| return sz else |err| {
+            if (err == error.Interrupted) continue;
+            return err;
+        }
+    }
 }
 
 pub fn pipe2(fds: *[2]i32, flags: usize) !void {
@@ -81,6 +91,17 @@ pub fn close(fd: i32) !void {
     _ = try check(rc);
 }
 
+pub fn open(path: [*:0]const u8, flags: usize, mode: usize) !i32 {
+    const rc = linux.syscall3(.open, @intFromPtr(path), flags, mode);
+    return @intCast(try check(rc));
+}
+
 pub fn getpid() usize {
     return linux.syscall0(.getpid);
+}
+
+pub fn clock_gettime(clk_id: i32, ts: *linux.timespec) !void {
+    const clk_arg: usize = @bitCast(@as(isize, clk_id));
+    const rc = linux.syscall2(.clock_gettime, clk_arg, @intFromPtr(ts));
+    _ = try check(rc);
 }
