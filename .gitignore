@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+build/
+*.patch
+test_*.zig
+!src/sys/*_test.zig
+!src/macros/*_test.zig
