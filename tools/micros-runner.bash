@@ -51,6 +51,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Silence shellcheck for options used across roadmap phases
+: "${SCREENDUMP}" "${SCREENSHOT}" "${MON_SOCK}" "${ISA_DEBUG}"
+
 if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "ERROR: qemu-system-x86_64 not found."
     exit 1
@@ -62,6 +65,7 @@ INITRAMFS_DIR="$BUILD_DIR/initramfs"
 CPIO_ARCHIVE="$BUILD_DIR/initramfs.cpio"
 TMP_SERIAL="${SERIAL_LOG:-$(mktemp /tmp/micros-serial-XXXXXX.log)}"
 
+# shellcheck disable=SC2329
 cleanup() {
     if [[ -z "$SERIAL_LOG" && -f "$TMP_SERIAL" ]]; then
         rm -f "$TMP_SERIAL"
