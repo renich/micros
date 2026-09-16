@@ -143,7 +143,7 @@ pub const VM = struct {
         std.debug.print("PUSH_FRAME: func={s}, arg_count={}, local_count={}\n", .{func.name, arg_count, func.local_count});
         var i: usize = arg_count;
         while (i < func.local_count) : (i += 1) {
-            try self.push(Value{ .nil = {} });
+            try self.push(.{ .nil = {} });
         }
         self.ip = func.ip_start;
     }
@@ -156,256 +156,238 @@ pub const VM = struct {
     }
 
     pub fn run(self: *VM) !void {
-                while (true) {
+        while (true) {
             if (self.ip >= self.chunk.code.items.len) break;
-            const ip_old = self.ip;
             const byte = self.readByte();
-            if (self.frame_count > 0) {
-                std.debug.print("EXEC IP={} BYTE={} SP={} FRAMES[{}] slots_offset={}\n", .{ip_old, byte, self.sp, self.frame_count-1, self.frames[self.frame_count-1].slots_offset});
-            }
             const instruction: OpCode = @enumFromInt(byte);
 
             switch (instruction) {
-                .get_local => {
-                    const slot = self.readByte();
-                    const frame = self.frames[self.frame_count - 1];
-                    const val = self.stack[frame.slots_offset + slot];
-                    std.debug.print("GET_LOCAL slot={}, value={any}\n", .{slot, val});
-                    try self.push(val);
-                },
-                .constant => {
-                    const constant = self.readConstant();
-                    try self.push(constant);
-                },
-                .add => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .integer = a.integer + b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .sub => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .integer = a.integer - b.integer });
-                    } else {
-                        std.debug.print("Sub error! a={any} b={any}\n", .{ a, b });
-                        return InterpretError.RuntimeError;
-                    }
-                },
-                .equal => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .boolean = a.integer == b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .not_equal => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .boolean = a.integer != b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .less => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .boolean = a.integer < b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .greater => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .boolean = a.integer > b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .less_equal => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    std.debug.print("LESS_EQUAL a={any} b={any}\n", .{a, b});
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .boolean = a.integer <= b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .greater_equal => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    if (a == .integer and b == .integer) {
-                        try self.push(Value{ .boolean = a.integer >= b.integer });
-                    } else {
-                        {
-                            std.debug.print("LESS ERROR: a={any}, b={any}\n", .{a, b});
-                            std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                            return InterpretError.RuntimeError;
-                        }
-                    }
-                },
-                .jump => {
-                    const offset = self.readShort();
-                    self.ip += offset;
-                },
-                .jump_if_false => {
-                    const offset = self.readShort();
-                    const condition = try self.pop();
-                    if (condition == .boolean) {
-                        if (!condition.boolean) {
-                            self.ip += offset;
-                        }
-                    } else if (condition == .integer) {
-                        if (condition.integer == 0) {
-                            self.ip += offset;
-                        }
-                    } else if (condition == .nil) {
-                        self.ip += offset;
-                    }
-                },
-                .loop => {
-                    const offset = self.readShort();
-                    self.ip -= offset;
-                },
-                .build_array => {
-                    const count = self.readByte();
-                    var list = std.ArrayList(Value).empty;
-                    var i: usize = 0;
-                    // Elements were pushed left-to-right, so they are in order on stack
-                    while (i < count) : (i += 1) {
-                        try list.append(self.allocator, self.stack[self.sp - count + i]);
-                    }
-                    self.sp -= count;
-                    
-                    const list_ptr = try self.allocator.create(std.ArrayList(Value));
-                    list_ptr.* = list;
-                    try self.push(Value{ .array = list_ptr });
-                },
-                .index_get => {
-                    const index_val = try self.pop();
-                    const target_val = try self.pop();
-                    if (index_val != .integer) return InterpretError.RuntimeError;
-                    const idx: usize = @intCast(index_val.integer);
-                    if (target_val == .array) {
-                        if (idx >= target_val.array.items.len) return InterpretError.RuntimeError;
-                        try self.push(target_val.array.items[idx]);
-                    } else if (target_val == .string) {
-                        if (idx >= target_val.string.len) return InterpretError.RuntimeError;
-                        try self.push(Value{ .integer = target_val.string[idx] });
-                    } else {
-                        return InterpretError.RuntimeError;
-                    }
-                },
-                .index_set => {
-                    const index_val = try self.pop();
-                    const target_val = try self.pop();
-                    const value = try self.pop();
-                    if (index_val != .integer) return InterpretError.RuntimeError;
-                    const idx: usize = @intCast(index_val.integer);
-                    if (target_val != .array) return InterpretError.RuntimeError;
-                    if (idx >= target_val.array.items.len) {
-                        // For flexibility in lexer.mx, maybe allow growing or just error?
-                        // lexer.mx uses `push()` so it doesn't assign out of bounds.
-                        return InterpretError.RuntimeError;
-                    }
-                    target_val.array.items[idx] = value;
-                    try self.push(value);
-                },
-                .set_local => {
-                    const slot = self.readByte();
-                    std.debug.print("SET_LOCAL slot={}, value={any}\n", .{slot, self.stack[self.sp - 1]});
-                    const frame = self.frames[self.frame_count - 1];
-                    self.stack[frame.slots_offset + slot] = self.stack[self.sp - 1]; // leave on stack
-                },
-                .pop => {
-                    _ = try self.pop();
-                },
-                .call => {
-                    const arg_count = self.readByte();
-                    const callee = self.stack[self.sp - arg_count - 1];
-                    if (callee == .function) {
-                        if (callee.function.arity != arg_count) return InterpretError.RuntimeError;
-                        try self.pushFrame(callee.function, arg_count + 1);
-                    } else if (callee == .native) {
-                        const args = self.stack[self.sp - arg_count .. self.sp];
-                        const result = try callee.native(@ptrCast(self), args);
-                        self.sp -= arg_count + 1; // pop args and callee
-                        try self.push(result);
-                    } else {
-                        return InterpretError.RuntimeError;
-                    }
-                },
-                .print => {
-                    const a = try self.pop();
-                    a.printToFd(1);
-                },
-                .get_global => {
-                    const constant = self.readConstant();
-                    if (constant != .string) {
-                        std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                        return InterpretError.RuntimeError;
-                    }
-                    if (self.globals.get(constant.string)) |val| {
-                        try self.push(val);
-                    } else {
-                        std.debug.print("Undefined global: {s}\n", .{constant.string});
-                        return InterpretError.RuntimeError;
-                    }
-                },
-                .set_global => {
-                    const constant = self.readConstant();
-                    if (constant != .string) {
-                        std.debug.print("RuntimeError at line {}\n", .{@src().line});
-                        return InterpretError.RuntimeError;
-                    }
-                    const val = try self.pop();
-                    try self.globals.put(constant.string, val);
-                },
-                .return_op => {
-                    if (self.frame_count > 0) {
-                        const result = try self.pop();
-                        self.popFrame();
-                        try self.push(result);
-                    } else {
-                        return;
-                    }
-                },
+                .get_local => try self.execGetLocal(),
+                .constant => try self.execConstant(),
+                .add => try self.execBinaryAdd(),
+                .sub => try self.execBinarySub(),
+                .equal => try self.execBinaryEqual(),
+                .not_equal => try self.execBinaryNotEqual(),
+                .less => try self.execBinaryCompare(OpCode.less),
+                .greater => try self.execBinaryCompare(OpCode.greater),
+                .less_equal => try self.execBinaryCompare(OpCode.less_equal),
+                .greater_equal => try self.execBinaryCompare(OpCode.greater_equal),
+                .print => try self.execPrint(),
+                .return_op => if (try self.execReturn()) return,
+                .get_global => try self.execGetGlobal(),
+                .set_global => try self.execSetGlobal(),
+                .jump => self.execJump(),
+                .jump_if_false => try self.execJumpIfFalse(),
+                .loop => self.execLoop(),
+                .build_array => try self.execBuildArray(),
+                .index_get => try self.execIndexGet(),
+                .index_set => try self.execIndexSet(),
+                .set_local => try self.execSetLocal(),
+                .pop => _ = try self.pop(),
+                .call => try self.execCall(),
             }
+        }
+    }
+
+    fn execGetLocal(self: *VM) !void {
+        const slot = self.readByte();
+        const frame = self.frames[self.frame_count - 1];
+        const val = self.stack[frame.slots_offset + slot];
+        try self.push(val);
+    }
+
+    fn execSetLocal(self: *VM) !void {
+        const slot = self.readByte();
+        const frame = self.frames[self.frame_count - 1];
+        self.stack[frame.slots_offset + slot] = self.stack[self.sp - 1];
+    }
+
+    fn execConstant(self: *VM) !void {
+        const constant = self.readConstant();
+        try self.push(constant);
+    }
+
+    fn execBinaryAdd(self: *VM) !void {
+        const b = try self.pop();
+        const a = try self.pop();
+        if (a == .integer and b == .integer) {
+            try self.push(.{ .integer = a.integer + b.integer });
+        } else if (a == .string and b == .string) {
+            const new_len = a.string.len + b.string.len;
+            const new_str = try self.allocator.alloc(u8, new_len);
+            @memcpy(new_str[0..a.string.len], a.string);
+            @memcpy(new_str[a.string.len..], b.string);
+            try self.push(.{ .string = new_str });
+        } else if (a == .array and b == .array) {
+            const list_ptr = try self.allocator.create(std.ArrayList(Value));
+            list_ptr.* = .empty;
+            try list_ptr.appendSlice(self.allocator, a.array.items);
+            try list_ptr.appendSlice(self.allocator, b.array.items);
+            try self.push(.{ .array = list_ptr });
+        } else {
+            return InterpretError.RuntimeError;
+        }
+    }
+
+    fn execBinarySub(self: *VM) !void {
+        const b = try self.pop();
+        const a = try self.pop();
+        if (a == .integer and b == .integer) {
+            try self.push(.{ .integer = a.integer - b.integer });
+        } else {
+            return InterpretError.RuntimeError;
+        }
+    }
+
+    fn execBinaryCompare(self: *VM, op: OpCode) !void {
+        const b = try self.pop();
+        const a = try self.pop();
+        if (a == .integer and b == .integer) {
+            switch (op) {
+                .less => try self.push(.{ .boolean = a.integer < b.integer }),
+                .greater => try self.push(.{ .boolean = a.integer > b.integer }),
+                .less_equal => try self.push(.{ .boolean = a.integer <= b.integer }),
+                .greater_equal => try self.push(.{ .boolean = a.integer >= b.integer }),
+                else => return InterpretError.RuntimeError,
+            }
+        } else {
+            return InterpretError.RuntimeError;
+        }
+    }
+
+    fn execBinaryEqual(self: *VM) !void {
+        const b = try self.pop();
+        const a = try self.pop();
+        if (a == .integer and b == .integer) {
+            try self.push(.{ .boolean = a.integer == b.integer });
+        } else if (a == .string and b == .string) {
+            try self.push(.{ .boolean = std.mem.eql(u8, a.string, b.string) });
+        } else {
+            try self.push(.{ .boolean = false });
+        }
+    }
+
+    fn execBinaryNotEqual(self: *VM) !void {
+        const b = try self.pop();
+        const a = try self.pop();
+        if (a == .integer and b == .integer) {
+            try self.push(.{ .boolean = a.integer != b.integer });
+        } else if (a == .string and b == .string) {
+            try self.push(.{ .boolean = !std.mem.eql(u8, a.string, b.string) });
+        } else {
+            try self.push(.{ .boolean = true });
+        }
+    }
+
+
+    fn execPrint(self: *VM) !void {
+        const val = try self.pop();
+        // std.debug.print("val=", .{});
+        val.printToFd(1);
+        std.debug.print("\n", .{});
+    }
+
+    fn execReturn(self: *VM) !bool {
+        if (self.frame_count == 0) {
+            return true;
+        }
+        const result = try self.pop();
+        self.popFrame();
+        try self.push(result);
+        return false;
+    }
+
+    fn execGetGlobal(self: *VM) !void {
+        const name_val = self.readConstant();
+        if (self.globals.get(name_val.string)) |v| {
+            try self.push(v);
+        } else {
+            return InterpretError.RuntimeError;
+        }
+    }
+
+    fn execSetGlobal(self: *VM) !void {
+        const name_val = self.readConstant();
+        const value = self.stack[self.sp - 1];
+        try self.globals.put(name_val.string, value);
+    }
+
+    fn execJump(self: *VM) void {
+        const offset = self.readShort();
+        self.ip += offset;
+    }
+
+    fn execJumpIfFalse(self: *VM) !void {
+        const offset = self.readShort();
+        const condition = try self.pop();
+        if (condition == .boolean and !condition.boolean) {
+            self.ip += offset;
+        } else if (condition == .integer and condition.integer == 0) {
+            self.ip += offset;
+        } else if (condition == .nil) {
+            self.ip += offset;
+        }
+    }
+
+    fn execLoop(self: *VM) void {
+        const offset = self.readShort();
+        self.ip -= offset;
+    }
+
+    fn execBuildArray(self: *VM) !void {
+        const count = self.readByte();
+        var list: std.ArrayList(Value) = .empty;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            try list.append(self.allocator, self.stack[self.sp - count + i]);
+        }
+        self.sp -= count;
+        const list_ptr = try self.allocator.create(std.ArrayList(Value));
+        list_ptr.* = list;
+        try self.push(.{ .array = list_ptr });
+    }
+
+    fn execIndexGet(self: *VM) !void {
+        const index_val = try self.pop();
+        const target_val = try self.pop();
+        if (index_val != .integer) return InterpretError.RuntimeError;
+        const idx: usize = @intCast(index_val.integer);
+        if (target_val == .array) {
+            if (idx >= target_val.array.items.len) return InterpretError.RuntimeError;
+            try self.push(target_val.array.items[idx]);
+        } else if (target_val == .string) {
+            if (idx >= target_val.string.len) return InterpretError.RuntimeError;
+            try self.push(.{ .integer = target_val.string[idx] });
+        } else {
+            return InterpretError.RuntimeError;
+        }
+    }
+
+    fn execIndexSet(self: *VM) !void {
+        const index_val = try self.pop();
+        const target_val = try self.pop();
+        const value = try self.pop();
+        if (index_val != .integer) return InterpretError.RuntimeError;
+        const idx: usize = @intCast(index_val.integer);
+        if (target_val != .array) return InterpretError.RuntimeError;
+        if (idx >= target_val.array.items.len) return InterpretError.RuntimeError;
+        target_val.array.items[idx] = value;
+        try self.push(value);
+    }
+
+    fn execCall(self: *VM) !void {
+        const arg_count = self.readByte();
+        const callee = self.stack[self.sp - arg_count - 1];
+        if (callee == .function) {
+            if (callee.function.arity != arg_count) return InterpretError.RuntimeError;
+            try self.pushFrame(callee.function, arg_count + 1);
+        } else if (callee == .native) {
+            const args = self.stack[self.sp - arg_count .. self.sp];
+            const result = try callee.native(@ptrCast(self), args);
+            self.sp -= arg_count + 1;
+            try self.push(result);
+        } else {
+            return InterpretError.RuntimeError;
         }
     }
 };
