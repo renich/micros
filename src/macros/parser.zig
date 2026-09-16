@@ -28,60 +28,70 @@ pub const Parser = struct {
 
     pub fn parseExpression(self: *Parser) ParseError!*ast.Node {
         const left = try self.parsePrimary();
-        
+
         if (self.current_token.token_type == .plus or self.current_token.token_type == .minus) {
-            const op: ast.BinaryOperator = if (self.current_token.token_type == .plus) .plus else .minus;
-            self.advance();
-            const right = try self.parsePrimary();
-            
-            const node = try self.allocator.create(ast.Node);
-            node.* = ast.Node{
-                .binary_expr = ast.BinaryExpr{
-                    .left = left,
-                    .operator = op,
-                    .right = right,
-                }
-            };
-            return node;
+            return self.parseBinaryRight(left);
         }
-        
+
         return left;
     }
 
-    fn parsePrimary(self: *Parser) ParseError!*ast.Node {
+    fn parseBinaryRight(self: *Parser, left: *ast.Node) ParseError!*ast.Node {
+        const op: ast.BinaryOperator = if (self.current_token.token_type == .plus) .plus else .minus;
+        self.advance();
+        const right = try self.parsePrimary();
+
         const node = try self.allocator.create(ast.Node);
-        
-        switch (self.current_token.token_type) {
-            .number => {
-                node.* = ast.Node{
-                    .number_literal = ast.NumberLiteral{ .value = self.current_token.lexeme }
-                };
-                self.advance();
-                return node;
-            },
-            .identifier => {
-                node.* = ast.Node{
-                    .identifier = ast.Identifier{ .name = self.current_token.lexeme }
-                };
-                self.advance();
-                return node;
-            },
-            else => return error.UnexpectedToken,
+        node.* = ast.Node{ .binary_expr = ast.BinaryExpr{
+            .left = left,
+            .operator = op,
+            .right = right,
+        } };
+        return node;
+    }
+
+    fn createNumberNode(self: *Parser, lexeme: []const u8) ParseError!*ast.Node {
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{ .number_literal = ast.NumberLiteral{ .value = lexeme } };
+        return node;
+    }
+
+    fn createIdentifierNode(self: *Parser, lexeme: []const u8) ParseError!*ast.Node {
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{ .identifier = ast.Identifier{ .name = lexeme } };
+        return node;
+    }
+
+    fn parsePrimary(self: *Parser) ParseError!*ast.Node {
+        const tok = self.current_token;
+
+        if (tok.token_type == .number) {
+            const node = try self.createNumberNode(tok.lexeme);
+            self.advance();
+            return node;
         }
+
+        if (tok.token_type == .identifier) {
+            const node = try self.createIdentifierNode(tok.lexeme);
+            self.advance();
+            return node;
+        }
+
+        return error.UnexpectedToken;
     }
 };
 
 test "Parser binary expression" {
     const testing = std.testing;
     var p = Parser.init(testing.allocator, "foo + 42");
-    
+
     const node = try p.parseExpression();
     defer {
         testing.allocator.destroy(node.binary_expr.left);
         testing.allocator.destroy(node.binary_expr.right);
         testing.allocator.destroy(node);
     }
-    
+
     try testing.expectEqual(ast.BinaryOperator.plus, node.binary_expr.operator);
     try testing.expectEqualStrings("foo", node.binary_expr.left.identifier.name);
     try testing.expectEqualStrings("42", node.binary_expr.right.number_literal.value);

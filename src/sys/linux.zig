@@ -15,7 +15,7 @@ pub const Error = error{
 pub fn errnoToError(err: isize) Error {
     return switch (-err) {
         13 => error.AccessDenied, // EACCES
-        14 => error.BadAddress,   // EFAULT
+        14 => error.BadAddress, // EFAULT
         9 => error.BadFileDescriptor, // EBADF
         4 => error.Interrupted, // EINTR
         22 => error.InvalidArgument, // EINVAL

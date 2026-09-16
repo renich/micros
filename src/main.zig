@@ -3,14 +3,14 @@ const sys = @import("sys.zig");
 const macros = @import("macros.zig");
 
 pub fn main() !void {
-    const banner = 
+    const banner =
         \\=============================================
         \\ MicrOS (µOS) Init Sandbox (Phase 0)
         \\=============================================
         \\ Booting...
         \\
     ;
-    
+
     _ = sys.io.write(1, banner) catch {
         sys.process.exit(1);
     };
@@ -20,17 +20,23 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
     const source_code = "foo + 42";
-    
+
     var buf: [128]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf, "[macros] Parsing: {s}\n", .{source_code}) catch unreachable;
+    const msg = std.fmt.bufPrint(&buf, "[macros] Parsing: {s}\n", .{source_code}) catch {
+        sys.process.exit(1);
+    };
     _ = sys.io.write(1, msg) catch {};
 
     var p = macros.parser.Parser.init(allocator, source_code);
     if (p.parseExpression()) |node| {
-        const success_msg = std.fmt.bufPrint(&buf, "[macros] AST Root: BinaryExpr({s})\n", .{@tagName(node.binary_expr.operator)}) catch unreachable;
+        const success_msg = std.fmt.bufPrint(&buf, "[macros] AST Root: BinaryExpr({s})\n", .{@tagName(node.binary_expr.operator)}) catch {
+            sys.process.exit(1);
+        };
         _ = sys.io.write(1, success_msg) catch {};
     } else |err| {
-        const err_msg = std.fmt.bufPrint(&buf, "[macros] Parser Error: {}\n", .{err}) catch unreachable;
+        const err_msg = std.fmt.bufPrint(&buf, "[macros] Parser Error: {}\n", .{err}) catch {
+            sys.process.exit(1);
+        };
         _ = sys.io.write(1, err_msg) catch {};
     }
 

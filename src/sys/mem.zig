@@ -29,12 +29,12 @@ test "memory allocation via mmap" {
     const length = 4096;
     const prot_flags = Prot.read | Prot.write;
     const mmap_flags = Flags.private | Flags.anonymous;
-    
+
     const ptr = try map(null, length, prot_flags, mmap_flags, -1, 0);
     const slice = @as([*]u8, @ptrCast(ptr))[0..length];
-    
+
     slice[0] = 42;
     try testing.expectEqual(@as(u8, 42), slice[0]);
-    
+
     try unmap(ptr, length);
 }

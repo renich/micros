@@ -51,7 +51,7 @@ test "inter-process communication via pipe" {
 
     var buf: [16]u8 = undefined;
     const bytes_read = try read(read_fd, &buf);
-    
+
     try testing.expectEqual(msg.len, bytes_read);
     try testing.expectEqualStrings(msg, buf[0..bytes_read]);
 
