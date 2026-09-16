@@ -5,12 +5,12 @@ IFS=$'\n\t'
 # micros-runner.bash: Event-Driven Headless QEMU Harness
 # Orchestrates UEFI and Sandbox mode executions with sub-second milestone detection.
 
-MODE="uefi"
-EXPECT=""
+MODE="sandbox"
+EXPECT="Substrate self-test verified (Macros 20+22=42)"
 FAIL_PATTERN="KERNEL FATAL|CPU Exception|Kernel Panic|panic:"
 SCREENDUMP=""
 SCREENSHOT=""
-SERIAL_LOG="/dev/stdout"
+SERIAL_LOG=""
 TIMEOUT_SEC=10
 MON_SOCK="/tmp/micros-qemu-mon.sock"
 ISA_DEBUG=0
@@ -20,12 +20,12 @@ usage() {
     cat <<EOF
 Usage: $0 [options]
 Options:
-  --mode [uefi|sandbox]      Execution mode (default: uefi)
+  --mode [uefi|sandbox]      Execution mode (default: sandbox)
   --expect <pattern>         Success regex sentinel
   --fail <pattern>           Regex for fatal panic
   --screendump <path.ppm>    Capture GOP framebuffer to PPM
   --screenshot <path.png>    Convert PPM to PNG
-  --serial-log <path>        Output serial log (default: stdout)
+  --serial-log <path>        Output serial log
   --timeout <seconds>        Timeout in seconds (default: 10)
   --monitor-sock <path>      QEMU monitor socket (default: /tmp/micros-qemu-mon.sock)
   --isa-debug-exit           Enable QEMU isa-debug-exit on port 0xf4
@@ -51,35 +51,73 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EXPECT" ]]; then
-    if [[ "$MODE" == "uefi" ]]; then
-        EXPECT="All Phase 1 substrate invariants verified."
-    else
-        EXPECT="PID 1 self-test verified successfully."
+if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+    echo "ERROR: qemu-system-x86_64 not found."
+    exit 1
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_DIR="$ROOT_DIR/build"
+INITRAMFS_DIR="$BUILD_DIR/initramfs"
+CPIO_ARCHIVE="$BUILD_DIR/initramfs.cpio"
+TMP_SERIAL="${SERIAL_LOG:-$(mktemp /tmp/micros-serial-XXXXXX.log)}"
+
+cleanup() {
+    if [[ -z "$SERIAL_LOG" && -f "$TMP_SERIAL" ]]; then
+        rm -f "$TMP_SERIAL"
     fi
+}
+trap cleanup EXIT
+
+if [[ "$MODE" == "sandbox" ]]; then
+    mkdir -p "$INITRAMFS_DIR/dev" "$INITRAMFS_DIR/proc" "$INITRAMFS_DIR/sys"
+    cp "$ROOT_DIR/zig-out/bin/micros-init" "$INITRAMFS_DIR/init"
+    cp "$ROOT_DIR/zig-out/bin/msh" "$INITRAMFS_DIR/msh"
+    (cd "$INITRAMFS_DIR" && find . | cpio -o -H newc --quiet) > "$CPIO_ARCHIVE"
+
+    KERNEL="/boot/vmlinuz-$(uname -r)"
+    if [[ ! -f "$KERNEL" ]]; then
+        # Fallback to any vmlinuz in /boot
+        KERNEL="$(find /boot -name "vmlinuz*" | head -n 1)"
+    fi
+
+    QEMU_ARGS=(
+        -cpu host
+        -kernel "$KERNEL"
+        -initrd "$CPIO_ARCHIVE"
+        -append "console=ttyS0 earlyprintk=serial,ttyS0 panic=1 rdinit=/init"
+        -serial "file:$TMP_SERIAL"
+        -display none
+        -no-reboot
+        -m 256M
+    )
+
+    if [[ "$NO_KVM" -eq 0 && -w /dev/kvm ]]; then
+        QEMU_ARGS+=(-enable-kvm)
+    else
+        QEMU_ARGS+=(-cpu max)
+    fi
+
+    echo "[micros-runner] Launching QEMU sandbox harness (timeout: ${TIMEOUT_SEC}s)..."
+    timeout "${TIMEOUT_SEC}s" qemu-system-x86_64 "${QEMU_ARGS[@]}" || true
+
+    echo "--- QEMU Serial Console Output ---"
+    cat "$TMP_SERIAL"
+    echo "----------------------------------"
+
+    if grep -E "$FAIL_PATTERN" "$TMP_SERIAL" >/dev/null 2>&1; then
+        echo "[micros-runner] FAILED: Matched fatal panic pattern."
+        exit 1
+    fi
+
+    if grep -F "$EXPECT" "$TMP_SERIAL" >/dev/null 2>&1; then
+        echo "[micros-runner] SUCCESS: Milestone sentinel '$EXPECT' verified."
+        exit 0
+    fi
+
+    echo "[micros-runner] FAILED: Sentinel '$EXPECT' not found in serial log."
+    exit 1
 fi
 
-# Stub for the actual runner logic. 
-# In a real environment, this spins up QEMU as a coprocess or background job
-# and tails the serial output until $EXPECT or $FAIL_PATTERN is matched.
-: "${FAIL_PATTERN}" "${MON_SOCK}" "${ISA_DEBUG}" "${NO_KVM}"
-echo "[micros-runner] Starting in $MODE mode. Waiting for '$EXPECT' with timeout ${TIMEOUT_SEC}s..."
-
-# Simulate the runner stub for now to allow CI to pass without real QEMU.
-echo "$EXPECT" >> "$SERIAL_LOG"
-
-if [[ -n "$SCREENDUMP" ]]; then
-    echo "[micros-runner] Capturing screendump to $SCREENDUMP..."
-    # Normally we send `screendump $SCREENDUMP` to the monitor socket
-    # Stub: touch the file
-    touch "$SCREENDUMP"
-fi
-
-if [[ -n "$SCREENSHOT" && -n "$SCREENDUMP" ]]; then
-    echo "[micros-runner] Converting $SCREENDUMP to $SCREENSHOT..."
-    # Stub: touch the file
-    touch "$SCREENSHOT"
-fi
-
-echo "[micros-runner] SUCCESS: Milestone sentinel matched."
-exit 0
+echo "[micros-runner] Mode '$MODE' not yet implemented in Phase 0."
+exit 1

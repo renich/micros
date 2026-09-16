@@ -25,3 +25,6 @@ Added
 * Implementation of Macros AST Evaluator and Environment (`src/macros/eval.zig`) supporting variable bindings, arithmetic evaluation, and equality checks with memory safety.
 * Implementation of **MicroShell** (`msh` / `ush`) in `src/msh/shell.zig` providing interactive REPL and streaming execution for both typed shell commands and Macros scripts.
 * Standalone `msh` executable binary in `build.zig` and integration with `micros-init` substrate bootstrap.
+* Event-driven headless QEMU/KVM test harness in `tools/micros-runner.bash` with sub-second milestone sentinel matching.
+* Native ACPI S5 sleep state poweroff syscall integration in `src/sys/process.zig` for clean virtual machine termination.
+* GNUmakefile targets `test-sandbox`, `test-qemu`, and `qemu-msh` for direct KVM guest execution.

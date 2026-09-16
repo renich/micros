@@ -21,5 +21,8 @@ pub fn main() !void {
     shell.run();
 
     _ = sys.io.write(1, "\n[msh] Session terminated cleanly.\n") catch {};
+    if (sys.process.getpid() == 1) {
+        sys.process.poweroff();
+    }
     sys.process.exit(0);
 }

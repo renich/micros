@@ -38,6 +38,15 @@ pub fn exit_group(status: usize) noreturn {
     unreachable;
 }
 
+pub const REBOOT_MAGIC1: usize = 0xfee1dead;
+pub const REBOOT_MAGIC2: usize = 0x28121969;
+pub const REBOOT_CMD_POWER_OFF: usize = 0x4321fedc;
+
+pub fn poweroff() noreturn {
+    _ = linux.syscall4(.reboot, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_POWER_OFF, 0);
+    exit_group(0);
+}
+
 pub fn mmap(addr: ?*anyopaque, length: usize, prot: usize, flags: usize, fd: i32, offset: usize) !*anyopaque {
     const fd_arg: usize = @bitCast(@as(isize, fd));
     const rc = linux.syscall6(.mmap, @intFromPtr(addr), length, prot, flags, fd_arg, offset);
@@ -70,4 +79,8 @@ pub fn close(fd: i32) !void {
     const fd_arg: usize = @bitCast(@as(isize, fd));
     const rc = linux.syscall1(.close, fd_arg);
     _ = try check(rc);
+}
+
+pub fn getpid() usize {
+    return linux.syscall0(.getpid);
 }

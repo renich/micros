@@ -28,6 +28,14 @@ test:
 	$(ZIG) build test
 	$(MAKE) -C tools test
 
+## test-sandbox: Execute Phase 0 direct-syscall sandbox in QEMU/KVM
+test-sandbox: all
+	@echo "=> Running Phase 0 sandbox in QEMU/KVM..."
+	./tools/micros-runner --mode sandbox
+
+## test-qemu: Alias for test-sandbox
+test-qemu: test-sandbox
+
 ## clean: Remove build artifacts and Zig caches
 clean:
 	@echo "=> Cleaning workspace..."
@@ -40,10 +48,19 @@ run: all
 	@echo "=> Executing MicrOS Sandbox..."
 	@./zig-out/bin/micros-init || true
 
-## run-msh: Execute the interactive MicroShell (msh)
+## run-msh: Execute the interactive MicroShell (msh) on host
 run-msh: all
 	@echo "=> Launching MicroShell (msh)..."
 	@./zig-out/bin/msh || true
+
+## qemu-msh: Boot into interactive MicroShell inside QEMU/KVM
+qemu-msh: all
+	@echo "=> Booting into interactive MicroShell in QEMU/KVM..."
+	@mkdir -p build/initramfs/dev build/initramfs/proc build/initramfs/sys
+	@cp zig-out/bin/micros-init build/initramfs/init
+	@cp zig-out/bin/msh build/initramfs/msh
+	@(cd build/initramfs && find . | cpio -o -H newc --quiet) > build/initramfs.cpio
+	@qemu-system-x86_64 -enable-kvm -cpu host -kernel "/boot/vmlinuz-$$(uname -r)" -initrd build/initramfs.cpio -append "console=ttyS0 quiet panic=1 rdinit=/msh" -serial stdio -display none -no-reboot -m 256M || true
 
 ## tools: Compile the substrate toolchain
 tools:

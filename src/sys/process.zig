@@ -4,3 +4,11 @@ const linux = @import("linux.zig");
 pub fn exit(status: usize) noreturn {
     linux.exit_group(status);
 }
+
+pub fn poweroff() noreturn {
+    linux.poweroff();
+}
+
+pub fn getpid() usize {
+    return linux.getpid();
+}

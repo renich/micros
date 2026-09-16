@@ -49,5 +49,8 @@ pub fn main() !void {
     shell.executeLine("ready = 1");
 
     _ = sys.io.write(1, "[micros-init] Execution completed. Halting.\n") catch {};
+    if (sys.process.getpid() == 1) {
+        sys.process.poweroff();
+    }
     sys.process.exit(0);
 }
