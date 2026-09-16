@@ -12,6 +12,18 @@ pub fn build(b: *std.Build) void {
         "telem",
     };
 
+    
+    // MicrOS Init (PID 1 Sandbox)
+    const init_exe = b.addExecutable(.{
+        .name = "micros-init",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/micros_init.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(init_exe);
+
     const tools_step = b.step("tools", "Build the MicrOS substrate toolchain");
 
     for (tools) |tool_name| {
@@ -33,6 +45,17 @@ pub fn build(b: *std.Build) void {
 
     // Tests
     const test_step = b.step("test", "Run unit tests");
+
+    const macros_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/macros/lexer.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_macros_test = b.addRunArtifact(macros_test);
+    test_step.dependOn(&run_macros_test.step);
+
 
     const sys_test = b.addTest(.{
         .root_module = b.createModule(.{
