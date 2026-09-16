@@ -4,6 +4,17 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // MicrOS Init (PID 1 Sandbox)
+    const init_exe = b.addExecutable(.{
+        .name = "micros-init",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(init_exe);
+
     // Substrate Toolchain
     const tools = [_][]const u8{
         "fb_verify",
@@ -11,18 +22,6 @@ pub fn build(b: *std.Build) void {
         "sym",
         "telem",
     };
-
-    
-    // MicrOS Init (PID 1 Sandbox)
-    const init_exe = b.addExecutable(.{
-        .name = "micros-init",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/micros_init.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    b.installArtifact(init_exe);
 
     const tools_step = b.step("tools", "Build the MicrOS substrate toolchain");
 
@@ -46,20 +45,9 @@ pub fn build(b: *std.Build) void {
     // Tests
     const test_step = b.step("test", "Run unit tests");
 
-    const macros_test = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/macros/lexer.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_macros_test = b.addRunArtifact(macros_test);
-    test_step.dependOn(&run_macros_test.step);
-
-
     const sys_test = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sys/test.zig"),
+            .root_source_file = b.path("src/sys.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -67,23 +55,13 @@ pub fn build(b: *std.Build) void {
     const run_sys_test = b.addRunArtifact(sys_test);
     test_step.dependOn(&run_sys_test.step);
 
-    const lexer_tests = b.addTest(.{
+    const macros_test = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/macros/lexer.zig"),
+            .root_source_file = b.path("src/macros.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    const run_lexer_tests = b.addRunArtifact(lexer_tests);
-    test_step.dependOn(&run_lexer_tests.step);
-
-    const ast_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/macros/ast.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_ast_tests = b.addRunArtifact(ast_tests);
-    test_step.dependOn(&run_ast_tests.step);
+    const run_macros_test = b.addRunArtifact(macros_test);
+    test_step.dependOn(&run_macros_test.step);
 }

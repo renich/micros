@@ -1,6 +1,5 @@
 const std = @import("std");
-const io = @import("sys/io.zig");
-const process = @import("sys/process.zig");
+const sys = @import("sys.zig");
 
 pub fn main() !void {
     const banner = 
@@ -11,10 +10,10 @@ pub fn main() !void {
         \\
     ;
     
-    _ = io.write(1, banner) catch {
-        process.exit(1);
+    _ = sys.io.write(1, banner) catch {
+        sys.process.exit(1);
     };
 
-    _ = io.write(1, "[micros-init] Execution completed. Halting.\n") catch {};
-    process.exit(0);
+    _ = sys.io.write(1, "[micros-init] Execution completed. Halting.\n") catch {};
+    sys.process.exit(0);
 }

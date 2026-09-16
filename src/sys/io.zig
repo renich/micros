@@ -37,3 +37,24 @@ pub fn pipe() ![2]i32 {
 pub fn close(fd: i32) !void {
     return linux.close(fd);
 }
+
+const testing = std.testing;
+
+test "inter-process communication via pipe" {
+    const fds = try pipe();
+    const read_fd = fds[0];
+    const write_fd = fds[1];
+
+    const msg = "MicrOS";
+    const written = try write(write_fd, msg);
+    try testing.expectEqual(msg.len, written);
+
+    var buf: [16]u8 = undefined;
+    const bytes_read = try read(read_fd, &buf);
+    
+    try testing.expectEqual(msg.len, bytes_read);
+    try testing.expectEqualStrings(msg, buf[0..bytes_read]);
+
+    try close(write_fd);
+    try close(read_fd);
+}
