@@ -53,6 +53,21 @@ run-msh: all
 	@echo "=> Launching MicroShell (msh)..."
 	@./zig-out/bin/msh || true
 
+## uki: Build a Unified Kernel Image (UKI) PE/COFF executable (.efi)
+uki: all
+	@echo "=> Building Unified Kernel Image (UKI)..."
+	@mkdir -p build/initramfs/dev build/initramfs/proc build/initramfs/sys
+	@cp zig-out/bin/micros-init build/initramfs/init
+	@cp zig-out/bin/msh build/initramfs/msh
+	@(cd build/initramfs && find . | cpio -o -H newc --quiet) > build/initramfs.cpio
+	@ukify build --linux "/boot/vmlinuz-$$(uname -r)" --initrd build/initramfs.cpio --cmdline "console=ttyS0 earlyprintk=serial,ttyS0 panic=1 rdinit=/init" --output build/micros-sandbox.efi
+	@echo "=> UKI generated: build/micros-sandbox.efi"
+
+## test-uki: Boot the Unified Kernel Image (UKI) via UEFI in QEMU/KVM
+test-uki: uki
+	@echo "=> Booting UKI via UEFI OVMF in QEMU/KVM..."
+	@qemu-system-x86_64 -enable-kvm -cpu host -bios /usr/share/OVMF/OVMF_CODE.fd -kernel build/micros-sandbox.efi -serial stdio -display none -no-reboot -m 512M || true
+
 ## qemu-msh: Boot into interactive MicroShell inside QEMU/KVM
 qemu-msh: all
 	@echo "=> Booting into interactive MicroShell in QEMU/KVM..."

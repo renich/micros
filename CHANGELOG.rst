@@ -28,3 +28,6 @@ Added
 * Event-driven headless QEMU/KVM test harness in `tools/micros-runner.bash` with sub-second milestone sentinel matching.
 * Native ACPI S5 sleep state poweroff syscall integration in `src/sys/process.zig` for clean virtual machine termination.
 * GNUmakefile targets `test-sandbox`, `test-qemu`, and `qemu-msh` for direct KVM guest execution.
+* Formalized Master Business Specification (`docs/business/spec.rst`) and User Personas (`docs/business/specs/user-personas.rst`) for Rénich (Human) and Gemini (AI).
+* Catalogs of 20 User Stories (`[US-REN-001]`..`[US-REN-010]` and `[US-GEM-001]`..`[US-GEM-010]`) covering typed shell automation, zero-libc determinism, binary telemetry, UKI delivery, and Immix GC.
+* Automated Unified Kernel Image (UKI) packaging target (`make uki`) and direct UEFI/OVMF QEMU test harness (`make test-uki`).
