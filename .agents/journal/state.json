@@ -1,0 +1,5 @@
+{
+  "journal_version": "0.2.0",
+  "objective": "Phase 0 Userspace Sandbox: Bootstrapping MicrOS Init and Macros REPL via direct Linux syscalls.",
+  "pjp_version": "0.10.1"
+}
