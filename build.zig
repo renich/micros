@@ -16,30 +16,31 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(init_exe);
 
     // Substrate Toolchain
-    const tools = [_][]const u8{
-        "fb_verify",
-        "lint",
-        "sym",
-        "telem",
+    const ToolDef = struct {
+        name: []const u8,
+        src: []const u8,
+    };
+    const tools = [_]ToolDef{
+        .{ .name = "micros-fb-verify", .src = "tools/src/fb_verify.zig" },
+        .{ .name = "micros-lint", .src = "tools/src/lint.zig" },
+        .{ .name = "micros-sym", .src = "tools/src/sym.zig" },
+        .{ .name = "micros-telem", .src = "tools/src/telem.zig" },
     };
 
     const tools_step = b.step("tools", "Build the MicrOS substrate toolchain");
 
-    for (tools) |tool_name| {
-        const src_path = b.fmt("tools/src/{s}.zig", .{tool_name});
-        const exe_name = b.fmt("micros-{s}", .{tool_name});
-
+    for (tools) |tool| {
         const exe = b.addExecutable(.{
-            .name = exe_name,
+            .name = tool.name,
             .root_module = b.createModule(.{
-                .root_source_file = b.path(src_path),
+                .root_source_file = b.path(tool.src),
                 .target = target,
                 .optimize = optimize,
             }),
         });
 
-        b.installArtifact(exe);
-        tools_step.dependOn(&exe.step);
+        const install_cmd = b.addInstallArtifact(exe, .{});
+        tools_step.dependOn(&install_cmd.step);
     }
 
     // Tests

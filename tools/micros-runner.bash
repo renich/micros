@@ -62,6 +62,7 @@ fi
 # Stub for the actual runner logic. 
 # In a real environment, this spins up QEMU as a coprocess or background job
 # and tails the serial output until $EXPECT or $FAIL_PATTERN is matched.
+: "${FAIL_PATTERN}" "${MON_SOCK}" "${ISA_DEBUG}" "${NO_KVM}"
 echo "[micros-runner] Starting in $MODE mode. Waiting for '$EXPECT' with timeout ${TIMEOUT_SEC}s..."
 
 # Simulate the runner stub for now to allow CI to pass without real QEMU.
