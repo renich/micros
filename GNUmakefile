@@ -40,6 +40,11 @@ run: all
 	@echo "=> Executing MicrOS Sandbox..."
 	@./zig-out/bin/micros-init || true
 
+## run-msh: Execute the interactive MicroShell (msh)
+run-msh: all
+	@echo "=> Launching MicroShell (msh)..."
+	@./zig-out/bin/msh || true
+
 ## tools: Compile the substrate toolchain
 tools:
 	@echo "=> Building tools..."

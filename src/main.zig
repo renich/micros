@@ -1,44 +1,52 @@
 const std = @import("std");
 const sys = @import("sys.zig");
 const macros = @import("macros.zig");
+const msh = @import("msh.zig");
 
-pub fn main() !void {
+fn printBanner() void {
     const banner =
         \\=============================================
         \\ MicrOS (µOS) Init Sandbox (Phase 0)
         \\=============================================
-        \\ Booting...
+        \\ Booting PID 1 Substrate...
         \\
     ;
-
     _ = sys.io.write(1, banner) catch {
         sys.process.exit(1);
     };
+}
 
-    // Instantiate an allocator for the Sandbox (we use a simple page allocator here)
-    // For Phase 0, testing with std.heap.page_allocator is acceptable until we write our PMM.
+fn runSelfTest(allocator: std.mem.Allocator) bool {
+    var env = macros.eval.Environment.init(allocator);
+    defer env.deinit();
+
+    var evaluator = macros.eval.Evaluator.init(allocator, &env);
+    var p = macros.parser.Parser.init(allocator, "boot_check = 20 + 22");
+    const node = p.parseStatement() catch return false;
+    defer allocator.destroy(node);
+
+    const val = evaluator.eval(node) catch return false;
+    if (val != .integer or val.integer != 42) return false;
+
+    _ = sys.io.write(1, "[micros-init] Substrate self-test verified (Macros 20+22=42).\n") catch {};
+    return true;
+}
+
+pub fn main() !void {
+    printBanner();
+
     const allocator = std.heap.page_allocator;
-
-    const source_code = "foo + 42";
-
-    var buf: [128]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf, "[macros] Parsing: {s}\n", .{source_code}) catch {
+    if (!runSelfTest(allocator)) {
+        _ = sys.io.write(2, "[micros-init] ERROR: Substrate self-test failed.\n") catch {};
         sys.process.exit(1);
-    };
-    _ = sys.io.write(1, msg) catch {};
-
-    var p = macros.parser.Parser.init(allocator, source_code);
-    if (p.parseExpression()) |node| {
-        const success_msg = std.fmt.bufPrint(&buf, "[macros] AST Root: BinaryExpr({s})\n", .{@tagName(node.binary_expr.operator)}) catch {
-            sys.process.exit(1);
-        };
-        _ = sys.io.write(1, success_msg) catch {};
-    } else |err| {
-        const err_msg = std.fmt.bufPrint(&buf, "[macros] Parser Error: {}\n", .{err}) catch {
-            sys.process.exit(1);
-        };
-        _ = sys.io.write(1, err_msg) catch {};
     }
+
+    _ = sys.io.write(1, "[micros-init] Spawning MicroShell (msh)...\n\n") catch {};
+    var shell = msh.Shell.init(allocator, 0, 1);
+    defer shell.deinit();
+
+    shell.executeLine("echo MicroShell initialized by PID 1.");
+    shell.executeLine("ready = 1");
 
     _ = sys.io.write(1, "[micros-init] Execution completed. Halting.\n") catch {};
     sys.process.exit(0);

@@ -26,27 +26,64 @@ pub const Parser = struct {
         self.current_token = self.lex.nextToken();
     }
 
+    fn matchBinaryOp(tok: lexer.TokenType) ?ast.BinaryOperator {
+        switch (tok) {
+            .plus => return .plus,
+            .minus => return .minus,
+            .equal_equal => return .equal_equal,
+            else => return null,
+        }
+    }
+
+    fn parseAssignment(self: *Parser, target_name: []const u8) ParseError!*ast.Node {
+        self.advance(); // consume '='
+        const val = try self.parseExpression();
+
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{
+            .assignment = ast.Assignment{
+                .target = ast.Identifier{ .name = target_name },
+                .value = val,
+            },
+        };
+        return node;
+    }
+
+    pub fn parseStatement(self: *Parser) ParseError!*ast.Node {
+        if (self.current_token.token_type == .identifier) {
+            const name = self.current_token.lexeme;
+            var lookahead = self.lex;
+            const next_tok = lookahead.nextToken();
+            if (next_tok.token_type == .equal) {
+                self.advance(); // consume identifier
+                return self.parseAssignment(name);
+            }
+        }
+        return self.parseExpression();
+    }
+
     pub fn parseExpression(self: *Parser) ParseError!*ast.Node {
         const left = try self.parsePrimary();
 
-        if (self.current_token.token_type == .plus or self.current_token.token_type == .minus) {
-            return self.parseBinaryRight(left);
+        if (matchBinaryOp(self.current_token.token_type)) |op| {
+            return self.parseBinaryRight(left, op);
         }
 
         return left;
     }
 
-    fn parseBinaryRight(self: *Parser, left: *ast.Node) ParseError!*ast.Node {
-        const op: ast.BinaryOperator = if (self.current_token.token_type == .plus) .plus else .minus;
+    fn parseBinaryRight(self: *Parser, left: *ast.Node, op: ast.BinaryOperator) ParseError!*ast.Node {
         self.advance();
         const right = try self.parsePrimary();
 
         const node = try self.allocator.create(ast.Node);
-        node.* = ast.Node{ .binary_expr = ast.BinaryExpr{
-            .left = left,
-            .operator = op,
-            .right = right,
-        } };
+        node.* = ast.Node{
+            .binary_expr = ast.BinaryExpr{
+                .left = left,
+                .operator = op,
+                .right = right,
+            },
+        };
         return node;
     }
 
@@ -81,8 +118,9 @@ pub const Parser = struct {
     }
 };
 
+const testing = std.testing;
+
 test "Parser binary expression" {
-    const testing = std.testing;
     var p = Parser.init(testing.allocator, "foo + 42");
 
     const node = try p.parseExpression();
@@ -95,4 +133,30 @@ test "Parser binary expression" {
     try testing.expectEqual(ast.BinaryOperator.plus, node.binary_expr.operator);
     try testing.expectEqualStrings("foo", node.binary_expr.left.identifier.name);
     try testing.expectEqualStrings("42", node.binary_expr.right.number_literal.value);
+}
+
+test "Parser assignment statement" {
+    var p = Parser.init(testing.allocator, "alpha = 99");
+
+    const node = try p.parseStatement();
+    defer {
+        testing.allocator.destroy(node.assignment.value);
+        testing.allocator.destroy(node);
+    }
+
+    try testing.expectEqualStrings("alpha", node.assignment.target.name);
+    try testing.expectEqualStrings("99", node.assignment.value.number_literal.value);
+}
+
+test "Parser equality expression" {
+    var p = Parser.init(testing.allocator, "10 == 10");
+
+    const node = try p.parseExpression();
+    defer {
+        testing.allocator.destroy(node.binary_expr.left);
+        testing.allocator.destroy(node.binary_expr.right);
+        testing.allocator.destroy(node);
+    }
+
+    try testing.expectEqual(ast.BinaryOperator.equal_equal, node.binary_expr.operator);
 }

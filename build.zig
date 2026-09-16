@@ -15,6 +15,17 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(init_exe);
 
+    // MicroShell (msh)
+    const msh_exe = b.addExecutable(.{
+        .name = "msh",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/msh_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(msh_exe);
+
     // Substrate Toolchain
     const ToolDef = struct {
         name: []const u8,
@@ -65,4 +76,14 @@ pub fn build(b: *std.Build) void {
     });
     const run_macros_test = b.addRunArtifact(macros_test);
     test_step.dependOn(&run_macros_test.step);
+
+    const msh_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/msh.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_msh_test = b.addRunArtifact(msh_test);
+    test_step.dependOn(&run_msh_test.step);
 }
