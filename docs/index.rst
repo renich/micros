@@ -24,3 +24,15 @@ Welcome to the sovereign documentation repository for MicrOS (µOS) and the Macr
    project/roadmaps/milestone-12-resident-ai-substrate
    project/roadmaps/milestone-13-interactive-harness
    project/audits/2026-09-17-full-documentation-audit
+
+Support & Donations
+===================
+
+MicrOS is an independent, sovereign operating system research and engineering effort. If you wish to support ongoing development:
+
+.. image:: https://liberapay.com/assets/widgets/donate.svg
+   :target: https://liberapay.com/renich
+   :alt: Donate using Liberapay
+
+Direct contributions can be made on `liberapay.com/renich <https://liberapay.com/renich>`_.
+
