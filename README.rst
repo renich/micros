@@ -14,6 +14,21 @@ MicrOS (µOS)
 :Status: Sovereign Substrate & Pluggable Resident AI (Milestone 10/12)
 :License: GPLv3 or later
 
+|
+
+.. image:: https://img.shields.io/badge/Donate-Liberapay-f6c915.svg?logo=liberapay&logoColor=black
+   :target: https://liberapay.com/renich
+   :alt: Donate using Liberapay
+.. image:: https://img.shields.io/liberapay/receives/renich.svg?logo=liberapay
+   :target: https://liberapay.com/renich
+   :alt: Liberapay Receives
+.. image:: https://img.shields.io/liberapay/patrons/renich.svg?logo=liberapay
+   :target: https://liberapay.com/renich
+   :alt: Liberapay Patrons
+.. image:: https://img.shields.io/liberapay/goal/renich.svg?logo=liberapay
+   :target: https://liberapay.com/renich
+   :alt: Liberapay Goal Progress
+
 Computing took a wrong turn fifty years ago.
 
 In 1969, Unix was designed for teletypewriters, PDP-11 minicomputers, and multi-user time-sharing on slow magnetic drums. Today, humanity is running planetary-scale artificial intelligence on top of thirty-five million lines of legacy C, untyped ASCII string pipes, ambient-authority vulnerabilities, and desktop stacks that consume gigabytes of RAM just to paint an empty window.
@@ -28,7 +43,8 @@ The Three Pillars
 =================
 
 I. Post-POSIX: Stripping 50 Years of Accumulated Rot
----------------------------------------------------
+----------------------------------------------------
+
 * **Zero Libc, Zero C Runtime**: A pure, mathematically auditable Zig microkernel under 15,000 lines of code. It does not parse network packets, does not contain device drivers, and does not enforce desktop policy.
 * **Eradication of Ambient Authority**: There is no ``root`` user. There is no UID 0. There is no ``sudo``. Processes run in capability spaces (CSpace). If a process does not hold an unforgeable cryptographic capability token (``cap_t``), the resource mathematically does not exist to it.
 * **Typed Memory Over ASCII Pipes**: Unix pipes pass unstructured byte streams that break on whitespace and invite command injection. In MicrOS, IPC channels are lock-free shared-memory ring buffers passing strongly typed binary structs at hardware cache speeds.
@@ -105,6 +121,7 @@ Quick Start
 
 Prerequisites
 -------------
+
 * `Zig 0.16.0 <https://ziglang.org/>`_
 * GNU Make
 * QEMU (``qemu-system-x86_64``)
@@ -142,3 +159,32 @@ A Call to Explorers
 MicrOS is not an academic toy, and it is not another Linux distribution with a bespoke package manager. It is an exploration into what computing becomes when we throw away half a century of accumulated compromises and build an operating system native to the age of machine intelligence.
 
 If you are a systems hacker, language designer, or AI researcher who refuses to believe that POSIX is the end of history: clone the repository, run the test suite, and boot the machine.
+
+--------------------------------------------------------------------------------
+
+Support & Donations
+===================
+
+If you find MicrOS inspiring or useful and wish to support its ongoing sovereign engineering and research, please consider donating:
+
+.. image:: https://liberapay.com/assets/widgets/donate.svg
+   :target: https://liberapay.com/renich
+   :alt: Donate using Liberapay
+
+|
+
+.. image:: https://img.shields.io/badge/Donate-Liberapay-f6c915.svg?logo=liberapay&logoColor=black
+   :target: https://liberapay.com/renich
+   :alt: Donate using Liberapay
+.. image:: https://img.shields.io/liberapay/receives/renich.svg?logo=liberapay
+   :target: https://liberapay.com/renich
+   :alt: Liberapay Receives
+.. image:: https://img.shields.io/liberapay/patrons/renich.svg?logo=liberapay
+   :target: https://liberapay.com/renich
+   :alt: Liberapay Patrons
+.. image:: https://img.shields.io/liberapay/goal/renich.svg?logo=liberapay
+   :target: https://liberapay.com/renich
+   :alt: Liberapay Goal Progress
+
+Direct contributions can be made at `liberapay.com/renich <https://liberapay.com/renich>`_.
+
