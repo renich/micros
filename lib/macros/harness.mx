@@ -198,7 +198,7 @@ fn cmd_ai(prompt) {
     console_writeln("[ai] Querying Resident AI...", 57599);
     resp = sys_ai_prompt(prompt);
     if (len(resp) == 0) {
-        console_writeln("[ai] No response or connection timeout.", 16777215);
+        console_writeln("[ai] No response or auth failure (check API key / AI_PROVIDER).", 16777215);
         return 0;
     }
     console_writeln("*** AI COGNITIVE STREAM ***", 57599);

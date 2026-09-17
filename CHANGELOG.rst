@@ -10,6 +10,12 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Zero-Crash TLS 1.3 & ABI Calling Convention Hardening**:
+  - **Fiber Stack Expansion & Heap Hardening**: Increased fiber stack allocation from 128 KiB to 512 KiB (``src/macros/fiber.zig``) and kernel heap from 4 MiB to 8 MiB (``src/kernel/main.zig``), eradicating silent stack overflow over adjacent VM state during freestanding TLS 1.3 cryptographic key exchange and handshakes.
+  - **Win64 ABI Calling Convention & Shadow Space in IDT**: Fixed exception and interrupt assembly trampolines in ``src/kernel/arch/x86_64/idt.zig`` to adhere strictly to UEFI / Windows x64 calling conventions (passing arguments via ``%rcx`` and allocating mandatory 32-byte shadow store + 8-byte alignment), preventing triple-fault CPU resets upon hardware traps.
+  - **Persistent Drive Integration in GNUmakefile**: Configured ``make qemu-uefi`` to automatically provision and attach ``build/micros-disk.raw`` via VirtIO-Blk, enabling persistent storage and CAS out of the box in interactive UEFI runs.
+  - **AI Provider Diagnostics**: Added boot-time detection and warning when external resident AI providers lack configured API keys, with clarified harness diagnostic feedback.
+
 - **Modern Minimalist Terminal Experience & Serial Telemetry**:
   - **Sleek Minimalist Card Header**: Replaced retro ASCII block banners with a modern, column-aligned UTF-8 card border (``┌─┐``) styled in subtle charcoal gray (``\x1b[90m``), glowing cyan (``\x1b[1;96m``), and crisp white (``\x1b[97m``).
   - **Structured Status Badges**: Eliminated noisy debug dumps and arbitrary step prefixes (``Step 1..8``, PCI probing chatter) in favor of fixed-width emerald green status badges (``[  ok  ]``) with categorized bold cyan subsystem tags (``boot``, ``arch``, ``mmu``, ``net``, ``dhcp``, ``blk``, ``cas``, ``cap``, ``gop``, ``mcb``, ``act``, ``spawn``, ``persist``).

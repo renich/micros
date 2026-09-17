@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const STACK_SIZE: usize = 128 * 1024; // 128 KB stack per fiber
+pub const STACK_SIZE: usize = 512 * 1024; // 512 KB stack per fiber (accommodates TLS 1.3 cryptographic state)
 
 pub const FiberState = enum {
     ready,

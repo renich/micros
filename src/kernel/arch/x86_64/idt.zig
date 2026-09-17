@@ -129,7 +129,10 @@ fn genericExceptionHandler() callconv(.naked) void {
         \\ push %%r10
         \\ push %%r11
         \\ leaq 72(%%rsp), %%rdi
+        \\ movq %%rdi, %%rcx
+        \\ subq $40, %%rsp
         \\ call exceptionHandlerZig
+        \\ addq $40, %%rsp
         \\ pop %%r11
         \\ pop %%r10
         \\ pop %%r9
@@ -171,7 +174,9 @@ fn keyboardInterruptHandler() callconv(.naked) void {
         \\ push %%r9
         \\ push %%r10
         \\ push %%r11
+        \\ subq $40, %%rsp
         \\ call kbdHandlerZig
+        \\ addq $40, %%rsp
         \\ pop %%r11
         \\ pop %%r10
         \\ pop %%r9

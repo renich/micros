@@ -107,9 +107,13 @@ uefi-boot: all
 ## qemu-uefi: Boot bare-metal MicrOS UEFI in QEMU with live display & serial
 qemu-uefi: uefi-boot
 	@echo "=> Booting MicrOS UEFI in QEMU with live display..."
+	@mkdir -p build
+	@if [ ! -f build/micros-disk.raw ]; then truncate -s 64M build/micros-disk.raw; fi
 	@qemu-system-x86_64 -enable-kvm -cpu host -m 512M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive format=raw,file=fat:rw:build/esp \
+		-drive id=disk0,if=none,format=raw,file=build/micros-disk.raw \
+		-device virtio-blk-pci,drive=disk0 \
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		-serial stdio

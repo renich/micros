@@ -37,7 +37,7 @@ const config = @import("config");
 
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
 
-const KERNEL_HEAP_SIZE: usize = 4 * 1024 * 1024;
+const KERNEL_HEAP_SIZE: usize = 8 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
 
 const COLOR_BG: u32 = 0x000F1E;
@@ -233,6 +233,9 @@ fn initAiClient() void {
         .api_key = config.ai_api_key,
     };
     global_ai_client = ai_mod.client.AiClient.init(cfg);
+    if (ptype != .mock and ptype != .local_http and config.ai_api_key.len == 0) {
+        serial.writeStatusWarn("ai  ", "No API key configured for resident AI");
+    }
 }
 
 fn readAiResponse(out_text: []u8) usize {
