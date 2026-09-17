@@ -16,18 +16,24 @@ MicrOS (µOS)
 
 |
 
+.. image:: https://img.shields.io/badge/Substrate-Zig_0.16.0-f7a41d.svg?logo=zig&logoColor=white
+   :target: https://ziglang.org/
+   :alt: Substrate: Zig 0.16.0
+.. image:: https://img.shields.io/badge/Language-Macros-7b2cbf.svg
+   :target: docs/technical/specs/macros-lang.rst
+   :alt: Applications: Macros
+.. image:: https://img.shields.io/badge/Resident_AI-Gemini_Flash-4285F4.svg?logo=googlegemini&logoColor=white
+   :target: docs/technical/specs/sovereign-gemini-orchestrator.rst
+   :alt: Resident AI: Gemini Flash
+.. image:: https://img.shields.io/badge/Architecture-Post--POSIX-00bcd4.svg
+   :target: docs/micros_genesis_plan.rst
+   :alt: Architecture: Post-POSIX
+.. image:: https://img.shields.io/badge/License-GPLv3-blue.svg?logo=gnu&logoColor=white
+   :target: LICENSE
+   :alt: License: GPLv3
 .. image:: https://img.shields.io/badge/Donate-Liberapay-f6c915.svg?logo=liberapay&logoColor=black
    :target: https://liberapay.com/renich
    :alt: Donate using Liberapay
-.. image:: https://img.shields.io/liberapay/receives/renich.svg?logo=liberapay
-   :target: https://liberapay.com/renich
-   :alt: Liberapay Receives
-.. image:: https://img.shields.io/liberapay/patrons/renich.svg?logo=liberapay
-   :target: https://liberapay.com/renich
-   :alt: Liberapay Patrons
-.. image:: https://img.shields.io/liberapay/goal/renich.svg?logo=liberapay
-   :target: https://liberapay.com/renich
-   :alt: Liberapay Goal Progress
 
 Computing took a wrong turn fifty years ago.
 
@@ -170,21 +176,6 @@ If you find MicrOS inspiring or useful and wish to support its ongoing sovereign
 .. image:: https://liberapay.com/assets/widgets/donate.svg
    :target: https://liberapay.com/renich
    :alt: Donate using Liberapay
-
-|
-
-.. image:: https://img.shields.io/badge/Donate-Liberapay-f6c915.svg?logo=liberapay&logoColor=black
-   :target: https://liberapay.com/renich
-   :alt: Donate using Liberapay
-.. image:: https://img.shields.io/liberapay/receives/renich.svg?logo=liberapay
-   :target: https://liberapay.com/renich
-   :alt: Liberapay Receives
-.. image:: https://img.shields.io/liberapay/patrons/renich.svg?logo=liberapay
-   :target: https://liberapay.com/renich
-   :alt: Liberapay Patrons
-.. image:: https://img.shields.io/liberapay/goal/renich.svg?logo=liberapay
-   :target: https://liberapay.com/renich
-   :alt: Liberapay Goal Progress
 
 Direct contributions can be made at `liberapay.com/renich <https://liberapay.com/renich>`_.
 
