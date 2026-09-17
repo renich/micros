@@ -2,6 +2,18 @@
 // Executed natively inside Actor 0 under capability control.
 // Provides live status, vector canvas rendering, actor inspection, and command loop.
 
+fn init_ansi() {
+    ESC = char_to_str(27);
+    ANSI_RESET = ESC + "[0m";
+    ANSI_BOLD = ESC + "[1m";
+    ANSI_DIM = ESC + "[2m";
+    ANSI_CYAN = ESC + "[96m";
+    ANSI_GREEN = ESC + "[92m";
+    ANSI_YELLOW = ESC + "[93m";
+    ANSI_GRAY = ESC + "[90m";
+    ANSI_WHITE = ESC + "[97m";
+}
+
 fn draw_header() {
     sys_fb_draw_rect(0, 0, 1280, 48, 100000);
     sys_fb_draw_string(20, 12, "MicrOS (uOS) Sovereign Harness v1.0", 57599, 100000);
@@ -123,36 +135,63 @@ fn is_prefix(str, pre) {
 }
 
 fn cmd_help() {
-    console_writeln("Supported commands:", 57599);
-    console_writeln("  help          - Show this reference menu", 16777215);
-    console_writeln("  status        - Show active actors and substrate telemetry", 16777215);
-    console_writeln("  actors        - Enumerate all registered actors", 16777215);
-    console_writeln("  clear         - Clear the Console viewport", 16777215);
+    console_writeln("-- System Commands -----------------------------", 57599);
+    console_writeln("  help          - Show this command reference", 16777215);
+    console_writeln("  status        - Substrate health and telemetry", 16777215);
+    console_writeln("  actors        - List registered actors and state", 16777215);
+    console_writeln("  clear         - Clear the console viewport", 16777215);
     console_writeln("  kill <id>     - Terminate actor by ID", 16777215);
-    console_writeln("  ai <prompt>   - Dispatch natural language task to Resident AI", 16777215);
-    console_writeln("  store <code>  - Store raw code or text into persistent CAS", 16777215);
-    console_writeln("  fetch <hash>  - Retrieve and display payload from CAS by hash", 16777215);
-    console_writeln("  persist <id>  - Persist actor source to CAS and update root hash", 16777215);
-    console_writeln("  spawn_cas <h> - Restore and spawn dynamic actor from CAS hash", 16777215);
-    console_writeln("  exit          - Terminate harness event loop and halt", 16777215);
+    console_writeln("  exit          - Halt sovereign harness", 16777215);
+    console_writeln("-- Cognitive & Synthesis -----------------------", 57599);
+    console_writeln("  ai <prompt>   - Dispatch natural language task to AI", 16777215);
+    console_writeln("-- Sovereign Persistence (CAS) -----------------", 57599);
+    console_writeln("  store <code>  - Store raw code or text into CAS", 16777215);
+    console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash", 16777215);
+    console_writeln("  persist <id>  - Persist actor source to CAS root", 16777215);
+    console_writeln("  spawn_cas <h> - Restore & spawn actor from CAS hash", 16777215);
 }
 
 fn cmd_status() {
-    console_writeln("Active Actors: " + int_to_str(sys_actor_count()), 5306999);
-    console_writeln("Supervisor Faults: " + int_to_str(sys_fault_count()), 5306999);
-    console_writeln("Substrate Status: Sovereign (Zero Defects)", 5306999);
+    console_writeln("* Substrate : Sovereign (Zero Defects)", 5306999);
+    console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active", 5306999);
+    console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained", 5306999);
+}
+
+fn state_name(st) {
+    if (st == 1) { return "ready"; }
+    if (st == 2) { return "running"; }
+    if (st == 3) { return "paused"; }
+    if (st == 4) { return "faulted"; }
+    if (st == 5) { return "stopped"; }
+    return "inactive";
+}
+
+fn pad_right_18(str) {
+    pad = 18 - len(str);
+    res = str;
+    while (pad > 0) {
+        res = res + " ";
+        pad = pad - 1;
+    }
+    return res;
 }
 
 fn cmd_actors() {
-    console_writeln("--- Registered Actors ---", 57599);
+    console_writeln("------------------------------------------------", 57599);
+    console_writeln(" ID  Name               State", 57599);
+    console_writeln("------------------------------------------------", 57599);
     aid = 0;
     while (aid < 8) {
         ast = sys_actor_state(aid);
         if (ast >= 0) {
-            console_writeln("  Actor " + int_to_str(aid) + ": " + sys_actor_name(aid) + " (state: " + int_to_str(ast) + ")", 16777215);
+            id_s = int_to_str(aid);
+            if (len(id_s) == 1) { id_s = " " + id_s; }
+            nm = pad_right_18(sys_actor_name(aid));
+            console_writeln(" " + id_s + "  " + nm + " " + state_name(ast), 16777215);
         }
         aid = aid + 1;
     }
+    console_writeln("------------------------------------------------", 57599);
 }
 
 fn cmd_ai(prompt) {
@@ -238,13 +277,49 @@ fn eval_command(cmd) {
 }
 
 fn draw_prompt() {
-    console_write("macros> ", 57599);
+    sys_fb_draw_string(cur_x, cur_y, "macros> ", 57599, 65822);
+    cur_x = cur_x + 64;
+    sys_serial_write(ANSI_BOLD + ANSI_CYAN + "µOS " + ANSI_GREEN + "macros>" + ANSI_RESET + " ");
 }
 
 fn poll_char() {
     c = sys_serial_read();
     if (c >= 0) { return c; }
     return sys_kbd_read();
+}
+
+fn handle_newline(buf) {
+    console_newline();
+    if (len(buf) > 0) {
+        if (buf == "exit") {
+            console_writeln("Halting Sovereign Harness.", 57599);
+            return false;
+        }
+        if (buf == "quit") {
+            console_writeln("Halting Sovereign Harness.", 57599);
+            return false;
+        }
+        eval_command(buf);
+    }
+    return true;
+}
+
+fn handle_backspace(buf) {
+    if (len(buf) > 0) {
+        cur_x = cur_x - 8;
+        sys_fb_draw_rect(cur_x, cur_y, 8, 16, 65822);
+        sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+        return substr(buf, 0, len(buf) - 1);
+    }
+    return buf;
+}
+
+fn handle_printable(buf, c) {
+    ch_str = char_to_str(c);
+    sys_fb_draw_string(cur_x, cur_y, ch_str, 16777215, 65822);
+    cur_x = cur_x + 8;
+    sys_serial_write(ch_str);
+    return buf + ch_str;
 }
 
 fn harness_loop() {
@@ -256,61 +331,20 @@ fn harness_loop() {
         if (c < 0) {
             sys_yield();
         } else if (c == 13) {
-            console_newline();
-            if (len(line_buf) > 0) {
-                if (line_buf == "exit") {
-                    console_writeln("Halting Sovereign Harness.", 57599);
-                    running = false;
-                } else if (line_buf == "quit") {
-                    console_writeln("Halting Sovereign Harness.", 57599);
-                    running = false;
-                } else {
-                    eval_command(line_buf);
-                }
-                line_buf = "";
-            }
-            if (running) {
-                draw_prompt();
-            }
+            running = handle_newline(line_buf);
+            line_buf = "";
+            if (running) { draw_prompt(); }
         } else if (c == 10) {
-            console_newline();
-            if (len(line_buf) > 0) {
-                if (line_buf == "exit") {
-                    console_writeln("Halting Sovereign Harness.", 57599);
-                    running = false;
-                } else if (line_buf == "quit") {
-                    console_writeln("Halting Sovereign Harness.", 57599);
-                    running = false;
-                } else {
-                    eval_command(line_buf);
-                }
-                line_buf = "";
-            }
-            if (running) {
-                draw_prompt();
-            }
+            running = handle_newline(line_buf);
+            line_buf = "";
+            if (running) { draw_prompt(); }
         } else if (c == 8) {
-            if (len(line_buf) > 0) {
-                line_buf = substr(line_buf, 0, len(line_buf) - 1);
-                cur_x = cur_x - 8;
-                sys_fb_draw_rect(cur_x, cur_y, 8, 16, 65822);
-                sys_serial_write(char_to_str(8) + " " + char_to_str(8));
-            }
-            0;
+            line_buf = handle_backspace(line_buf);
         } else if (c == 127) {
-            if (len(line_buf) > 0) {
-                line_buf = substr(line_buf, 0, len(line_buf) - 1);
-                cur_x = cur_x - 8;
-                sys_fb_draw_rect(cur_x, cur_y, 8, 16, 65822);
-                sys_serial_write(char_to_str(8) + " " + char_to_str(8));
-            }
-            0;
+            line_buf = handle_backspace(line_buf);
         } else if (c >= 32) {
             if (c <= 126) {
-                line_buf = line_buf + char_to_str(c);
-                sys_fb_draw_string(cur_x, cur_y, char_to_str(c), 16777215, 65822);
-                cur_x = cur_x + 8;
-                sys_serial_write(char_to_str(c));
+                line_buf = handle_printable(line_buf, c);
             }
             0;
         }
@@ -318,17 +352,18 @@ fn harness_loop() {
 }
 
 fn harness_main() {
-    sys_serial_write("[harness] Initializing Sovereign Actor Harness in Actor 0...\n");
+    init_ansi();
     draw_header();
     draw_panels();
     render_inspector();
+    sys_serial_write("\n" + ANSI_GRAY + "-- " + ANSI_BOLD + ANSI_CYAN + "Sovereign Actor Harness" + ANSI_RESET + " " + ANSI_GRAY + "-----------------------------------" + ANSI_RESET + "\n");
+    sys_serial_write("[harness] Visual canvas and vector status rendered successfully.\n");
+    sys_serial_write("[harness] MicrOS (uOS) Sovereign Genesis Actor Online\n");
+    sys_serial_write(ANSI_GRAY + "  Type '" + ANSI_WHITE + "help" + ANSI_GRAY + "' for commands or '" + ANSI_WHITE + "ai <prompt>" + ANSI_GRAY + "' to synthesize actors." + ANSI_RESET + "\n\n");
     console_writeln("[SOVEREIGN HARNESS ACTIVE]", 5306999);
     console_writeln("Interactive construction environment online.", 16777215);
     console_writeln("Hardware input: PS/2 Keyboard and COM1 Serial.", 16777215);
     console_writeln("Type 'help' for command reference, or 'ai <prompt>' to create.", 16777215);
-    sys_serial_write("[harness] Visual canvas and vector status rendered successfully.\n");
-    sys_serial_write("[harness] MicrOS (uOS) Sovereign Genesis Actor Online\n");
-    sys_serial_write("[harness] Ready for interactive execution and actor supervision.\n");
     harness_loop();
 }
 

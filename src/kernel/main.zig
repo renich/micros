@@ -73,24 +73,32 @@ fn kernelPanic(stage: []const u8) noreturn {
     haltLoop();
 }
 
+fn printBanner() void {
+    serial.writeString("\n\x1b[90m┌──────────────────────────────────────────────────────────┐\x1b[0m\n");
+    serial.writeString("\x1b[90m│  \x1b[1;96mµOS\x1b[0m \x1b[90m·\x1b[0m \x1b[97mMicrOS Sovereign Substrate (Milestone 14)\x1b[0m         \x1b[90m│\x1b[0m\n");
+    serial.writeString("\x1b[90m│  \x1b[2;37mZero Libc · Capability Security · Autonomous Genesis\x1b[0m    \x1b[90m│\x1b[0m\n");
+    serial.writeString("\x1b[90m└──────────────────────────────────────────────────────────┘\x1b[0m\n\n");
+}
+
 fn initHardware(boot_info: *const BootInfo) void {
     asm volatile ("cli");
     serial.init();
-    serial.writeString("\n=============================================\n");
-    serial.writeString(" MicrOS (µOS) Sovereign Substrate (Milestone 14)\n");
-    serial.writeString("=============================================\n");
+    printBanner();
 
     if (boot_info.magic != boot_info_mod.BOOT_INFO_MAGIC) {
         serial.writeString("[kernel] Fatal: Invalid BootInfo signature!\n");
         haltLoop();
     }
-    serial.writeString("[kernel] BootInfo validated successfully.\n");
+    serial.writeStatusOk("boot", "UEFI handoff parameters validated");
 
     gdt.init();
     idt.init();
+    serial.writeStatusOk("arch", "GDT and IDT fault containment active");
+
     pmm.init(boot_info);
     vmm.init(boot_info.hhdm_offset);
-    serial.writeString("[kernel] GDT, IDT, PMM, and VMM initialized.\n");
+    serial.writeStatusOk("mmu ", "PMM physical and VMM virtual paging active");
+
     initNetwork(boot_info);
 }
 
@@ -104,23 +112,10 @@ fn printMac(mac: *const [6]u8) void {
 }
 
 fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo) void {
-    serial.writeString("[kernel] Entering initVirtioNet...\n");
-    const rx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse {
-        serial.writeString("[kernel] PMM allocContiguousPages failed for rx_ring\n");
-        return;
-    };
-    const tx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse {
-        serial.writeString("[kernel] PMM allocContiguousPages failed for tx_ring\n");
-        return;
-    };
-    const rx_buf = pmm.allocContiguousPages(16) orelse {
-        serial.writeString("[kernel] PMM allocContiguousPages failed for rx_buf\n");
-        return;
-    };
-    const tx_buf = pmm.allocPage() orelse {
-        serial.writeString("[kernel] PMM allocPage failed for tx_buf\n");
-        return;
-    };
+    const rx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse return;
+    const tx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse return;
+    const rx_buf = pmm.allocContiguousPages(16) orelse return;
+    const tx_buf = pmm.allocPage() orelse return;
 
     global_virtio_net = virtio_net_mod.VirtioNetDevice.init(
         net_dev,
@@ -135,15 +130,14 @@ fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo) void {
         serial.writeString("\n");
         return;
     };
-    serial.writeString("[kernel] VirtIO-Net active. MAC: ");
+    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mnet \x1b[90m: \x1b[97mVirtIO-Net 1.0 active (MAC \x1b[0m");
     printMac(&global_virtio_net.?.mac);
-    serial.writeString("\n");
+    serial.writeString("\x1b[97m)\x1b[0m\n");
 }
 
 fn runDhcpHandshake() void {
     if (global_virtio_net == null) return;
     global_net_stack = net_mod.stack.NetworkStack.init(&global_virtio_net.?);
-    serial.writeString("[kernel] Initiating DHCP auto-configuration...\n");
 
     var attempt: usize = 0;
     while (!global_net_stack.?.dhcp_config.bound and attempt < 5) : (attempt += 1) {
@@ -155,7 +149,7 @@ fn runDhcpHandshake() void {
     }
 
     if (!global_net_stack.?.dhcp_config.bound) {
-        serial.writeString("[kernel] Warning: DHCP timeout.\n");
+        serial.writeStatusWarn("dhcp", "Network auto-configuration timed out");
     }
 }
 
@@ -398,11 +392,11 @@ fn compileActorScript(allocator: std.mem.Allocator, source: []const u8) !*chunk_
 }
 
 fn logActorSpawn(id: u32, name: []const u8) void {
-    serial.writeString("[kernel] Spawned dynamic Actor ");
-    serial.writeHex(id);
-    serial.writeString(" (");
+    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mspawn\x1b[90m: \x1b[97mActor \x1b[0m");
+    serial.writeDec(id);
+    serial.writeString(" \x1b[97m(\x1b[0m");
     serial.writeString(name);
-    serial.writeString(") successfully.\n");
+    serial.writeString("\x1b[97m) online\x1b[0m\n");
 }
 
 fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
@@ -468,9 +462,9 @@ fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     const hash = try global_cas.?.putChunk(.actor_source, src, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
     try global_cas.?.setRootHash(&hash, dev);
-    serial.writeString("[storage] Actor ");
-    serial.writeHex(actor_id);
-    serial.writeString(" persisted with hash: ");
+    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mpersist\x1b[90m: \x1b[97mActor \x1b[0m");
+    serial.writeDec(actor_id);
+    serial.writeString(" \x1b[97mroot hash \x1b[0m");
     serial.writeString(out_hex);
     serial.writeString("\n");
 }
@@ -486,14 +480,8 @@ fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u
 }
 
 fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
-    const ring_phys = pmm.allocContiguousPages(virtio_blk_mod.QUEUE_PAGES) orelse {
-        serial.writeString("[kernel] PMM alloc failed for virtio-blk ring\n");
-        return false;
-    };
-    const dma_phys = pmm.allocContiguousPages(virtio_blk_mod.DMA_PAGES) orelse {
-        serial.writeString("[kernel] PMM alloc failed for virtio-blk dma\n");
-        return false;
-    };
+    const ring_phys = pmm.allocContiguousPages(virtio_blk_mod.QUEUE_PAGES) orelse return false;
+    const dma_phys = pmm.allocContiguousPages(virtio_blk_mod.DMA_PAGES) orelse return false;
 
     global_virtio_blk = virtio_blk_mod.VirtioBlkDevice.init(
         blk_pci,
@@ -507,9 +495,9 @@ fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
         return false;
     };
 
-    serial.writeString("[kernel] VirtIO-Blk active. Sectors: 0x");
-    serial.writeHex(global_virtio_blk.?.capacity_sectors);
-    serial.writeString("\n");
+    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mblk \x1b[90m: \x1b[97mVirtIO-Blk persistent drive (capacity: \x1b[0m");
+    serial.writeDec(global_virtio_blk.?.capacity_sectors);
+    serial.writeString("\x1b[97m sectors)\x1b[0m\n");
     return true;
 }
 
@@ -532,9 +520,7 @@ fn initStorageEngines(allocator: std.mem.Allocator) void {
         return;
     };
 
-    serial.writeString("[kernel] CAS engine active. Next free sec: 0x");
-    serial.writeHex(global_cas.?.superblock.next_free_sector);
-    serial.writeString("\n");
+    serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
 }
 
 fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
@@ -543,40 +529,21 @@ fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocat
 }
 
 fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
-    serial.writeString("[kernel] Probing PCI bus for block devices...\n");
     const maybe_blk = pci_mod.findBlockDevice();
     if (maybe_blk) |blk_dev| {
-        serial.writeString("[kernel] Found PCI block device. Vendor: 0x");
-        serial.writeHex(blk_dev.vendor_id);
-        serial.writeString(" Device: 0x");
-        serial.writeHex(blk_dev.device_id);
-        serial.writeString("\n");
         if (blk_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
             initVirtioBlk(blk_dev, boot_info, allocator);
         }
-    } else {
-        serial.writeString("[kernel] No PCI block device found.\n");
     }
 }
 
 fn initNetwork(boot_info: *const BootInfo) void {
-    serial.writeString("[kernel] Probing PCI bus for network devices...\n");
     const maybe_net = pci_mod.findNetworkDevice();
     if (maybe_net) |net_dev| {
-        serial.writeString("[kernel] Found PCI net device. Vendor: 0x");
-        serial.writeHex(net_dev.vendor_id);
-        serial.writeString(" Device: 0x");
-        serial.writeHex(net_dev.device_id);
-        serial.writeString("\n");
         if (net_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
-            serial.writeString("[kernel] Vendor matches VENDOR_VIRTIO. Calling initVirtioNet...\n");
             initVirtioNet(net_dev, boot_info);
             runDhcpHandshake();
-        } else {
-            serial.writeString("[kernel] Vendor did not match VIRTIO.\n");
         }
-    } else {
-        serial.writeString("[kernel] No PCI network device found.\n");
     }
 }
 
@@ -651,8 +618,13 @@ fn registerGenesisCapabilities(
     try registerStorageCap(genesis);
 }
 
-fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !chunk_mod.Chunk {
-    var chunk = chunk_mod.Chunk.init();
+fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {
+    const chunk = try allocator.create(chunk_mod.Chunk);
+    chunk.* = chunk_mod.Chunk.init();
+    errdefer {
+        chunk.deinit(allocator);
+        allocator.destroy(chunk);
+    }
     const msg = eval_mod.Value{ .string = "Genesis Actor executing in Actor 0 under CSpace capability control." };
     const c_idx = try chunk.addConstant(allocator, msg);
 
@@ -664,35 +636,39 @@ fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !chunk_mod.Chunk {
     return chunk;
 }
 
-fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !chunk_mod.Chunk {
+fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*chunk_mod.Chunk {
     const raw_bundle: []const u8 = if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0)
         @as([*]const u8, @ptrFromInt(boot_info.bundle_base))[0..boot_info.bundle_size]
     else
         EMBEDDED_GENESIS_BUNDLE;
 
     const reader = bundle_mod.BundleReader.init(raw_bundle) catch {
-        serial.writeString("[kernel] Warning: BundleReader failed. Using fallback chunk.\n");
-        return buildFallbackGenesisChunk(allocator);
+        serial.writeStatusWarn("mcb ", "BundleReader failed. Using fallback chunk");
+        return try buildFallbackGenesisChunk(allocator);
     };
 
     const maybe_source = reader.findData("harness.mx") orelse reader.findData("init.mx");
     if (maybe_source) |source| {
         global_actor_sources[actor_mod.GENESIS_ACTOR_ID] = source;
-        serial.writeString("[kernel] Found startup script in Genesis MCB bundle. Compiling...\n");
-        var chunk = chunk_mod.Chunk.init();
-        var compiler = compiler_mod.Compiler.init(allocator, &chunk);
+        const chunk = try allocator.create(chunk_mod.Chunk);
+        chunk.* = chunk_mod.Chunk.init();
+        errdefer {
+            chunk.deinit(allocator);
+            allocator.destroy(chunk);
+        }
+        var compiler = compiler_mod.Compiler.init(allocator, chunk);
         var p = parser_mod.Parser.init(allocator, source);
         while (p.current_token.token_type != .eof) {
             const stmt = try p.parseStatement();
             try compiler.compile(stmt);
         }
         try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
-        serial.writeString("[kernel] Script compiled successfully.\n");
+        serial.writeStatusOk("mcb ", "Genesis bundle loaded and compiled (harness.mx)");
         return chunk;
     }
 
-    serial.writeString("[kernel] No startup script found in bundle. Using fallback chunk.\n");
-    return buildFallbackGenesisChunk(allocator);
+    serial.writeStatusWarn("mcb ", "No startup script in bundle. Using fallback chunk");
+    return try buildFallbackGenesisChunk(allocator);
 }
 
 fn setupHarnessEnvironment(
@@ -734,34 +710,27 @@ fn initGenesisVm(
     genesis: *actor_mod.Actor,
     ipc_ring: *ipc_mod.RingBuffer,
 ) *vm_mod.VM {
-    serial.writeString("[kernel] Step 2.5: Initializing storage...\n");
     initStorage(boot_info, allocator);
-
-    serial.writeString("[kernel] Step 3: Registering capabilities...\n");
     registerGenesisCapabilities(genesis, boot_info, ipc_ring) catch kernelPanic("register_caps");
+    serial.writeStatusOk("cap ", "Genesis CSpace initialized (64 capability slots)");
 
-    serial.writeString("[kernel] Step 4: Initializing display...\n");
     initGenesisDisplay(boot_info);
+    if (boot_info.framebuffer.base_addr != 0) {
+        serial.writeStatusOk("gop ", "Direct GOP vector canvas active (1280x800x32)");
+    }
 
-    serial.writeString("[kernel] Step 5: Loading Genesis Chunk...\n");
-    var chunk = loadGenesisChunk(allocator, boot_info) catch kernelPanic("load_genesis_chunk");
-
-    serial.writeString("[kernel] Step 6: Initializing VM...\n");
+    const chunk = loadGenesisChunk(allocator, boot_info) catch kernelPanic("load_genesis_chunk");
     const genesis_vm = allocator.create(vm_mod.VM) catch kernelPanic("vm_alloc");
-    genesis_vm.initInPlace(allocator, &chunk) catch kernelPanic("vm_init");
+    genesis_vm.initInPlace(allocator, chunk) catch kernelPanic("vm_init");
     return genesis_vm;
 }
 
 pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     initHardware(boot_info);
-    serial.writeString("[kernel] kmain at 0x");
-    serial.writeHex(@intFromPtr(&kmain));
-    serial.writeString("\n");
 
     var fba = std.heap.FixedBufferAllocator.init(&kernel_heap);
     const allocator = fba.allocator();
 
-    serial.writeString("[kernel] Step 1: Initializing Genesis Actor...\n");
     const genesis = actor_mod.Actor.init(
         allocator,
         actor_mod.GENESIS_ACTOR_ID,
@@ -770,15 +739,12 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
         GENESIS_PAGE_TABLE_ROOT,
     ) catch kernelPanic("actor_init");
 
-    serial.writeString("[kernel] Step 2: Initializing IPC ring...\n");
     const ipc_ring = ipc_mod.RingBuffer.init(allocator, ipc_mod.DEFAULT_RING_CAPACITY) catch kernelPanic("ipc_ring_init");
-
     const genesis_vm = initGenesisVm(boot_info, allocator, genesis, ipc_ring);
-
-    serial.writeString("[kernel] Step 7: Configuring Sovereign Harness...\n");
     setupHarnessEnvironment(genesis, boot_info, ipc_ring, genesis_vm);
 
-    serial.writeString("[kernel] Step 8: Starting cooperative event loop in Genesis Actor...\n");
+    serial.writeStatusOk("act ", "Genesis Actor 0 online (cooperative fiber scheduler)");
+
     var sched = fiber_mod.Scheduler.init(allocator);
     global_sched = &sched;
     _ = sched.spawn(vmThread, genesis_vm) catch kernelPanic("fiber_spawn");

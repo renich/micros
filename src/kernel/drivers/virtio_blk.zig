@@ -120,10 +120,7 @@ pub const VirtioBlkDevice = struct {
         const q = VirtQueue.init(QUEUE_INDEX, ring_page_phys, ring_virt);
 
         io.outw(io_port + REG_QUEUE_SELECT, QUEUE_INDEX);
-        const dev_q_size = io.inw(io_port + REG_QUEUE_SIZE);
-        serial.writeString("[virtio-blk] Device reported queue size: 0x");
-        serial.writeHex(dev_q_size);
-        serial.writeString("\n");
+        _ = io.inw(io_port + REG_QUEUE_SIZE);
 
         const pfn: u32 = @intCast(ring_page_phys / 4096);
         io.outl(io_port + REG_QUEUE_ADDRESS, pfn);

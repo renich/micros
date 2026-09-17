@@ -166,13 +166,13 @@ pub const NetworkStack = struct {
                 self.arp_table.insert(self.dhcp_config.gateway, mac);
                 self.arp_table.insert(self.dhcp_config.dns_server, mac);
             }
-            serial.writeString("[net] DHCP Bound! Assigned IP: ");
+            serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mdhcp\x1b[90m: \x1b[97mBound to IP \x1b[0m");
             self.printIp(self.dhcp_config.ip);
-            serial.writeString(" Gateway: ");
+            serial.writeString("\x1b[90m · \x1b[97mgateway \x1b[0m");
             self.printIp(self.dhcp_config.gateway);
-            serial.writeString(" DNS: ");
+            serial.writeString("\x1b[90m · \x1b[97mdns \x1b[0m");
             self.printIp(self.dhcp_config.dns_server);
-            serial.writeString("\n");
+            serial.writeString("\x1b[0m\n");
         }
     }
 

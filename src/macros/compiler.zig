@@ -99,6 +99,7 @@ pub const Compiler = struct {
                     '\\' => '\\',
                     '"' => '"',
                     '0' => 0,
+                    'e' => 0x1B,
                     else => raw[src_i + 1],
                 };
                 src_i += 2;

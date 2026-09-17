@@ -10,6 +10,16 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Modern Minimalist Terminal Experience & Serial Telemetry**:
+  - **Sleek Minimalist Card Header**: Replaced retro ASCII block banners with a modern, column-aligned UTF-8 card border (``┌─┐``) styled in subtle charcoal gray (``\x1b[90m``), glowing cyan (``\x1b[1;96m``), and crisp white (``\x1b[97m``).
+  - **Structured Status Badges**: Eliminated noisy debug dumps and arbitrary step prefixes (``Step 1..8``, PCI probing chatter) in favor of fixed-width emerald green status badges (``[  ok  ]``) with categorized bold cyan subsystem tags (``boot``, ``arch``, ``mmu``, ``net``, ``dhcp``, ``blk``, ``cas``, ``cap``, ``gop``, ``mcb``, ``act``, ``spawn``, ``persist``).
+  - **ANSI Telemetry Formatting Engine**: Extended ``src/kernel/serial.zig`` with typed ANSI escape constants, standalone decimal formatter (``formatDec``, ``writeDec``), and compact hex formatter (``formatHexCompact``, ``writeHexCompact``) with dedicated unit tests.
+  - **Polished Interactive Sovereign Harness**:
+    - Enhanced ``lib/macros/harness.mx`` with styled prompt (``µOS macros>``), structured and categorized ``help`` reference menu, and aligned tabular ``actors`` registry view with readable state names.
+    - Preserved direct GOP framebuffer blitting safety by keeping ANSI escape sequences isolated to serial telemetry while drawing clean glyphs on the graphical canvas.
+    - Refactored harness input loop into modular functions (``handle_newline``, ``handle_backspace``, ``handle_printable``, ``init_ansi``) eliminating code duplication and strictly adhering to the Ten Commandments (functions <= 40 lines, max nesting <= 3 levels).
+    - Hardened genesis bytecode chunk memory lifetime in ``src/kernel/main.zig`` by allocating on kernel heap, preventing dangling pointers on popped initialization stack frames.
+
 - **Codebase Hardening, VirtIO Substrate Deduplication & Future Roadmap Integration**:
    - **VirtIO Common Substrate**: Extracted common VirtIO 1.0 register definitions, device status flags, descriptor flags, and split virtqueue structures into ``src/kernel/drivers/virtio.zig``, deduplicating shared logic across ``virtio_blk.zig`` and ``virtio_net.zig``.
    - **Tokenizer Linter Remediation**: Corrected token nesting level exit condition in ``tools/src/lint.zig``, uncovering and remediating 7 hidden function length violations (>40 lines) across ``src/kernel/main.zig``, ``src/kernel/net/dns.zig``, ``src/kernel/net/tcp.zig``, ``tools/src/fb_verify.zig``, and ``tools/src/sym.zig``.
