@@ -14,6 +14,9 @@ fn parse_call_args_acc(tokens, pos, tokens_len, args) {
                 pos = pos + 1;
             } else {
                 call_res = parse_expr(tokens, pos, tokens_len);
+                if (call_res[0] == pos) {
+                    return [pos + 1, args];
+                }
                 pos = call_res[0];
                 args = push(args, call_res[1]);
             }
@@ -75,6 +78,9 @@ fn parse_array_literal_acc(tokens, pos, tokens_len, elements) {
                 pos = pos + 1;
             } else {
                 arr_res = parse_expr(tokens, pos, tokens_len);
+                if (arr_res[0] == pos) {
+                    return [pos + 1, ["array", elements]];
+                }
                 pos = arr_res[0];
                 elements = push(elements, arr_res[1]);
             }
@@ -332,6 +338,7 @@ fn parse_statement(tokens, pos, tokens_len) {
     if (pos >= tokens_len) { return [pos, []]; }
     stmt_tok_type = tokens[pos][0];
 
+    if (stmt_tok_type == 3) { return parse_function_decl(tokens, pos, tokens_len); }
     if (stmt_tok_type == 4) { return parse_return_statement(tokens, pos, tokens_len); }
     if (stmt_tok_type == 5) { return parse_if_statement(tokens, pos, tokens_len); }
     if (stmt_tok_type == 7) { return parse_while_statement(tokens, pos, tokens_len); }
@@ -358,24 +365,15 @@ fn parse_statement(tokens, pos, tokens_len) {
 }
 
 fn parse_block_acc(tokens, pos, tokens_len, stmts) {
-    blk_cond = true;
-    blk_closed = false;
-    while (blk_cond) {
-        if (pos >= tokens_len) { blk_cond = false; }
-        if (blk_cond) {
-            if (tokens[pos][0] == 24) {
-                pos = pos + 1;
-                blk_cond = false;
-                blk_closed = true;
-            } else {
-                blk_res = parse_statement(tokens, pos, tokens_len);
-                pos = blk_res[0];
-                stmts = push(stmts, blk_res[1]);
-            }
+    while (pos < tokens_len) {
+        if (tokens[pos][0] == 24) {
+            return [pos + 1, ["block", stmts]];
         }
+        blk_res = parse_statement(tokens, pos, tokens_len);
+        pos = blk_res[0];
+        stmts = push(stmts, blk_res[1]);
     }
-    if (blk_closed == false) { return [pos, ["error", "missing }"]]; }
-    return [pos, ["block", stmts]];
+    return [pos, ["error", "missing }"]];
 }
 
 fn parse_block(tokens, pos, tokens_len) {
@@ -410,18 +408,20 @@ fn parse_function_args(tokens, pos, tokens_len) {
     return parse_function_args_acc(tokens, pos, tokens_len, []);
 }
 
+fn parse_function_decl_body(tokens, pos, tokens_len, name, args) {
+    fdecl_body_res = parse_block(tokens, pos, tokens_len);
+    return [fdecl_body_res[0], ["function_decl", name, args, fdecl_body_res[1]]];
+}
+
 fn parse_function_decl(tokens, pos, tokens_len) {
     pos = pos + 1;
     if (pos >= tokens_len) { return [pos, ["error", "unexpected eof"]]; }
-    fdecl_name = tokens[pos][1];
+    name = tokens[pos][1];
     pos = pos + 1;
     if (pos >= tokens_len) { return [pos, ["error", "unexpected eof"]]; }
     pos = pos + 1;
     fdecl_args_res = parse_function_args(tokens, pos, tokens_len);
-    pos = fdecl_args_res[0];
-    fdecl_args = fdecl_args_res[1];
-    fdecl_body_res = parse_block(tokens, pos, tokens_len);
-    return [fdecl_body_res[0], ["function_decl", fdecl_name, fdecl_args, fdecl_body_res[1]]];
+    return parse_function_decl_body(tokens, fdecl_args_res[0], tokens_len, name, fdecl_args_res[1]);
 }
 
 fn parse_program_acc(tokens, pos, tokens_len, decls) {

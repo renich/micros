@@ -25,21 +25,24 @@ fn op_greater() { return 23; }
 fn op_less_equal() { return 24; }
 fn op_greater_equal() { return 25; }
 fn op_closure() { return 26; }
+fn op_get_upvalue() { return 27; }
+fn op_set_upvalue() { return 28; }
+fn op_close_upvalue() { return 29; }
 
 fn init_compiler() {
-    return [[], [], [], 0];
+    return [[], [], [], 0, [], []];
 }
 
 fn add_constant(state, val) {
     constants = state[1];
     idx = len(constants);
     new_constants = push(constants, val);
-    return [[state[0], new_constants, state[2], state[3]], idx];
+    return [[state[0], new_constants, state[2], state[3], state[4], state[5]], idx];
 }
 
 fn write_byte(state, byte) {
     new_code = push(state[0], byte);
-    return [[new_code, state[1], state[2], state[3]], state];
+    return [[new_code, state[1], state[2], state[3], state[4], state[5]], state];
 }
 
 fn emit_constant(state, val) {
@@ -85,6 +88,102 @@ fn resolve_local(state, name) {
     return 0 - 1;
 }
 
+fn find_upvalue(upvalues, is_local, index) {
+    u_idx = 0;
+    u_len = len(upvalues);
+    while (u_idx < u_len) {
+        u = upvalues[u_idx];
+        if (u[0] == is_local) {
+            if (u[1] == index) {
+                return u_idx;
+            }
+        }
+        u_idx = u_idx + 1;
+    }
+    return 0 - 1;
+}
+
+fn add_upvalue(state, is_local, index, name) {
+    existing = find_upvalue(state[4], is_local, index);
+    if (existing >= 0) {
+        return [state, existing];
+    }
+    new_u = push(state[4], [is_local, index, name]);
+    new_idx = len(new_u) - 1;
+    new_state = [state[0], state[1], state[2], state[3], new_u, state[5]];
+    return [new_state, new_idx];
+}
+
+fn add_ctx_upvalue(ctx, is_local, index, name) {
+    existing = find_upvalue(ctx[1], is_local, index);
+    if (existing >= 0) {
+        return [ctx, existing];
+    }
+    new_u = push(ctx[1], [is_local, index, name]);
+    new_idx = len(new_u) - 1;
+    return [[ctx[0], new_u, ctx[2]], new_idx];
+}
+
+fn resolve_in_ctx(ctx, name) {
+    if (len(ctx) == 0) {
+        return [ctx, 0 - 1, 0];
+    }
+    c_locals = ctx[0];
+    c_idx = len(c_locals) - 1;
+    while (c_idx >= 0) {
+        if (c_locals[c_idx][0] == name) {
+            return [ctx, c_idx, 1];
+        }
+        c_idx = c_idx - 1;
+    }
+    enc = ctx[2];
+    if (len(enc) == 0) {
+        return [ctx, 0 - 1, 0];
+    }
+    enc_res = resolve_in_ctx(enc, name);
+    ctx = [ctx[0], ctx[1], enc_res[0]];
+    enc_idx = enc_res[1];
+    if (enc_idx >= 0) {
+        is_loc = enc_res[2];
+        add_res = add_ctx_upvalue(ctx, is_loc, enc_idx, name);
+        return [add_res[0], add_res[1], 0];
+    }
+    return [ctx, 0 - 1, 0];
+}
+
+fn resolve_upvalue(state, name) {
+    enclosing = state[5];
+    if (len(enclosing) == 0) {
+        return [state, 0 - 1];
+    }
+    enc_locals = enclosing[0];
+    enc_idx = len(enc_locals) - 1;
+    while (enc_idx >= 0) {
+        if (enc_locals[enc_idx][0] == name) {
+            return add_upvalue(state, 1, enc_idx, name);
+        }
+        enc_idx = enc_idx - 1;
+    }
+    parent_enc = enclosing[2];
+    if (len(parent_enc) == 0) {
+        return [state, 0 - 1];
+    }
+    enc_res = resolve_in_ctx(parent_enc, name);
+    enc_idx = enc_res[1];
+    if (enc_idx >= 0) {
+        is_loc = enc_res[2];
+        enclosing = [enclosing[0], enclosing[1], enc_res[0]];
+        add_res = add_ctx_upvalue(enclosing, is_loc, enc_idx, name);
+        enclosing = add_res[0];
+        parent_u_idx = add_res[1];
+        state = [state[0], state[1], state[2], state[3], state[4], enclosing];
+        return add_upvalue(state, 0, parent_u_idx, name);
+    }
+    enclosing = [enclosing[0], enclosing[1], enc_res[0]];
+    state = [state[0], state[1], state[2], state[3], state[4], enclosing];
+    return [state, 0 - 1];
+}
+
 fn emit_binary_op(state, op) {
     if (op == "plus") { return write_byte(state, op_add())[0]; }
     if (op == "minus") { return write_byte(state, op_sub())[0]; }
@@ -103,6 +202,15 @@ fn compile_identifier(state, name) {
         res = write_byte(state, op_get_local());
         state = res[0];
         res = write_byte(state, local_idx);
+        return res[0];
+    }
+    up_res = resolve_upvalue(state, name);
+    state = up_res[0];
+    up_idx = up_res[1];
+    if (up_idx >= 0) {
+        res = write_byte(state, op_get_upvalue());
+        state = res[0];
+        res = write_byte(state, up_idx);
         return res[0];
     }
     res = add_constant(state, name);
@@ -186,15 +294,25 @@ fn compile_assign_statement(state, name, val_node) {
         res = write_byte(state, local_idx);
         state = res[0];
     } else {
-        res = add_constant(state, name);
-        state = res[0];
-        idx = res[1];
-        res = write_byte(state, op_set_global());
-        state = res[0];
-        res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
-        state = res[0];
-        res = write_byte(state, bit_and(idx, 255));
-        state = res[0];
+        up_res = resolve_upvalue(state, name);
+        state = up_res[0];
+        up_idx = up_res[1];
+        if (up_idx >= 0) {
+            res = write_byte(state, op_set_upvalue());
+            state = res[0];
+            res = write_byte(state, up_idx);
+            state = res[0];
+        } else {
+            res = add_constant(state, name);
+            state = res[0];
+            idx = res[1];
+            res = write_byte(state, op_set_global());
+            state = res[0];
+            res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+            state = res[0];
+            res = write_byte(state, bit_and(idx, 255));
+            state = res[0];
+        }
     }
     res = write_byte(state, op_pop());
     return res[0];
@@ -253,6 +371,23 @@ fn compile_while_statement(state, cond, body) {
     return patch_jump(state, exit_jump);
 }
 
+fn compile_expr_statement(state, inner) {
+    if (inner[0] == "call") {
+        callee = inner[1];
+        if (callee[0] == "identifier") {
+            if (callee[1] == "print") {
+                print_args = inner[2];
+                state = compile_expr(state, print_args[0]);
+                res = write_byte(state, op_print());
+                return res[0];
+            }
+        }
+    }
+    state = compile_expr(state, inner);
+    res = write_byte(state, op_pop());
+    return res[0];
+}
+
 fn compile_statement(state, node) {
     type = node[0];
 
@@ -268,27 +403,16 @@ fn compile_statement(state, node) {
     if (type == "while_statement") {
         return compile_while_statement(state, node[1], node[2]);
     }
+    if (type == "function_decl") {
+        return compile_function(state, node[1], node[2], node[3]);
+    }
     if (type == "return_statement") {
         state = compile_expr(state, node[1]);
         res = write_byte(state, op_return());
         return res[0];
     }
     if (type == "expr_statement") {
-        inner = node[1];
-        if (inner[0] == "call") {
-            callee = inner[1];
-            if (callee[0] == "identifier") {
-                if (callee[1] == "print") {
-                    print_args = inner[2];
-                    state = compile_expr(state, print_args[0]);
-                    res = write_byte(state, op_print());
-                    return res[0];
-                }
-            }
-        }
-        state = compile_expr(state, inner);
-        res = write_byte(state, op_pop());
-        return res[0];
+        return compile_expr_statement(state, node[1]);
     }
     return state;
 }
@@ -305,7 +429,36 @@ fn compile_block(state, stmts) {
     return compile_block_stmts(state, stmts, 0, len(stmts));
 }
 
-fn emit_call_build_function(state, name, args_len, ip_start) {
+fn emit_closure_descriptors(state, upvalues) {
+    u_i = 0;
+    u_cnt = len(upvalues);
+    while (u_i < u_cnt) {
+        u_desc = upvalues[u_i];
+        res = write_byte(state, u_desc[0]); state = res[0];
+        res = write_byte(state, u_desc[1]); state = res[0];
+        u_i = u_i + 1;
+    }
+    return state;
+}
+
+fn emit_store_function(state, name) {
+    local_idx = resolve_local(state, name);
+    if (local_idx >= 0) {
+        res = write_byte(state, op_set_local()); state = res[0];
+        res = write_byte(state, local_idx); state = res[0];
+    } else {
+        res = add_constant(state, name);
+        state = res[0];
+        name_idx = res[1];
+        res = write_byte(state, op_set_global()); state = res[0];
+        res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
+        res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
+    }
+    res = write_byte(state, op_pop());
+    return res[0];
+}
+
+fn emit_call_build_function(state, name, args_len, upvalues, ip_start) {
     res = add_constant(state, "build_function");
     state = res[0];
     idx = res[1];
@@ -316,21 +469,35 @@ fn emit_call_build_function(state, name, args_len, ip_start) {
     state = emit_constant(state, name);
     state = emit_constant(state, args_len);
     state = emit_constant(state, args_len + 1);
-    state = emit_constant(state, 0);
+    state = emit_constant(state, len(upvalues));
     state = emit_constant(state, ip_start);
 
     res = write_byte(state, op_call()); state = res[0];
     res = write_byte(state, 5); state = res[0];
     res = write_byte(state, op_closure()); state = res[0];
 
-    res = add_constant(state, name);
+    state = emit_closure_descriptors(state, upvalues);
+    return emit_store_function(state, name);
+}
+
+fn compile_function_body(state, body, name, args_len, ip_start, jump_idx, old_scope) {
+    state = compile_block(state, body[1]);
+
+    state = emit_constant(state, make_nil());
+    res = write_byte(state, op_return());
     state = res[0];
-    name_idx = res[1];
-    res = write_byte(state, op_set_global()); state = res[0];
-    res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
-    res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
-    res = write_byte(state, op_pop());
-    return res[0];
+
+    fn_upvalues = state[4];
+    updated_ctx = state[5];
+
+    restored_locals = updated_ctx[0];
+    restored_upvalues = updated_ctx[1];
+    restored_enclosing = updated_ctx[2];
+
+    state = [state[0], state[1], restored_locals, old_scope, restored_upvalues, restored_enclosing];
+    state = patch_jump(state, jump_idx);
+
+    return emit_call_build_function(state, name, args_len, fn_upvalues, ip_start);
 }
 
 fn compile_function(state, name, args, body) {
@@ -350,18 +517,12 @@ fn compile_function(state, name, args, body) {
 
     old_locals = state[2];
     old_scope = state[3];
-    state = [state[0], state[1], fn_locals, 1];
+    old_upvalues = state[4];
+    old_enclosing = state[5];
+    parent_ctx = [old_locals, old_upvalues, old_enclosing];
 
-    state = compile_block(state, body[1]);
-
-    state = emit_constant(state, make_nil());
-    res = write_byte(state, op_return());
-    state = res[0];
-
-    state = [state[0], state[1], old_locals, old_scope];
-    state = patch_jump(state, jump_idx);
-
-    return emit_call_build_function(state, name, args_len, ip_start);
+    state = [state[0], state[1], fn_locals, old_scope + 1, [], parent_ctx];
+    return compile_function_body(state, body, name, args_len, ip_start, jump_idx, old_scope);
 }
 
 fn compile_prog_decls(state, decls, prog_i, decls_len) {

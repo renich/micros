@@ -329,6 +329,7 @@ pub const Compiler = struct {
             .local_count = fn_local_count,
             .upvalue_count = 0,
             .ip_start = fn_start,
+            .chunk = @ptrCast(self.chunk),
         };
         const fn_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .function = vm_func });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));

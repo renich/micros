@@ -172,12 +172,12 @@ pub const Shell = struct {
                 self.writeOut("msh: stage0 parse error\n");
                 return;
             };
+            defer stmt.deinit(self.allocator);
 
             compiler.compile(stmt) catch {
                 self.writeOut("msh: stage0 compile error\n");
                 return;
             };
-            stmt.deinit(self.allocator);
         }
 
         self.vm.chunk = self.stage0_chunk;
@@ -387,4 +387,58 @@ test "Stage 1 compiler bootstrap execution" {
     const x_val = sh.vm.globals.get("x");
     try testing.expect(x_val != null);
     try testing.expectEqual(@as(i64, 42), x_val.?.integer);
+}
+
+test "Stage 1 lexical closure upvalue resolution and execution" {
+    const read_fd = try sys.io.open("/dev/null", sys.io.OpenFlags.rdonly, 0);
+    const write_fd = try sys.io.open("/dev/null", sys.io.OpenFlags.wronly, 0);
+    defer {
+        sys.io.close(read_fd) catch {};
+        sys.io.close(write_fd) catch {};
+    }
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var sh = try Shell.init(arena.allocator(), read_fd, write_fd);
+    defer sh.deinit();
+
+    sh.loadStage1();
+    sh.evalStage0(
+        \\cl_toks = lex("fn make_adder(a) { fn add(b) { return a + b; } return add; } adder = make_adder(10); out_res = adder(32);");
+    );
+    sh.evalStage0("cl_ast = parse(cl_toks);");
+    sh.evalStage0("cl_bc = compile_program(cl_ast);");
+    sh.evalStage0("exec_chunk(cl_bc[0], cl_bc[1]);");
+
+    const res_val = sh.vm.globals.get("out_res");
+    try testing.expect(res_val != null);
+    try testing.expectEqual(@as(i64, 42), res_val.?.integer);
+}
+
+test "Stage 1 multi-level lexical closure upvalue resolution" {
+    const read_fd = try sys.io.open("/dev/null", sys.io.OpenFlags.rdonly, 0);
+    const write_fd = try sys.io.open("/dev/null", sys.io.OpenFlags.wronly, 0);
+    defer {
+        sys.io.close(read_fd) catch {};
+        sys.io.close(write_fd) catch {};
+    }
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var sh = try Shell.init(arena.allocator(), read_fd, write_fd);
+    defer sh.deinit();
+
+    sh.loadStage1();
+    sh.evalStage0(
+        \\ml_toks = lex("fn outer(x) { fn middle() { fn inner() { return x; } return inner; } return middle; } m = outer(99); in_f = m(); ans = in_f();");
+    );
+    sh.evalStage0("ml_ast = parse(ml_toks);");
+    sh.evalStage0("ml_bc = compile_program(ml_ast);");
+    sh.evalStage0("exec_chunk(ml_bc[0], ml_bc[1]);");
+
+    const ans_val = sh.vm.globals.get("ans");
+    try testing.expect(ans_val != null);
+    try testing.expectEqual(@as(i64, 99), ans_val.?.integer);
 }
