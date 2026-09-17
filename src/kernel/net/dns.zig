@@ -19,10 +19,7 @@ pub const DnsHeader = struct {
     arcount: u16,
 };
 
-pub fn buildQuery(out_buf: []u8, hostname: []const u8, query_id: u16) !usize {
-    if (out_buf.len < DNS_HEADER_LEN + hostname.len + 6) return error.BufferTooSmall;
-
-    // Header
+fn writeDnsHeader(out_buf: []u8, query_id: u16) void {
     out_buf[0] = @intCast((query_id >> 8) & 0xFF);
     out_buf[1] = @intCast(query_id & 0xFF);
     out_buf[2] = @intCast((FLAGS_STANDARD_QUERY >> 8) & 0xFF);
@@ -35,8 +32,10 @@ pub fn buildQuery(out_buf: []u8, hostname: []const u8, query_id: u16) !usize {
     out_buf[9] = 0x00;
     out_buf[10] = 0x00; // ARCOUNT = 0
     out_buf[11] = 0x00;
+}
 
-    var idx: usize = DNS_HEADER_LEN;
+fn encodeDnsLabels(out_buf: []u8, hostname: []const u8, start_idx: usize) usize {
+    var idx = start_idx;
     var label_start: usize = 0;
     for (hostname, 0..) |c, i| {
         if (c == '.') {
@@ -55,18 +54,22 @@ pub fn buildQuery(out_buf: []u8, hostname: []const u8, query_id: u16) !usize {
         @memcpy(out_buf[idx .. idx + label_len], hostname[label_start..]);
         idx += label_len;
     }
-    out_buf[idx] = 0x00; // End of QNAME
-    idx += 1;
+    out_buf[idx] = 0x00;
+    return idx + 1;
+}
 
-    // QTYPE = A (1)
+pub fn buildQuery(out_buf: []u8, hostname: []const u8, query_id: u16) !usize {
+    if (out_buf.len < DNS_HEADER_LEN + hostname.len + 6) return error.BufferTooSmall;
+
+    writeDnsHeader(out_buf, query_id);
+    const idx = encodeDnsLabels(out_buf, hostname, DNS_HEADER_LEN);
+
     out_buf[idx] = @intCast((TYPE_A >> 8) & 0xFF);
     out_buf[idx + 1] = @intCast(TYPE_A & 0xFF);
-    // QCLASS = IN (1)
     out_buf[idx + 2] = @intCast((CLASS_IN >> 8) & 0xFF);
     out_buf[idx + 3] = @intCast(CLASS_IN & 0xFF);
-    idx += 4;
 
-    return idx;
+    return idx + 4;
 }
 
 fn skipName(data: []const u8, start_offset: usize) ?usize {

@@ -62,44 +62,7 @@ pub fn extractText(json_payload: []const u8, out_buf: []u8) ?usize {
         search_pos = idx + key_needle.len;
     }
     const text_start = target_start orelse return null;
-    return unescapeJson(json_payload[text_start..], out_buf);
-}
-
-fn unescapeJson(src: []const u8, out_buf: []u8) usize {
-    var out_idx: usize = 0;
-    var i: usize = 0;
-    while (i < src.len and out_idx < out_buf.len) {
-        const c = src[i];
-        if (c == '"' and (i == 0 or src[i - 1] != '\\')) break;
-        if (c == '\\' and i + 1 < src.len) {
-            const next_c = src[i + 1];
-            if (next_c == 'n') {
-                out_buf[out_idx] = '\n';
-                out_idx += 1;
-                i += 2;
-                continue;
-            } else if (next_c == 'r') {
-                out_buf[out_idx] = '\r';
-                out_idx += 1;
-                i += 2;
-                continue;
-            } else if (next_c == 't') {
-                out_buf[out_idx] = '\t';
-                out_idx += 1;
-                i += 2;
-                continue;
-            } else if (next_c == '"' or next_c == '\\') {
-                out_buf[out_idx] = next_c;
-                out_idx += 1;
-                i += 2;
-                continue;
-            }
-        }
-        out_buf[out_idx] = c;
-        out_idx += 1;
-        i += 1;
-    }
-    return out_idx;
+    return provider_mod.unescapeJsonString(json_payload[text_start..], out_buf);
 }
 
 test "openai request body generation" {

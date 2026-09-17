@@ -193,14 +193,15 @@ fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const infer_fn = ctx.ai_inference_fn orelse return error.NoAiProvider;
     const prompt = args[0].string;
     const len = infer_fn(prompt, &ai_prompt_resp_buf);
     if (len == 0) return Value{ .string = "" };
-    return Value{ .string = ai_prompt_resp_buf[0..len] };
+    const duped = try vm.allocator.dupe(u8, ai_prompt_resp_buf[0..len]);
+    return Value{ .string = duped };
 }
 
 fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -246,34 +247,38 @@ fn nativeSysActorState(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 var cas_resp_buf: [4096]u8 = undefined;
-var cas_hex_buf: [64]u8 = undefined;
 
 fn nativeSysCasPut(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const put_fn = ctx.cas_put_fn orelse return error.NoStorageHandler;
-    put_fn(args[0].string, &cas_hex_buf) catch return Value{ .string = "" };
-    return Value{ .string = &cas_hex_buf };
+    var hex_buf: [64]u8 = undefined;
+    put_fn(args[0].string, &hex_buf) catch return Value{ .string = "" };
+    const duped = try vm.allocator.dupe(u8, &hex_buf);
+    return Value{ .string = duped };
 }
 
 fn nativeSysCasGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const get_fn = ctx.cas_get_fn orelse return error.NoStorageHandler;
     const len = get_fn(args[0].string, &cas_resp_buf) catch return Value{ .string = "" };
-    return Value{ .string = cas_resp_buf[0..len] };
+    const duped = try vm.allocator.dupe(u8, cas_resp_buf[0..len]);
+    return Value{ .string = duped };
 }
 
 fn nativeSysActorPersist(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const persist_fn = ctx.persist_actor_fn orelse return error.NoStorageHandler;
     const id: u32 = @intCast(args[0].integer);
-    persist_fn(id, &cas_hex_buf) catch return Value{ .string = "" };
-    return Value{ .string = &cas_hex_buf };
+    var hex_buf: [64]u8 = undefined;
+    persist_fn(id, &hex_buf) catch return Value{ .string = "" };
+    const duped = try vm.allocator.dupe(u8, &hex_buf);
+    return Value{ .string = duped };
 }
 
 fn nativeSysActorSpawnCas(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -362,6 +367,7 @@ test "Harness native bindings registration and execution" {
 
     var prompt_args = [_]Value{Value{ .string = "test prompt" }};
     const prompt_val = try nativeSysAiPrompt(&vm, &prompt_args);
+    defer allocator.free(prompt_val.string);
     try std.testing.expectEqualStrings("Mock AI response", prompt_val.string);
 
     var sc_args = [_]Value{ Value{ .string = "child_worker" }, Value{ .string = "fn run() {}" } };
@@ -443,14 +449,17 @@ test "Harness storage native bindings" {
 
     var put_args = [_]Value{Value{ .string = "sample code" }};
     const put_val = try nativeSysCasPut(&vm, &put_args);
+    defer allocator.free(put_val.string);
     try std.testing.expectEqualStrings("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", put_val.string);
 
     var get_args = [_]Value{Value{ .string = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }};
     const get_val = try nativeSysCasGet(&vm, &get_args);
+    defer allocator.free(get_val.string);
     try std.testing.expectEqualStrings("persisted actor content", get_val.string);
 
     var persist_args = [_]Value{Value{ .integer = 1 }};
     const persist_val = try nativeSysActorPersist(&vm, &persist_args);
+    defer allocator.free(persist_val.string);
     try std.testing.expectEqualStrings("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", persist_val.string);
 
     var scas_args = [_]Value{Value{ .string = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }};

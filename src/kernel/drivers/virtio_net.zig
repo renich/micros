@@ -6,6 +6,7 @@ const std = @import("std");
 const io = @import("../arch/x86_64/io.zig");
 const pci = @import("pci.zig");
 const pmm = @import("../mem/pmm.zig");
+const virtio = @import("virtio.zig");
 
 pub const QUEUE_SIZE: u16 = 256;
 pub const RX_BUFFER_LEN: usize = 2048;
@@ -16,27 +17,27 @@ pub const MAX_PACKET_SIZE: usize = 1514;
 pub const QUEUE_RX: u16 = 0;
 pub const QUEUE_TX: u16 = 1;
 
-pub const REG_DEVICE_FEATURES: u16 = 0x00;
-pub const REG_GUEST_FEATURES: u16 = 0x04;
-pub const REG_QUEUE_ADDRESS: u16 = 0x08;
-pub const REG_QUEUE_SIZE: u16 = 0x0C;
-pub const REG_QUEUE_SELECT: u16 = 0x0E;
-pub const REG_QUEUE_NOTIFY: u16 = 0x10;
-pub const REG_DEVICE_STATUS: u16 = 0x12;
-pub const REG_ISR_STATUS: u16 = 0x13;
+pub const REG_DEVICE_FEATURES: u16 = virtio.REG_DEVICE_FEATURES;
+pub const REG_GUEST_FEATURES: u16 = virtio.REG_GUEST_FEATURES;
+pub const REG_QUEUE_ADDRESS: u16 = virtio.REG_QUEUE_ADDRESS;
+pub const REG_QUEUE_SIZE: u16 = virtio.REG_QUEUE_SIZE;
+pub const REG_QUEUE_SELECT: u16 = virtio.REG_QUEUE_SELECT;
+pub const REG_QUEUE_NOTIFY: u16 = virtio.REG_QUEUE_NOTIFY;
+pub const REG_DEVICE_STATUS: u16 = virtio.REG_DEVICE_STATUS;
+pub const REG_ISR_STATUS: u16 = virtio.REG_ISR_STATUS;
 pub const REG_MAC_BASE: u16 = 0x14;
 
-pub const STATUS_RESET: u8 = 0x00;
-pub const STATUS_ACKNOWLEDGE: u8 = 0x01;
-pub const STATUS_DRIVER: u8 = 0x02;
-pub const STATUS_DRIVER_OK: u8 = 0x04;
-pub const STATUS_FEATURES_OK: u8 = 0x08;
-pub const STATUS_FAILED: u8 = 0x80;
+pub const STATUS_RESET: u8 = virtio.STATUS_RESET;
+pub const STATUS_ACKNOWLEDGE: u8 = virtio.STATUS_ACKNOWLEDGE;
+pub const STATUS_DRIVER: u8 = virtio.STATUS_DRIVER;
+pub const STATUS_DRIVER_OK: u8 = virtio.STATUS_DRIVER_OK;
+pub const STATUS_FEATURES_OK: u8 = virtio.STATUS_FEATURES_OK;
+pub const STATUS_FAILED: u8 = virtio.STATUS_FAILED;
 
-pub const VRING_DESC_F_NEXT: u16 = 0x0001;
-pub const VRING_DESC_F_WRITE: u16 = 0x0002;
-pub const VRING_AVAIL_F_NO_INTERRUPT: u16 = 0x0001;
-pub const PAUSE_SPIN_LIMIT: usize = 5_000_000;
+pub const VRING_DESC_F_NEXT: u16 = virtio.VRING_DESC_F_NEXT;
+pub const VRING_DESC_F_WRITE: u16 = virtio.VRING_DESC_F_WRITE;
+pub const VRING_AVAIL_F_NO_INTERRUPT: u16 = virtio.VRING_AVAIL_F_NO_INTERRUPT;
+pub const PAUSE_SPIN_LIMIT: usize = virtio.PAUSE_SPIN_LIMIT;
 
 pub const VirtioNetHeader = extern struct {
     flags: u8 = 0,
@@ -47,31 +48,10 @@ pub const VirtioNetHeader = extern struct {
     csum_offset: u16 = 0,
 };
 
-pub const VRingDesc = extern struct {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-};
-
-pub const VRingAvail = extern struct {
-    flags: u16,
-    idx: u16,
-    ring: [QUEUE_SIZE]u16,
-    used_event: u16,
-};
-
-pub const VRingUsedElem = extern struct {
-    id: u32,
-    len: u32,
-};
-
-pub const VRingUsed = extern struct {
-    flags: u16,
-    idx: u16,
-    ring: [QUEUE_SIZE]VRingUsedElem,
-    avail_event: u16,
-};
+pub const VRingDesc = virtio.VRingDesc;
+pub const VRingAvail = virtio.VRingAvail(QUEUE_SIZE);
+pub const VRingUsedElem = virtio.VRingUsedElem;
+pub const VRingUsed = virtio.VRingUsed(QUEUE_SIZE);
 
 pub const VirtQueue = struct {
     queue_index: u16,

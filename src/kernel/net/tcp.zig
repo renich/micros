@@ -85,20 +85,14 @@ pub fn parseHeader(data: []const u8) ?TcpHeader {
     };
 }
 
-pub fn writePacket(
+fn writeTcpHeaderFields(
     out_buf: []u8,
-    src_ip: [4]u8,
-    dst_ip: [4]u8,
     src_port: u16,
     dst_port: u16,
     seq: u32,
     ack: u32,
     flags: u9,
-    payload: []const u8,
-) !usize {
-    const total_len = TCP_HEADER_MIN_LEN + payload.len;
-    if (out_buf.len < total_len) return error.BufferTooSmall;
-
+) void {
     out_buf[0] = @intCast((src_port >> 8) & 0xFF);
     out_buf[1] = @intCast(src_port & 0xFF);
     out_buf[2] = @intCast((dst_port >> 8) & 0xFF);
@@ -114,7 +108,6 @@ pub fn writePacket(
     out_buf[10] = @intCast((ack >> 8) & 0xFF);
     out_buf[11] = @intCast(ack & 0xFF);
 
-    // Data offset = 5 (20 bytes), flags
     const offset_flags: u16 = (@as(u16, 5) << 12) | @as(u16, flags);
     out_buf[12] = @intCast((offset_flags >> 8) & 0xFF);
     out_buf[13] = @intCast(offset_flags & 0xFF);
@@ -125,7 +118,23 @@ pub fn writePacket(
     out_buf[17] = 0x00;
     out_buf[18] = 0x00; // Urgent pointer
     out_buf[19] = 0x00;
+}
 
+pub fn writePacket(
+    out_buf: []u8,
+    src_ip: [4]u8,
+    dst_ip: [4]u8,
+    src_port: u16,
+    dst_port: u16,
+    seq: u32,
+    ack: u32,
+    flags: u9,
+    payload: []const u8,
+) !usize {
+    const total_len = TCP_HEADER_MIN_LEN + payload.len;
+    if (out_buf.len < total_len) return error.BufferTooSmall;
+
+    writeTcpHeaderFields(out_buf, src_port, dst_port, seq, ack, flags);
     @memcpy(out_buf[TCP_HEADER_MIN_LEN..total_len], payload);
 
     const csum = calculateChecksum(src_ip, dst_ip, out_buf[0..total_len]);

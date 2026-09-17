@@ -13,6 +13,7 @@ pub const SECTOR_SUPERBLOCK: u64 = 0;
 pub const SECTOR_FIRST_CHUNK: u64 = 1;
 pub const SECTOR_SIZE: usize = 512;
 pub const FIRST_SECTOR_DATA_CAPACITY: usize = SECTOR_SIZE - chunk_mod.CHUNK_HEADER_SIZE; // 448
+pub const MAX_CHUNK_PAYLOAD_SIZE: usize = 1024 * 1024; // 1 MiB
 
 pub const CasSuperblock = extern struct {
     magic: u32,
@@ -40,8 +41,8 @@ pub const CasEngine = struct {
             return CasEngine{ .cache = cache, .superblock = formatted_sb };
         }
 
-        const expected_checksum = computeSbChecksum(sb_ptr);
-        if (!std.mem.eql(u8, &sb_ptr.checksum, &expected_checksum)) {
+        const computed_csum = computeSbChecksum(sb_ptr);
+        if (!std.mem.eql(u8, &computed_csum, &sb_ptr.checksum)) {
             return error.CorruptedSuperblock;
         }
 
@@ -54,6 +55,7 @@ pub const CasEngine = struct {
         payload: []const u8,
         dev: ?*virtio_blk.VirtioBlkDevice,
     ) ![chunk_mod.HASH_SIZE]u8 {
+        if (payload.len > MAX_CHUNK_PAYLOAD_SIZE) return error.PayloadTooLarge;
         const hash = chunk_mod.computeBlake3Hash(payload);
         const sectors_needed = chunk_mod.calculateRequiredSectors(payload.len);
         if (self.superblock.next_free_sector + sectors_needed > self.superblock.block_count) {
@@ -83,7 +85,9 @@ pub const CasEngine = struct {
             try self.cache.readSector(curr_sec, &first_sec, dev);
 
             const hdr: *const chunk_mod.CasChunkHeader = @ptrCast(@alignCast(&first_sec));
+            if (hdr.length > MAX_CHUNK_PAYLOAD_SIZE) return error.CorruptedChunk;
             const sec_count = chunk_mod.calculateRequiredSectors(hdr.length);
+            if (sec_count == 0) return error.CorruptedChunk;
 
             if (std.mem.eql(u8, &hdr.hash, hash)) {
                 return try readAndVerifyChunk(self.cache, curr_sec, hdr, &first_sec, out_buf, dev);

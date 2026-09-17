@@ -70,12 +70,12 @@ pub const SymbolMatch = struct {
     }
 };
 
-pub fn parseElfSymbols(allocator: std.mem.Allocator, elf_bytes: []const u8) !ElfSymbolTable {
-    var table = ElfSymbolTable.init(allocator);
+const SectionHeaders = struct {
+    symtab: []const u8,
+    strtab: []const u8,
+};
 
-    if (elf_bytes.len < 64) return error.InvalidElfHeader;
-    if (!std.mem.eql(u8, elf_bytes[0..4], "\x7fELF")) return error.InvalidMagic;
-
+fn findSymtabHeaders(elf_bytes: []const u8) ?SectionHeaders {
     const e_shoff = std.mem.readInt(u64, elf_bytes[40..48], .little);
     const e_shentsize = std.mem.readInt(u16, elf_bytes[58..60], .little);
     const e_shnum = std.mem.readInt(u16, elf_bytes[60..62], .little);
@@ -100,16 +100,19 @@ pub fn parseElfSymbols(allocator: std.mem.Allocator, elf_bytes: []const u8) !Elf
         }
     }
 
-    if (symtab_shdr == null or strtab_shdr == null) return table;
+    if (symtab_shdr == null or strtab_shdr == null) return null;
+    return SectionHeaders{ .symtab = symtab_shdr.?, .strtab = strtab_shdr.? };
+}
 
-    const sym_offset = std.mem.readInt(u64, symtab_shdr.?[24..32], .little);
-    const sym_size = std.mem.readInt(u64, symtab_shdr.?[32..40], .little);
-    const sym_entsize = std.mem.readInt(u64, symtab_shdr.?[56..64], .little);
+fn parseSymbolEntries(table: *ElfSymbolTable, elf_bytes: []const u8, hdrs: SectionHeaders) !void {
+    const sym_offset = std.mem.readInt(u64, hdrs.symtab[24..32], .little);
+    const sym_size = std.mem.readInt(u64, hdrs.symtab[32..40], .little);
+    const sym_entsize = std.mem.readInt(u64, hdrs.symtab[56..64], .little);
 
-    const str_offset = std.mem.readInt(u64, strtab_shdr.?[24..32], .little);
-    const str_size = std.mem.readInt(u64, strtab_shdr.?[32..40], .little);
+    const str_offset = std.mem.readInt(u64, hdrs.strtab[24..32], .little);
+    const str_size = std.mem.readInt(u64, hdrs.strtab[32..40], .little);
 
-    if (str_offset + str_size > elf_bytes.len) return table;
+    if (str_offset + str_size > elf_bytes.len) return;
     const strtab = elf_bytes[str_offset .. str_offset + str_size];
 
     var cur: usize = 0;
@@ -127,8 +130,30 @@ pub fn parseElfSymbols(allocator: std.mem.Allocator, elf_bytes: []const u8) !Elf
             }
         }
     }
+}
 
+pub fn parseElfSymbols(allocator: std.mem.Allocator, elf_bytes: []const u8) !ElfSymbolTable {
+    var table = ElfSymbolTable.init(allocator);
+    if (elf_bytes.len < 64) return error.InvalidElfHeader;
+    if (!std.mem.eql(u8, elf_bytes[0..4], "\x7fELF")) return error.InvalidMagic;
+
+    const hdrs = findSymtabHeaders(elf_bytes) orelse return table;
+    try parseSymbolEntries(&table, elf_bytes, hdrs);
     return table;
+}
+
+fn resolveAndPrintSymbols(table: *const ElfSymbolTable, addresses: []const u64, elf_path: []const u8) void {
+    for (addresses) |addr| {
+        if (table.resolve(addr)) |match| {
+            std.debug.print("0x{x} -> {}\n", .{ addr, match });
+        } else {
+            std.debug.print("0x{x} -> ??\n", .{addr});
+        }
+    }
+
+    if (addresses.len == 0) {
+        std.debug.print("Loaded {} symbols from {s}\n", .{ table.symbols.items.len, elf_path });
+    }
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -162,17 +187,7 @@ pub fn main(init: std.process.Init) !void {
     var table = try parseElfSymbols(allocator, buf);
     defer table.deinit();
 
-    for (addresses.items) |addr| {
-        if (table.resolve(addr)) |match| {
-            std.debug.print("0x{x} -> {}\n", .{ addr, match });
-        } else {
-            std.debug.print("0x{x} -> ??\n", .{addr});
-        }
-    }
-
-    if (addresses.items.len == 0) {
-        std.debug.print("Loaded {} symbols from {s}\n", .{ table.symbols.items.len, elf_path });
-    }
+    resolveAndPrintSymbols(&table, addresses.items, elf_path);
 }
 
 const testing = std.testing;

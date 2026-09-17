@@ -104,29 +104,51 @@ pub fn parsePpmP6(allocator: std.mem.Allocator, data: []const u8) !Image {
     };
 }
 
+const VerifyConfig = struct {
+    file_path: ?[]const u8 = null,
+    expected_w: usize = 1280,
+    expected_h: usize = 800,
+    min_variance: f64 = 10.0,
+};
+
+fn parseVerifyArgs(args: anytype) !VerifyConfig {
+    var cfg = VerifyConfig{};
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--width")) {
+            if (args.next()) |v| cfg.expected_w = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, arg, "--height")) {
+            if (args.next()) |v| cfg.expected_h = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, arg, "--min-variance")) {
+            if (args.next()) |v| cfg.min_variance = try std.fmt.parseFloat(f64, v);
+        } else if (!std.mem.startsWith(u8, arg, "-")) {
+            cfg.file_path = arg;
+        }
+    }
+    return cfg;
+}
+
+fn verifyImageProperties(img: *const Image, cfg: VerifyConfig) void {
+    if (img.width != cfg.expected_w or img.height != cfg.expected_h) {
+        std.debug.print("FAIL: Dimensions {}x{} != expected {}x{}\n", .{ img.width, img.height, cfg.expected_w, cfg.expected_h });
+        std.process.exit(1);
+    }
+
+    const v = img.calculateVariance();
+    if (v < cfg.min_variance) {
+        std.debug.print("FAIL: Color variance {d:.2} < minimum threshold {d:.2}\n", .{ v, cfg.min_variance });
+        std.process.exit(1);
+    }
+
+    std.debug.print("PASS: Framebuffer verified ({}x{}, variance {d:.2}).\n", .{ img.width, img.height, v });
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     var args = init.minimal.args.iterate();
     _ = args.skip(); // skip binary name
 
-    var file_path: ?[]const u8 = null;
-    var expected_w: usize = 1280;
-    var expected_h: usize = 800;
-    var min_variance: f64 = 10.0;
-
-    while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--width")) {
-            if (args.next()) |v| expected_w = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, arg, "--height")) {
-            if (args.next()) |v| expected_h = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, arg, "--min-variance")) {
-            if (args.next()) |v| min_variance = try std.fmt.parseFloat(f64, v);
-        } else if (!std.mem.startsWith(u8, arg, "-")) {
-            file_path = arg;
-        }
-    }
-
-    const path = file_path orelse {
+    const cfg = try parseVerifyArgs(&args);
+    const path = cfg.file_path orelse {
         std.debug.print("Usage: micros-fb-verify [options] <image.ppm>\n", .{});
         std.process.exit(1);
     };
@@ -144,18 +166,7 @@ pub fn main(init: std.process.Init) !void {
     var img = try parsePpmP6(allocator, source);
     defer img.deinit();
 
-    if (img.width != expected_w or img.height != expected_h) {
-        std.debug.print("FAIL: Dimensions {}x{} != expected {}x{}\n", .{ img.width, img.height, expected_w, expected_h });
-        std.process.exit(1);
-    }
-
-    const v = img.calculateVariance();
-    if (v < min_variance) {
-        std.debug.print("FAIL: Color variance {d:.2} < minimum threshold {d:.2}\n", .{ v, min_variance });
-        std.process.exit(1);
-    }
-
-    std.debug.print("PASS: Framebuffer verified ({}x{}, variance {d:.2}).\n", .{ img.width, img.height, v });
+    verifyImageProperties(&img, cfg);
 }
 
 const testing = std.testing;

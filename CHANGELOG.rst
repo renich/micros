@@ -10,6 +10,18 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Codebase Hardening, VirtIO Substrate Deduplication & Future Roadmap Integration**:
+   - **VirtIO Common Substrate**: Extracted common VirtIO 1.0 register definitions, device status flags, descriptor flags, and split virtqueue structures into ``src/kernel/drivers/virtio.zig``, deduplicating shared logic across ``virtio_blk.zig`` and ``virtio_net.zig``.
+   - **Tokenizer Linter Remediation**: Corrected token nesting level exit condition in ``tools/src/lint.zig``, uncovering and remediating 7 hidden function length violations (>40 lines) across ``src/kernel/main.zig``, ``src/kernel/net/dns.zig``, ``src/kernel/net/tcp.zig``, ``tools/src/fb_verify.zig``, and ``tools/src/sym.zig``.
+   - **Memory Safety & Defect Remediation**:
+      - Eliminated static buffer aliasing in ``src/kernel/harness_bindings.zig`` (``sys_ai_prompt``, ``sys_cas_put``, ``sys_cas_get``, ``sys_actor_persist``) by duplicating strings directly into calling actor VM heaps.
+      - Extracted unified ``unescapeJsonString`` state machine into ``src/kernel/ai/provider.zig``, eliminating escaped backslash quote-termination bugs in ``gemini.zig`` and ``openai.zig``.
+      - Enforced ``MAX_CHUNK_PAYLOAD_SIZE = 1024 * 1024`` (1 MiB) sanity bounds checking in ``src/kernel/storage/cas.zig:getChunk`` and ``putChunk``.
+      - Preserved caller-saved registers (``rsi``, ``rdi``) in x86_64 keyboard ISR assembly trampoline (``src/kernel/arch/x86_64/idt.zig``).
+   - **Master Future Roadmaps (Milestones 15–18)**:
+      - Authored comprehensive specifications and roadmaps for Milestone 15 (Typed Structured Tool Calling Substrate), Milestone 16 (Reactive Vector Compositor & Multi-Actor Windowing), Milestone 17 (Sovereign Language Self-Hosting & Native Codegen), and Milestone 18 (Sovereign Cord-Cutting & Silicon Deployment).
+      - Updated master documentation index (``docs/index.rst``) and verified 100% warning-free Sphinx HTML compilation.
+
 - **VirtIO Driver Optimization & Hardware Acceleration Substrate**:
   - **Zero-Exit Memory Spin Loops**: Replaced port ``0x80`` ``ioWait()`` traps with native x86_64 ``pause`` instructions (``asm volatile ("pause" ::: .{ .memory = true })``) and ``PAUSE_SPIN_LIMIT = 5_000_000`` across all VirtIO drivers (``src/kernel/drivers/virtio_blk.zig``, ``src/kernel/drivers/virtio_net.zig``), dropping polling latency from ~1,500 CPU cycles to nanoseconds and eliminating costly hypervisor VM exits.
   - **Multi-Sector Batched DMA Transfers**: Upgraded VirtIO-Blk driver (``src/kernel/drivers/virtio_blk.zig``) with ``DMA_PAGES = 2`` (8192 bytes), 512-byte sector-aligned payload offset, and batched multi-sector DMA primitives (``readSectors``, ``writeSectors``).

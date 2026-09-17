@@ -11,6 +11,7 @@ const TokenState = struct {
     struct_literal_depth: usize = 0,
     in_function: bool = false,
     func_start_line: usize = 0,
+    func_nesting_level: usize = 0,
 };
 
 const Linter = struct {
@@ -66,7 +67,7 @@ const Linter = struct {
             return;
         }
         if (state.current_nesting > 0) state.current_nesting -= 1;
-        if (!state.in_function or state.current_nesting != 1) return;
+        if (!state.in_function or state.current_nesting != state.func_nesting_level) return;
 
         const func_len = line - state.func_start_line;
         if (func_len > RULES.max_func_lines) {
@@ -97,6 +98,7 @@ const Linter = struct {
         } else if (tag == .keyword_fn) {
             state.in_function = true;
             state.func_start_line = line;
+            state.func_nesting_level = state.current_nesting;
         } else if (tag == .l_brace) {
             self.handleLBrace(path, ast, state, i, line);
         } else if (tag == .r_brace) {

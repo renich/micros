@@ -88,6 +88,32 @@ pub fn escapeJsonString(buf: []u8, start_offset: usize, src: []const u8) !usize 
     return off;
 }
 
+pub fn unescapeJsonString(src: []const u8, out_buf: []u8) usize {
+    var out_idx: usize = 0;
+    var i: usize = 0;
+    while (i < src.len and out_idx < out_buf.len) {
+        const c = src[i];
+        if (c == '"') break;
+        if (c == '\\' and i + 1 < src.len) {
+            const next_c = src[i + 1];
+            switch (next_c) {
+                'n' => out_buf[out_idx] = '\n',
+                'r' => out_buf[out_idx] = '\r',
+                't' => out_buf[out_idx] = '\t',
+                '"', '\\' => out_buf[out_idx] = next_c,
+                else => out_buf[out_idx] = next_c,
+            }
+            out_idx += 1;
+            i += 2;
+            continue;
+        }
+        out_buf[out_idx] = c;
+        out_idx += 1;
+        i += 1;
+    }
+    return out_idx;
+}
+
 test "provider type parser" {
     try std.testing.expectEqual(ProviderType.gemini, parseProviderType("gemini"));
     try std.testing.expectEqual(ProviderType.openai, parseProviderType("openai"));
@@ -101,4 +127,10 @@ test "escape json string helper" {
     var buf: [64]u8 = undefined;
     const len = try escapeJsonString(&buf, 0, "hello \"world\"\n");
     try std.testing.expectEqualStrings("hello \\\"world\\\"\\n", buf[0..len]);
+}
+
+test "unescape json string helper" {
+    var buf: [64]u8 = undefined;
+    const len = unescapeJsonString("hello \\\"world\\\"\\n\\\\\"after quote", &buf);
+    try std.testing.expectEqualStrings("hello \"world\"\n\\", buf[0..len]);
 }

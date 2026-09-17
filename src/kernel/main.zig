@@ -77,7 +77,7 @@ fn initHardware(boot_info: *const BootInfo) void {
     asm volatile ("cli");
     serial.init();
     serial.writeString("\n=============================================\n");
-    serial.writeString(" MicrOS (µOS) Sovereign Substrate (Milestone 11)\n");
+    serial.writeString(" MicrOS (µOS) Sovereign Substrate (Milestone 14)\n");
     serial.writeString("=============================================\n");
 
     if (boot_info.magic != boot_info_mod.BOOT_INFO_MAGIC) {
@@ -485,14 +485,14 @@ fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u
     return try spawnActorFromCode(allocator, "cas_restored", code_buf[0..len]);
 }
 
-fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
+fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
     const ring_phys = pmm.allocContiguousPages(virtio_blk_mod.QUEUE_PAGES) orelse {
         serial.writeString("[kernel] PMM alloc failed for virtio-blk ring\n");
-        return;
+        return false;
     };
     const dma_phys = pmm.allocContiguousPages(virtio_blk_mod.DMA_PAGES) orelse {
         serial.writeString("[kernel] PMM alloc failed for virtio-blk dma\n");
-        return;
+        return false;
     };
 
     global_virtio_blk = virtio_blk_mod.VirtioBlkDevice.init(
@@ -504,13 +504,16 @@ fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocat
         serial.writeString("[kernel] VirtIO-Blk init failed: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");
-        return;
+        return false;
     };
 
     serial.writeString("[kernel] VirtIO-Blk active. Sectors: 0x");
     serial.writeHex(global_virtio_blk.?.capacity_sectors);
     serial.writeString("\n");
+    return true;
+}
 
+fn initStorageEngines(allocator: std.mem.Allocator) void {
     global_block_cache = block_cache_mod.BlockCache.init(allocator) catch |err| {
         serial.writeString("[kernel] Block cache init failed: ");
         serial.writeString(@errorName(err));
@@ -532,6 +535,11 @@ fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocat
     serial.writeString("[kernel] CAS engine active. Next free sec: 0x");
     serial.writeHex(global_cas.?.superblock.next_free_sector);
     serial.writeString("\n");
+}
+
+fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
+    if (!initBlkDevice(blk_pci, boot_info)) return;
+    initStorageEngines(allocator);
 }
 
 fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
@@ -720,6 +728,30 @@ fn setupHarnessEnvironment(
     harness_bindings_mod.registerBindings(vm) catch kernelPanic("harness_bindings");
 }
 
+fn initGenesisVm(
+    boot_info: *const BootInfo,
+    allocator: std.mem.Allocator,
+    genesis: *actor_mod.Actor,
+    ipc_ring: *ipc_mod.RingBuffer,
+) *vm_mod.VM {
+    serial.writeString("[kernel] Step 2.5: Initializing storage...\n");
+    initStorage(boot_info, allocator);
+
+    serial.writeString("[kernel] Step 3: Registering capabilities...\n");
+    registerGenesisCapabilities(genesis, boot_info, ipc_ring) catch kernelPanic("register_caps");
+
+    serial.writeString("[kernel] Step 4: Initializing display...\n");
+    initGenesisDisplay(boot_info);
+
+    serial.writeString("[kernel] Step 5: Loading Genesis Chunk...\n");
+    var chunk = loadGenesisChunk(allocator, boot_info) catch kernelPanic("load_genesis_chunk");
+
+    serial.writeString("[kernel] Step 6: Initializing VM...\n");
+    const genesis_vm = allocator.create(vm_mod.VM) catch kernelPanic("vm_alloc");
+    genesis_vm.initInPlace(allocator, &chunk) catch kernelPanic("vm_init");
+    return genesis_vm;
+}
+
 pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     initHardware(boot_info);
     serial.writeString("[kernel] kmain at 0x");
@@ -741,21 +773,7 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     serial.writeString("[kernel] Step 2: Initializing IPC ring...\n");
     const ipc_ring = ipc_mod.RingBuffer.init(allocator, ipc_mod.DEFAULT_RING_CAPACITY) catch kernelPanic("ipc_ring_init");
 
-    serial.writeString("[kernel] Step 2.5: Initializing storage...\n");
-    initStorage(boot_info, allocator);
-
-    serial.writeString("[kernel] Step 3: Registering capabilities...\n");
-    registerGenesisCapabilities(genesis, boot_info, ipc_ring) catch kernelPanic("register_caps");
-
-    serial.writeString("[kernel] Step 4: Initializing display...\n");
-    initGenesisDisplay(boot_info);
-
-    serial.writeString("[kernel] Step 5: Loading Genesis Chunk...\n");
-    var chunk = loadGenesisChunk(allocator, boot_info) catch kernelPanic("load_genesis_chunk");
-
-    serial.writeString("[kernel] Step 6: Initializing VM...\n");
-    const genesis_vm = allocator.create(vm_mod.VM) catch kernelPanic("vm_alloc");
-    genesis_vm.initInPlace(allocator, &chunk) catch kernelPanic("vm_init");
+    const genesis_vm = initGenesisVm(boot_info, allocator, genesis, ipc_ring);
 
     serial.writeString("[kernel] Step 7: Configuring Sovereign Harness...\n");
     setupHarnessEnvironment(genesis, boot_info, ipc_ring, genesis_vm);
