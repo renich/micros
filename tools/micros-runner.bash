@@ -16,6 +16,9 @@ TIMEOUT_SEC=10
 MON_SOCK="/tmp/micros-qemu-mon.sock"
 ISA_DEBUG=0
 NO_KVM=0
+DISK_RAW=""
+WIPE_DISK=0
+VERIFY_PERSISTENCE=0
 
 usage() {
     cat <<EOF
@@ -32,6 +35,9 @@ Options:
   --monitor-sock <path>      QEMU monitor socket (default: /tmp/micros-qemu-mon.sock)
   --isa-debug-exit           Enable QEMU isa-debug-exit on port 0xf4
   --no-kvm                   Disable KVM hardware acceleration
+  --disk <path>              Path to raw disk image for VirtIO-Blk
+  --wipe-disk                Wipe/recreate raw disk image before booting
+  --verify-persistence       Execute two-stage reboot persistence verification
 EOF
     exit 1
 }
@@ -49,6 +55,9 @@ while [[ $# -gt 0 ]]; do
         --monitor-sock) MON_SOCK="$2"; shift 2 ;;
         --isa-debug-exit) ISA_DEBUG=1; shift 1 ;;
         --no-kvm) NO_KVM=1; shift 1 ;;
+        --disk) DISK_RAW="$2"; shift 2 ;;
+        --wipe-disk) WIPE_DISK=1; shift 1 ;;
+        --verify-persistence) VERIFY_PERSISTENCE=1; shift 1 ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -75,6 +84,51 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+
+run_reboot_persistence_verification() {
+    local disk="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
+    local log1
+    local log2
+    log1=$(mktemp /tmp/micros-persist-s1-XXXXXX.log)
+    log2=$(mktemp /tmp/micros-persist-s2-XXXXXX.log)
+    # shellcheck disable=SC2064
+    trap "rm -f '$log1' '$log2'" RETURN
+
+    echo "========================================================"
+    echo " MicrOS Milestone 14: Sovereign Storage Persistence Test"
+    echo "========================================================"
+    echo "[persist-test] Stage 1: Initializing CAS and storing actor..."
+
+    local stage1_input
+    stage1_input=$(printf 'store sys_serial_write("[SOVEREIGN-PERSIST-SENTINEL-42] active.");\nexit\n')
+
+    "$0" --mode uefi --disk "$disk" --wipe-disk --serial-log "$log1" --input "$stage1_input" --expect "Stored in CAS. Hash:" --timeout "$TIMEOUT_SEC"
+
+    local hash
+    hash=$(gawk '/Stored in CAS\. Hash: [0-9a-f]{64}/ { print $5 }' "$log1" | tr -d '\r\n')
+    if [[ -z "$hash" || ${#hash} -ne 64 ]]; then
+        echo "[persist-test] FAILED: Could not extract 64-char BLAKE3 hash from Stage 1 log."
+        cat "$log1"
+        exit 1
+    fi
+    echo "[persist-test] Stage 1 SUCCESS! Chunk stored in CAS with hash: $hash"
+
+    echo "[persist-test] Stage 2: Rebooting QEMU from cold disk and spawning actor from CAS..."
+    local stage2_input
+    stage2_input=$(printf 'spawn_cas %s\nstatus\nexit\n' "$hash")
+
+    "$0" --mode uefi --disk "$disk" --serial-log "$log2" --input "$stage2_input" --expect "[SOVEREIGN-PERSIST-SENTINEL-42] active." --timeout "$TIMEOUT_SEC"
+
+    echo "[persist-test] Stage 2 SUCCESS! Dynamic actor restored and executed from cold disk CAS across reboots!"
+    echo "========================================================"
+    echo " Milestone 14 Sovereign Reboot Persistence VERIFIED."
+    echo "========================================================"
+    exit 0
+}
+
+if [[ "$VERIFY_PERSISTENCE" -eq 1 ]]; then
+    run_reboot_persistence_verification
+fi
 
 if [[ "$MODE" == "sandbox" ]]; then
     mkdir -p "$INITRAMFS_DIR/dev" "$INITRAMFS_DIR/proc" "$INITRAMFS_DIR/sys"
@@ -150,10 +204,21 @@ elif [[ "$MODE" == "uefi" ]]; then
     mkdir -p "$ESP_DIR/EFI/BOOT"
     cp "$ROOT_DIR/zig-out/bin/boot.efi" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
 
+    DISK_RAW="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
+    if [[ "$WIPE_DISK" -eq 1 && -f "$DISK_RAW" ]]; then
+        rm -f "$DISK_RAW"
+    fi
+    if [[ ! -f "$DISK_RAW" ]]; then
+        mkdir -p "$BUILD_DIR"
+        truncate -s 64M "$DISK_RAW"
+    fi
+
     QEMU_ARGS=(
         -m 512M
         -drive "if=pflash,format=raw,readonly=on,file=$OVMF_IMAGE"
         -drive "format=raw,file=fat:rw:$ESP_DIR"
+        -drive "if=none,id=disk0,format=raw,file=$DISK_RAW"
+        -device "virtio-blk-pci,drive=disk0"
         -netdev "user,id=net0"
         -device "virtio-net-pci,netdev=net0"
         -display none

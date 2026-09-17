@@ -130,6 +130,10 @@ fn cmd_help() {
     console_writeln("  clear         - Clear the Console viewport", 16777215);
     console_writeln("  kill <id>     - Terminate actor by ID", 16777215);
     console_writeln("  ai <prompt>   - Dispatch natural language task to Resident AI", 16777215);
+    console_writeln("  store <code>  - Store raw code or text into persistent CAS", 16777215);
+    console_writeln("  fetch <hash>  - Retrieve and display payload from CAS by hash", 16777215);
+    console_writeln("  persist <id>  - Persist actor source to CAS and update root hash", 16777215);
+    console_writeln("  spawn_cas <h> - Restore and spawn dynamic actor from CAS hash", 16777215);
     console_writeln("  exit          - Terminate harness event loop and halt", 16777215);
 }
 
@@ -170,15 +174,58 @@ fn cmd_ai(prompt) {
     return 0;
 }
 
+fn cmd_store(code) {
+    hash = sys_cas_put(code);
+    if (len(hash) == 0) {
+        console_writeln("Storage error: Failed to store in CAS.", 16777215);
+        return 0;
+    }
+    console_writeln("Stored in CAS. Hash: " + hash, 5306999);
+    return 0;
+}
+
+fn cmd_fetch(hash) {
+    content = sys_cas_get(hash);
+    if (len(content) == 0) {
+        console_writeln("CAS chunk not found: " + hash, 16777215);
+    } else {
+        console_writeln("--- CAS Payload ---", 57599);
+        console_writeln(content, 16777215);
+    }
+    return 0;
+}
+
+fn cmd_persist(target) {
+    hash = sys_actor_persist(str_to_int(target));
+    if (len(hash) == 0) {
+        console_writeln("Storage error: Failed to persist Actor " + target, 16777215);
+        return 0;
+    }
+    console_writeln("Actor " + target + " persisted. Root Hash: " + hash, 5306999);
+    return 0;
+}
+
+fn cmd_spawn_cas(hash) {
+    actor_id = sys_actor_spawn_cas(hash);
+    if (actor_id < 0) {
+        console_writeln("Storage error: Failed to spawn from CAS hash: " + hash, 16777215);
+        return 0;
+    }
+    console_writeln("Spawned Actor " + int_to_str(actor_id) + " from CAS", 5306999);
+    render_inspector();
+    return 0;
+}
+
 fn eval_command(cmd) {
     if (cmd == "help") { return cmd_help(); }
     if (cmd == "status") { return cmd_status(); }
     if (cmd == "actors") { return cmd_actors(); }
     if (cmd == "clear") { return cmd_clear(); }
-    if (is_prefix(cmd, "ai ")) {
-        prompt = substr(cmd, 3, len(cmd));
-        return cmd_ai(prompt);
-    }
+    if (is_prefix(cmd, "ai ")) { return cmd_ai(substr(cmd, 3, len(cmd))); }
+    if (is_prefix(cmd, "store ")) { return cmd_store(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "fetch ")) { return cmd_fetch(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "persist ")) { return cmd_persist(substr(cmd, 8, len(cmd))); }
+    if (is_prefix(cmd, "spawn_cas ")) { return cmd_spawn_cas(substr(cmd, 10, len(cmd))); }
     if (is_prefix(cmd, "kill ")) {
         target = substr(cmd, 5, len(cmd));
         sys_actor_terminate(str_to_int(target));

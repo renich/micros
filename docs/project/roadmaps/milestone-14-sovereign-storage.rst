@@ -2,7 +2,7 @@ Milestone 14: Persistent Sovereign Storage Substrate
 ===================================================
 
 :Objective: Eliminate operating system ephemerality. Implement a freestanding zero-libc VirtIO-Blk driver, a bounded page-aligned LRU block cache, and a cryptographic Content-Addressed Storage (CAS) engine using BLAKE3 hashing. Enable actor persistence, system state snapshotting, and byte-for-byte reboot survival on bare-metal silicon and QEMU.
-:Status: In Progress
+:Status: Completed & Verified
 :Specification: SPEC-TECH-STORAGE-001
 
 Milestones & Deliverables

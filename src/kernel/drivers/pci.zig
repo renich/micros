@@ -34,6 +34,8 @@ pub const VENDOR_VIRTIO: u16 = 0x1AF4;
 pub const VENDOR_INTEL: u16 = 0x8086;
 pub const DEVICE_VIRTIO_NET_LEGACY: u16 = 0x1000;
 pub const DEVICE_VIRTIO_NET_MODERN: u16 = 0x1041;
+pub const DEVICE_VIRTIO_BLK_LEGACY: u16 = 0x1001;
+pub const DEVICE_VIRTIO_BLK_MODERN: u16 = 0x1042;
 
 pub const PciDevice = struct {
     bus: u8,
@@ -191,6 +193,22 @@ pub fn findNetworkDevice() ?PciDevice {
             return dev;
         }
         if (dev.vendor_id == VENDOR_VIRTIO and (dev.device_id == DEVICE_VIRTIO_NET_LEGACY or dev.device_id == DEVICE_VIRTIO_NET_MODERN)) {
+            return dev;
+        }
+    }
+    return null;
+}
+
+pub fn findBlockDevice() ?PciDevice {
+    var devices: [32]PciDevice = undefined;
+    const count = scanAll(&devices);
+    for (devices[0..count]) |dev| {
+        if (dev.vendor_id == VENDOR_VIRTIO and (dev.device_id == DEVICE_VIRTIO_BLK_LEGACY or dev.device_id == DEVICE_VIRTIO_BLK_MODERN)) {
+            return dev;
+        }
+    }
+    for (devices[0..count]) |dev| {
+        if (dev.class_code == CLASS_STORAGE) {
             return dev;
         }
     }

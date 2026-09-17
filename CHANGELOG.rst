@@ -11,8 +11,14 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 ============
 
 - **Milestone 14 (Persistent Sovereign Storage Substrate)**:
-  - Authored Master Technical Specification (``docs/technical/specs/sovereign-storage-substrate.rst``, ``SPEC-TECH-STORAGE-001``) and project roadmap (``docs/project/roadmaps/milestone-14-sovereign-storage.rst``) defining the VirtIO-Blk driver, 64-page LRU block cache, and BLAKE3 Content-Addressed Storage (CAS) engine.
-  - Linked storage specification into master documentation index (``docs/technical/spec.rst``, ``docs/index.rst``, ``README.rst``) and verified 100% bidirectional traceability (``make -C tools test``).
+  - Implemented freestanding zero-libc VirtIO-Blk driver (``src/kernel/drivers/virtio_blk.zig``) adhering to VirtIO 1.0 with 256-descriptor split virtqueue, 3-page contiguous DMA allocation, 4096-byte mathematical alignment, volatile ring access, and polled read/write sector requests.
+  - Implemented page-aligned bounded block cache (``src/kernel/storage/block_cache.zig``) managing 64 page frames (256 KiB RAM) with strict Least-Recently-Used (LRU) eviction and write-back dirty page synchronization.
+  - Implemented Sovereign Content-Addressed Storage (CAS) engine (``src/kernel/storage/cas.zig``, ``src/kernel/storage/chunk.zig``) with freestanding BLAKE3 cryptographic hashing, append-only immutable chunk layout, 64-byte chunk headers, and Sector 0 superblock management with monotonic generation tracking.
+  - Registered capability-governed storage bindings in ``src/kernel/harness_bindings.zig`` (``sys_cas_put``, ``sys_cas_get``, ``sys_actor_persist``, ``sys_actor_spawn_cas``) and exposed interactive REPL commands in ``lib/macros/harness.mx`` (``store``, ``fetch``, ``persist``, ``spawn_cas``).
+  - Resolved PCI block device discovery in ``src/kernel/drivers/pci.zig`` to prioritize VirtIO vendor devices (``0x1AF4``) over generic IDE storage controllers.
+  - Resolved dynamic actor compilation memory lifetime bug in ``src/kernel/main.zig`` by duplicating script source before AST/bytecode compilation to prevent use-after-free corruption on stack-allocated chunk buffers.
+  - Implemented automated two-stage cold reboot persistence test in ``tools/micros-runner.bash`` (``--disk``, ``--wipe-disk``, ``--verify-persistence``) verifying live QEMU UEFI storage write, cold reboot, and CAS restoration of dynamic actors across reboots without host or network assistance.
+  - Authored Master Technical Specification (``docs/technical/specs/sovereign-storage-substrate.rst``, ``SPEC-TECH-STORAGE-001``) and updated roadmap (``docs/project/roadmaps/milestone-14-sovereign-storage.rst``) to Completed & Verified.
   - Updated ``AGENTS.md`` with storage and persistence invariants (sector boundary alignment, 4096-byte DMA alignment, BLAKE3 content addressing, zero POSIX filesystems).
 
 - **Milestone 13 (Interactive Human-AI Construction Loop)**:

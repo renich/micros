@@ -11,7 +11,7 @@ MicrOS (µOS)
 :Project: MicrOS (µOS)
 :Substrate: Zig 0.16.0 (Zero-Libc Microkernel)
 :Applications: Macros (Statically Typed, Immix Mark-Region GC, Green Fibers)
-:Status: Sovereign Substrate & Pluggable Resident AI (Milestone 10/12)
+:Status: Sovereign Substrate & Persistent Sovereign Storage (Milestone 14)
 :License: GPLv3 or later
 
 |
@@ -158,6 +158,9 @@ Booting the Sovereign Machine
 
    # 5. Launch interactive Sovereign Harness (1280x800 GOP Vector Display & Serial)
    make qemu-uefi
+
+   # 6. Verify two-stage cold reboot storage persistence across VirtIO-Blk & CAS
+   tools/micros-runner.bash --verify-persistence --timeout 15
 
 --------------------------------------------------------------------------------
 

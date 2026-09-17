@@ -11,6 +11,7 @@ pub const CapType = enum(u16) {
     framebuffer = 0x0004,
     actor_control = 0x0005,
     network_device = 0x0006,
+    storage_device = 0x0007,
 };
 
 pub const Rights = struct {

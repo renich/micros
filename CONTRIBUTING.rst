@@ -127,6 +127,9 @@ Test the operating system in full x86_64 UEFI emulation via QEMU:
    zig build -Dai-provider=gemini -Dai-api-key="<YOUR_API_KEY>"
    tools/micros-runner.bash --mode uefi --timeout 30
 
+   # 4. Verify two-stage cold reboot storage persistence across VirtIO-Blk & CAS
+   tools/micros-runner.bash --verify-persistence --timeout 15
+
 Project Journaling Protocol (PJP)
 =================================
 

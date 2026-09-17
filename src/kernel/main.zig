@@ -27,6 +27,10 @@ const harness_bindings_mod = @import("harness_bindings.zig");
 const ps2_kbd_mod = @import("drivers/ps2_kbd.zig");
 const pci_mod = @import("drivers/pci.zig");
 const virtio_net_mod = @import("drivers/virtio_net.zig");
+const virtio_blk_mod = @import("drivers/virtio_blk.zig");
+const block_cache_mod = @import("storage/block_cache.zig");
+const cas_mod = @import("storage/cas.zig");
+const cas_chunk_mod = @import("storage/chunk.zig");
 const net_mod = @import("net.zig");
 const ai_mod = @import("ai.zig");
 const config = @import("config");
@@ -44,6 +48,7 @@ const CAP_OBJ_FRAMEBUFFER: u32 = 1;
 const CAP_OBJ_IPC_RING: u32 = 2;
 const CAP_OBJ_BUNDLE: u32 = 3;
 const CAP_OBJ_NETWORK: u32 = 4;
+const CAP_OBJ_STORAGE: u32 = 5;
 
 const GENESIS_CSPACE_CAPACITY: usize = 64;
 const GENESIS_PAGE_TABLE_ROOT: u64 = 0;
@@ -56,6 +61,10 @@ var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
 var global_net_stack: ?net_mod.stack.NetworkStack = null;
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
 var global_sched: ?*fiber_mod.Scheduler = null;
+var global_virtio_blk: ?virtio_blk_mod.VirtioBlkDevice = null;
+var global_block_cache: ?block_cache_mod.BlockCache = null;
+var global_cas: ?cas_mod.CasEngine = null;
+var global_actor_sources: [actor_mod.MAX_ACTORS]?[]const u8 = [_]?[]const u8{null} ** actor_mod.MAX_ACTORS;
 
 fn kernelPanic(stage: []const u8) noreturn {
     serial.writeString("\n[KERNEL PANIC] Fatal error at stage: ");
@@ -371,7 +380,35 @@ fn actorThread(ctx: ?*anyopaque) void {
     };
 }
 
+fn compileActorScript(allocator: std.mem.Allocator, source: []const u8) !*chunk_mod.Chunk {
+    const chunk = try allocator.create(chunk_mod.Chunk);
+    chunk.* = chunk_mod.Chunk.init();
+    errdefer {
+        chunk.deinit(allocator);
+        allocator.destroy(chunk);
+    }
+    var compiler = compiler_mod.Compiler.init(allocator, chunk);
+    var p = parser_mod.Parser.init(allocator, source);
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        try compiler.compile(stmt);
+    }
+    try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
+    return chunk;
+}
+
+fn logActorSpawn(id: u32, name: []const u8) void {
+    serial.writeString("[kernel] Spawned dynamic Actor ");
+    serial.writeHex(id);
+    serial.writeString(" (");
+    serial.writeString(name);
+    serial.writeString(") successfully.\n");
+}
+
 fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
+    const persistent_source = try allocator.dupe(u8, source);
+    errdefer allocator.free(persistent_source);
+
     const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, 0);
     errdefer global_registry.terminate(allocator, child.id) catch {};
 
@@ -385,21 +422,7 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
         });
     }
 
-    const chunk = try allocator.create(chunk_mod.Chunk);
-    chunk.* = chunk_mod.Chunk.init();
-    errdefer {
-        chunk.deinit(allocator);
-        allocator.destroy(chunk);
-    }
-
-    var compiler = compiler_mod.Compiler.init(allocator, chunk);
-    var p = parser_mod.Parser.init(allocator, source);
-    while (p.current_token.token_type != .eof) {
-        const stmt = try p.parseStatement();
-        try compiler.compile(stmt);
-    }
-    try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
-
+    const chunk = try compileActorScript(allocator, persistent_source);
     const child_vm = try allocator.create(vm_mod.VM);
     try child_vm.initInPlace(allocator, chunk);
     errdefer {
@@ -414,13 +437,118 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
         child.fiber_ctx = @ptrCast(fib);
     }
 
-    serial.writeString("[kernel] Spawned dynamic Actor ");
-    serial.writeHex(child.id);
-    serial.writeString(" (");
-    serial.writeString(name);
-    serial.writeString(") successfully.\n");
+    if (child.id < actor_mod.MAX_ACTORS) {
+        global_actor_sources[child.id] = persistent_source;
+    }
 
+    logActorSpawn(child.id, name);
     return child.id;
+}
+
+fn casPutBridge(data: []const u8, out_hex: *[64]u8) anyerror!void {
+    if (global_cas == null) return error.NoStorage;
+    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    const hash = try global_cas.?.putChunk(.raw_blob, data, dev);
+    cas_chunk_mod.formatHexHash(&hash, out_hex);
+}
+
+fn casGetBridge(hex_hash: []const u8, out_buf: []u8) anyerror!usize {
+    if (global_cas == null) return error.NoStorage;
+    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    var raw_hash: [cas_chunk_mod.HASH_SIZE]u8 = undefined;
+    try cas_chunk_mod.parseHexHash(hex_hash, &raw_hash);
+    return try global_cas.?.getChunk(&raw_hash, out_buf, dev);
+}
+
+fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
+    if (global_cas == null) return error.NoStorage;
+    if (actor_id >= actor_mod.MAX_ACTORS) return error.ActorNotFound;
+    const src = global_actor_sources[actor_id] orelse return error.NoSourceRecorded;
+    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    const hash = try global_cas.?.putChunk(.actor_source, src, dev);
+    cas_chunk_mod.formatHexHash(&hash, out_hex);
+    try global_cas.?.setRootHash(&hash, dev);
+    serial.writeString("[storage] Actor ");
+    serial.writeHex(actor_id);
+    serial.writeString(" persisted with hash: ");
+    serial.writeString(out_hex);
+    serial.writeString("\n");
+}
+
+fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u32 {
+    if (global_cas == null) return error.NoStorage;
+    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    var raw_hash: [cas_chunk_mod.HASH_SIZE]u8 = undefined;
+    try cas_chunk_mod.parseHexHash(hex_hash, &raw_hash);
+    var code_buf: [4096]u8 = undefined;
+    const len = try global_cas.?.getChunk(&raw_hash, &code_buf, dev);
+    return try spawnActorFromCode(allocator, "cas_restored", code_buf[0..len]);
+}
+
+fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
+    const ring_phys = pmm.allocContiguousPages(virtio_blk_mod.QUEUE_PAGES) orelse {
+        serial.writeString("[kernel] PMM alloc failed for virtio-blk ring\n");
+        return;
+    };
+    const dma_phys = pmm.allocPage() orelse {
+        serial.writeString("[kernel] PMM alloc failed for virtio-blk dma\n");
+        return;
+    };
+
+    global_virtio_blk = virtio_blk_mod.VirtioBlkDevice.init(
+        blk_pci,
+        ring_phys,
+        dma_phys,
+        boot_info.hhdm_offset,
+    ) catch |err| {
+        serial.writeString("[kernel] VirtIO-Blk init failed: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        return;
+    };
+
+    serial.writeString("[kernel] VirtIO-Blk active. Sectors: 0x");
+    serial.writeHex(global_virtio_blk.?.capacity_sectors);
+    serial.writeString("\n");
+
+    global_block_cache = block_cache_mod.BlockCache.init(allocator) catch |err| {
+        serial.writeString("[kernel] Block cache init failed: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        return;
+    };
+
+    global_cas = cas_mod.CasEngine.init(
+        &global_block_cache.?,
+        &global_virtio_blk.?,
+        global_virtio_blk.?.capacity_sectors,
+    ) catch |err| {
+        serial.writeString("[kernel] CAS engine init failed: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        return;
+    };
+
+    serial.writeString("[kernel] CAS engine active. Next free sec: 0x");
+    serial.writeHex(global_cas.?.superblock.next_free_sector);
+    serial.writeString("\n");
+}
+
+fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
+    serial.writeString("[kernel] Probing PCI bus for block devices...\n");
+    const maybe_blk = pci_mod.findBlockDevice();
+    if (maybe_blk) |blk_dev| {
+        serial.writeString("[kernel] Found PCI block device. Vendor: 0x");
+        serial.writeHex(blk_dev.vendor_id);
+        serial.writeString(" Device: 0x");
+        serial.writeHex(blk_dev.device_id);
+        serial.writeString("\n");
+        if (blk_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
+            initVirtioBlk(blk_dev, boot_info, allocator);
+        }
+    } else {
+        serial.writeString("[kernel] No PCI block device found.\n");
+    }
 }
 
 fn initNetwork(boot_info: *const BootInfo) void {
@@ -466,6 +594,18 @@ fn registerNetworkCap(genesis: *actor_mod.Actor) !void {
     }
 }
 
+fn registerStorageCap(genesis: *actor_mod.Actor) !void {
+    if (global_virtio_blk != null and global_cas != null) {
+        _ = try genesis.insertCap(cap_mod.Capability{
+            .cap_type = .storage_device,
+            .rights = cap_mod.Rights.ALL,
+            .object_id = CAP_OBJ_STORAGE,
+            .data_addr = @intFromPtr(&global_cas.?),
+            .data_size = @sizeOf(cas_mod.CasEngine),
+        });
+    }
+}
+
 fn registerGenesisCapabilities(
     genesis: *actor_mod.Actor,
     boot_info: *const BootInfo,
@@ -500,6 +640,7 @@ fn registerGenesisCapabilities(
     }
 
     try registerNetworkCap(genesis);
+    try registerStorageCap(genesis);
 }
 
 fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !chunk_mod.Chunk {
@@ -528,6 +669,7 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !c
 
     const maybe_source = reader.findData("harness.mx") orelse reader.findData("init.mx");
     if (maybe_source) |source| {
+        global_actor_sources[actor_mod.GENESIS_ACTOR_ID] = source;
         serial.writeString("[kernel] Found startup script in Genesis MCB bundle. Compiling...\n");
         var chunk = chunk_mod.Chunk.init();
         var compiler = compiler_mod.Compiler.init(allocator, &chunk);
@@ -569,6 +711,10 @@ fn setupHarnessEnvironment(
         .kbd_ctrl = &global_kbd,
         .ai_inference_fn = aiInferenceBridge,
         .spawn_code_fn = spawnActorFromCode,
+        .cas_put_fn = casPutBridge,
+        .cas_get_fn = casGetBridge,
+        .persist_actor_fn = persistActorBridge,
+        .spawn_cas_fn = spawnCasBridge,
     };
     harness_bindings_mod.setContext(&global_harness_ctx.?);
     harness_bindings_mod.registerBindings(vm) catch kernelPanic("harness_bindings");
@@ -594,6 +740,9 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
 
     serial.writeString("[kernel] Step 2: Initializing IPC ring...\n");
     const ipc_ring = ipc_mod.RingBuffer.init(allocator, ipc_mod.DEFAULT_RING_CAPACITY) catch kernelPanic("ipc_ring_init");
+
+    serial.writeString("[kernel] Step 2.5: Initializing storage...\n");
+    initStorage(boot_info, allocator);
 
     serial.writeString("[kernel] Step 3: Registering capabilities...\n");
     registerGenesisCapabilities(genesis, boot_info, ipc_ring) catch kernelPanic("register_caps");
