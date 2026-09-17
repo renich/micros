@@ -1,0 +1,74 @@
+// MicrOS (µOS) Autonomous Self-Rebuild Pipeline
+// Orchestrates in-system compilation, deterministic MCB packaging,
+// PE32+ kernel image synthesis, and fail-safe dual-slot ESP staging.
+
+fn collect_system_entries() {
+    init_src = sys_bundle_read("init.mx");
+    msh_src = sys_bundle_read("msh.mx");
+    harness_src = sys_bundle_read("harness.mx");
+    installer_src = sys_bundle_read("installer.mx");
+    lexer_src = sys_bundle_read("lexer.mx");
+    parser_src = sys_bundle_read("parser.mx");
+    compiler_src = sys_bundle_read("compiler.mx");
+    compiler_main_src = sys_bundle_read("compiler_main.mx");
+    bundle_src = sys_bundle_read("bundle.mx");
+    rebuild_src = sys_bundle_read("rebuild.mx");
+
+    return [
+        ["bundle.mx", bundle_src],
+        ["compiler.mx", compiler_src],
+        ["compiler_main.mx", compiler_main_src],
+        ["harness.mx", harness_src],
+        ["init.mx", init_src],
+        ["installer.mx", installer_src],
+        ["lexer.mx", lexer_src],
+        ["msh.mx", msh_src],
+        ["parser.mx", parser_src],
+        ["rebuild.mx", rebuild_src]
+    ];
+}
+
+fn execute_rebuild() {
+    print("[rebuild] Step 1/5: Collecting system scripts from active bundle...");
+    entries = collect_system_entries();
+    print("[rebuild]   -> 10 system actors collected [OK]");
+
+    print("[rebuild] Step 2/5: Deterministically packing candidate Genesis MCB bundle...");
+    bundle_bytes = sys_bundle_pack(entries);
+    if (len(bundle_bytes) == 0) {
+        print("[rebuild] Error: Bundle synthesis failed.");
+        return 1;
+    }
+    b_hash = sys_cas_put(bundle_bytes);
+    print("[rebuild]   -> genesis.mcb packed: " + int_to_str(len(bundle_bytes)) + " bytes");
+    print("[rebuild]   -> bundle BLAKE3: " + b_hash);
+
+    print("[rebuild] Step 3/5: Synthesizing PE32+ kernel image...");
+    kernel_bytes = sys_kernel_synthesize(bundle_bytes);
+    if (len(kernel_bytes) == 0) {
+        print("[rebuild] Error: Kernel synthesis failed.");
+        return 1;
+    }
+    k_hash = sys_cas_put(kernel_bytes);
+    print("[rebuild]   -> BOOTX64.EFI synthesized: " + int_to_str(len(kernel_bytes)) + " bytes");
+    print("[rebuild]   -> kernel BLAKE3: " + k_hash);
+
+    print("[rebuild] Step 4/5: Staging kernel update into ESP and CAS...");
+    manifest_hash = sys_kernel_stage_update(kernel_bytes, bundle_bytes);
+    if (len(manifest_hash) == 0) {
+        print("[rebuild] Error: Failed to stage system update.");
+        return 1;
+    }
+    print("[rebuild]   -> Manifest BLAKE3: " + manifest_hash);
+
+    print("[rebuild] Step 5/5: Committing CAS Generation (Trial Canary active)...");
+    print("[rebuild] Rebuild complete! Candidate kernel staged successfully.");
+    print("[rebuild] Run 'reboot' to boot into trial generation.");
+    return 0;
+}
+
+fn main() {
+    return execute_rebuild();
+}
+
+main();

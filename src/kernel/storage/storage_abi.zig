@@ -15,6 +15,7 @@ const cas_mod = @import("cas.zig");
 const rebuild = @import("rebuild.zig");
 const pe_emitter = @import("../../boot/pe_emitter.zig");
 const bundle_writer = @import("bundle_writer.zig");
+const kernel_synthesizer = @import("kernel_synthesizer.zig");
 const io = @import("../arch/x86_64/io.zig");
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
@@ -176,10 +177,51 @@ fn nativeSysCasConfirmBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (active_rebuild_engine) |engine| {
-        engine.confirmBoot() catch return Value{ .boolean = false };
-        return Value{ .boolean = true };
+        const promoted = engine.confirmBoot() catch return Value{ .boolean = false };
+        return Value{ .boolean = promoted };
     }
     return Value{ .boolean = false };
+}
+
+fn nativeSysKernelSynthesize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    const bundle_bytes = args[0].string;
+
+    const kernel_bytes = try kernel_synthesizer.synthesizeKernel(vm.allocator, bundle_bytes);
+    return Value{ .string = kernel_bytes };
+}
+
+fn nativeSysKernelStageUpdate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
+    const kernel_data = args[0].string;
+    const bundle_data = args[1].string;
+
+    const engine = active_rebuild_engine orelse return error.RebuildEngineNotInitialized;
+    const manifest_hash = try engine.stageSystemUpdate(kernel_data, bundle_data, "", 0);
+
+    const hex_slice = try vm.allocator.alloc(u8, 64);
+    @import("chunk.zig").formatHexHash(&manifest_hash, hex_slice[0..64]);
+    return Value{ .string = hex_slice };
+}
+
+fn nativeSysRebuildStatus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    _ = args;
+    const engine = active_rebuild_engine orelse return error.RebuildEngineNotInitialized;
+    const manifest = try engine.getActiveManifest();
+
+    var fields = try vm.allocator.alloc(Value, 4);
+    fields[0] = Value{ .integer = @intCast(manifest.generation) };
+    fields[1] = Value{ .boolean = manifest.isTrial() };
+    fields[2] = Value{ .boolean = manifest.isStable() };
+
+    const k_hash_hex = try vm.allocator.alloc(u8, 64);
+    @import("chunk.zig").formatHexHash(&manifest.kernel_hash, k_hash_hex[0..64]);
+    fields[3] = Value{ .string = k_hash_hex };
+
+    return Value{ .array = fields };
 }
 
 fn nativeSysReboot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -223,6 +265,9 @@ pub fn registerStorageSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_disk_esp_stage_bootloader", Value{ .native = nativeSysDiskEspStageBootloader });
     try vm.globals.put("sys_disk_cas_format", Value{ .native = nativeSysDiskCasFormat });
     try vm.globals.put("sys_cas_confirm_boot", Value{ .native = nativeSysCasConfirmBoot });
+    try vm.globals.put("sys_kernel_synthesize", Value{ .native = nativeSysKernelSynthesize });
+    try vm.globals.put("sys_kernel_stage_update", Value{ .native = nativeSysKernelStageUpdate });
+    try vm.globals.put("sys_rebuild_status", Value{ .native = nativeSysRebuildStatus });
     try vm.globals.put("sys_bundle_pack", Value{ .native = nativeSysBundlePack });
     try vm.globals.put("sys_reboot", Value{ .native = nativeSysReboot });
 }
@@ -320,4 +365,28 @@ test "storage abi sys_bundle_pack packs and roundtrips entries" {
     try std.testing.expectEqual(@as(u32, 2), reader.header.entry_count);
     try std.testing.expectEqualStrings("content 1", reader.findData("alpha.mx").?);
     try std.testing.expectEqualStrings("content 2", reader.findData("beta.mx").?);
+}
+
+test "storage abi sys_kernel_synthesize generates valid PE image" {
+    const allocator = std.testing.allocator;
+    var chunk = @import("../../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var item0 = [_]Value{ Value{ .string = "init.mx" }, Value{ .string = "print(1);" } };
+    var items = [_]Value{Value{ .array = &item0 }};
+    var pack_args = [_]Value{Value{ .array = &items }};
+
+    const bundle_res = try nativeSysBundlePack(&vm, &pack_args);
+    defer allocator.free(bundle_res.string);
+
+    var synth_args = [_]Value{bundle_res};
+    const kernel_res = try nativeSysKernelSynthesize(&vm, &synth_args);
+    defer allocator.free(kernel_res.string);
+
+    try kernel_synthesizer.validatePeImage(kernel_res.string);
+    try std.testing.expect(kernel_res.string.len >= 512);
+    try std.testing.expectEqual(@as(usize, 0), kernel_res.string.len % pe_emitter.FILE_ALIGNMENT);
 }

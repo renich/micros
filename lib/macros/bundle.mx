@@ -12,6 +12,7 @@ fn pack_system_bundle() {
     compiler_src = sys_bundle_read("compiler.mx");
     compiler_main_src = sys_bundle_read("compiler_main.mx");
     bundle_src = sys_bundle_read("bundle.mx");
+    rebuild_src = sys_bundle_read("rebuild.mx");
 
     entries = [
         ["init.mx", init_src],
@@ -22,7 +23,8 @@ fn pack_system_bundle() {
         ["parser.mx", parser_src],
         ["compiler.mx", compiler_src],
         ["compiler_main.mx", compiler_main_src],
-        ["bundle.mx", bundle_src]
+        ["bundle.mx", bundle_src],
+        ["rebuild.mx", rebuild_src]
     ];
 
     bundle_bytes = sys_bundle_pack(entries);

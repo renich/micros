@@ -35,7 +35,10 @@ fn boot_init() {
         print("[init] Fatal: Failed to spawn App 0.");
         return 0;
     }
-    sys_cas_confirm_boot();
+    confirmed = sys_cas_confirm_boot();
+    if (confirmed) {
+        print("[init] Trial generation confirmed. Promoted to STABLE.");
+    }
     supervisor_loop(msh_id);
     return 0;
 }

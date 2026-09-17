@@ -22,6 +22,7 @@ VERIFY_PERSISTENCE=0
 NVME_RAW=""
 WIPE_NVME=0
 VERIFY_SILICON=0
+VERIFY_REBUILD=0
 
 usage() {
     cat <<EOF
@@ -44,6 +45,7 @@ Options:
   --nvme <path>              Path to raw disk image for PCIe NVMe SSD
   --wipe-nvme                Wipe/recreate NVMe disk image before booting
   --verify-silicon           Execute end-to-end silicon installer & cord-cutting verification
+  --verify-rebuild           Execute end-to-end in-system kernel self-rebuild verification
 EOF
     exit 1
 }
@@ -67,6 +69,7 @@ while [[ $# -gt 0 ]]; do
         --nvme) NVME_RAW="$2"; shift 2 ;;
         --wipe-nvme) WIPE_NVME=1; shift 1 ;;
         --verify-silicon) VERIFY_SILICON=1; shift 1 ;;
+        --verify-rebuild) VERIFY_REBUILD=1; shift 1 ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -150,7 +153,7 @@ run_silicon_verification() {
     trap "rm -f '$log1' '$log2'" RETURN
 
     echo "========================================================"
-    echo " MicrOS Milestone 18: Sovereign Silicon Deployment Test"
+    echo " MicrOS Milestone 18: Standalone Silicon Deployment Test"
     echo "========================================================"
     echo "[silicon-test] Stage 1: Cold boot live system and installing to physical NVMe..."
 
@@ -161,7 +164,7 @@ run_silicon_verification() {
     local stage1_input
     stage1_input=$(printf 'install\nexit\n')
 
-    "$0" --mode uefi --disk "$disk" --wipe-disk --nvme "$nvme" --serial-log "$log1" --input "$stage1_input" --expect "Deployment succeeded! Target silicon is fully sovereign." --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --disk "$disk" --wipe-disk --nvme "$nvme" --serial-log "$log1" --input "$stage1_input" --expect "Deployment succeeded! Target silicon is standalone and verified." --timeout "$TIMEOUT_SEC"
 
     echo "[silicon-test] Stage 1 SUCCESS! Bare-metal silicon partitioned, formatted, and staged!"
 
@@ -170,13 +173,41 @@ run_silicon_verification() {
 
     echo "[silicon-test] Stage 2 SUCCESS! MicrOS booted directly from standalone physical NVMe drive!"
     echo "========================================================"
-    echo " Milestone 18 Sovereign Cord-Cutting VERIFIED."
+    echo " Milestone 18 Standalone Cord-Cutting VERIFIED."
     echo "========================================================"
     exit 0
 }
 
 if [[ "$VERIFY_SILICON" -eq 1 ]]; then
     run_silicon_verification
+fi
+
+run_rebuild_verification() {
+    local disk="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
+    local log1
+    log1=$(mktemp /tmp/micros-rebuild-s1-XXXXXX.log)
+    # shellcheck disable=SC2064
+    trap "rm -f '$log1'" RETURN
+
+    echo "========================================================"
+    echo " MicrOS Phase 4 / Track D: In-System Self-Rebuilding Pipeline"
+    echo "========================================================"
+    echo "[rebuild-test] Stage 1: Cold boot UEFI system and executing in-system rebuild..."
+
+    local stage1_input
+    stage1_input=$(printf 'rebuild\nstatus\nexit\n')
+
+    "$0" --mode uefi --disk "$disk" --serial-log "$log1" --input "$stage1_input" --expect "Rebuild complete! Candidate kernel staged successfully." --timeout "$TIMEOUT_SEC"
+
+    echo "[rebuild-test] Stage 1 SUCCESS! In-system kernel synthesis and staging verified!"
+    echo "========================================================"
+    echo " Phase 4 / Track D In-System Self-Rebuilding VERIFIED."
+    echo "========================================================"
+    exit 0
+}
+
+if [[ "$VERIFY_REBUILD" -eq 1 ]]; then
+    run_rebuild_verification
 fi
 
 if [[ "$MODE" == "sandbox" ]]; then

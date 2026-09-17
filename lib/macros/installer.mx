@@ -1,10 +1,11 @@
-// MicrOS (µOS) Sovereign Standalone System Installer
-// Partitions bare-metal silicon, formats FAT32 ESP, stages bootloader, and initializes CAS.
-// Zero host dependencies, autonomous and interactive modes.
+// MicrOS (µOS) Standalone System Installer
+// Partitions raw NVMe/VirtIO silicon with GPT, formats FAT32 ESP,
+// stages freestanding PE/COFF bootloader, and initializes CAS storage slice.
+// Zero libc, native Macros.
 
-fn print_banner() {
-    sys_serial_write("\r\n========================================================\r\n");
-    sys_serial_write("          MicrOS Sovereign Silicon Installer            \r\n");
+fn draw_installer_banner() {
+    sys_serial_write("========================================================\r\n");
+    sys_serial_write("          MicrOS Standalone Silicon Installer            \r\n");
     sys_serial_write("========================================================\r\n");
 }
 
@@ -71,7 +72,7 @@ fn install_cas(target_idx) {
     }
 
     sys_serial_write("[installer] Step 5/5: Staging Genesis MCB bundle & committing Generation 1...\r\n");
-    sys_serial_write("[installer] Deployment succeeded! Target silicon is fully sovereign.\r\n");
+    sys_serial_write("[installer] Deployment succeeded! Target silicon is standalone and verified.\r\n");
     sys_serial_write("[installer] Ready for activation.\r\n");
     return true;
 }

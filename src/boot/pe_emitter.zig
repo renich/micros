@@ -150,42 +150,54 @@ pub fn calculateHeadersSize(section_count: usize) u32 {
     return alignUp(@intCast(raw_len), FILE_ALIGNMENT);
 }
 
+fn writeRelocPageBlock(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(u8),
+    page_rva: u32,
+    page_relocs: []const u32,
+) !void {
+    const odd = (page_relocs.len % 2) != 0;
+    const total_entries = if (odd) page_relocs.len + 1 else page_relocs.len;
+    const block_size: u32 = @intCast(@sizeOf(BaseRelocBlockHeader) + (total_entries * 2));
+
+    const hdr = BaseRelocBlockHeader{ .page_rva = page_rva, .block_size = block_size };
+    try list.appendSlice(allocator, std.mem.asBytes(&hdr));
+
+    for (page_relocs) |r| {
+        const offset = @as(u16, @truncate(r & 0x0FFF));
+        const entry: u16 = (@as(u16, IMAGE_REL_BASED_DIR64) << 12) | offset;
+        try list.appendSlice(allocator, std.mem.asBytes(&entry));
+    }
+    if (odd) {
+        const pad: u16 = (@as(u16, IMAGE_REL_BASED_ABSOLUTE) << 12);
+        try list.appendSlice(allocator, std.mem.asBytes(&pad));
+    }
+}
+
 pub fn emitRelocationBlocks(
     allocator: std.mem.Allocator,
     relocs: []const u32,
 ) ![]u8 {
     if (relocs.len == 0) return try allocator.alloc(u8, 0);
 
+    const sorted = try allocator.alloc(u32, relocs.len);
+    defer allocator.free(sorted);
+    @memcpy(sorted, relocs);
+    std.mem.sort(u32, sorted, {}, std.sort.asc(u32));
+
     var list = std.ArrayList(u8).empty;
     errdefer list.deinit(allocator);
 
     var i: usize = 0;
-    while (i < relocs.len) {
-        const page_rva = relocs[i] & ~@as(u32, 0x0FFF);
+    while (i < sorted.len) {
+        const page_rva = sorted[i] & ~@as(u32, 0x0FFF);
         var page_count: usize = 0;
-        while (i + page_count < relocs.len) : (page_count += 1) {
-            const next_page = relocs[i + page_count] & ~@as(u32, 0x0FFF);
+        while (i + page_count < sorted.len) : (page_count += 1) {
+            const next_page = sorted[i + page_count] & ~@as(u32, 0x0FFF);
             if (next_page != page_rva) break;
         }
 
-        const odd = (page_count % 2) != 0;
-        const total_entries = if (odd) page_count + 1 else page_count;
-        const block_size: u32 = @intCast(@sizeOf(BaseRelocBlockHeader) + (total_entries * 2));
-
-        const hdr = BaseRelocBlockHeader{ .page_rva = page_rva, .block_size = block_size };
-        try list.appendSlice(allocator, std.mem.asBytes(&hdr));
-
-        for (0..page_count) |p_idx| {
-            const offset = @as(u16, @truncate(relocs[i + p_idx] & 0x0FFF));
-            const entry: u16 = (@as(u16, IMAGE_REL_BASED_DIR64) << 12) | offset;
-            try list.appendSlice(allocator, std.mem.asBytes(&entry));
-        }
-
-        if (odd) {
-            const pad: u16 = (@as(u16, IMAGE_REL_BASED_ABSOLUTE) << 12);
-            try list.appendSlice(allocator, std.mem.asBytes(&pad));
-        }
-
+        try writeRelocPageBlock(allocator, &list, page_rva, sorted[i .. i + page_count]);
         i += page_count;
     }
 
@@ -401,6 +413,19 @@ test "pe emitter relocation grouping and alignment" {
     const hdr: *const BaseRelocBlockHeader = @ptrCast(@alignCast(block_bytes.ptr));
     try std.testing.expectEqual(@as(u32, 0x1000), hdr.page_rva);
     try std.testing.expectEqual(@as(u32, 16), hdr.block_size);
+}
+
+test "pe emitter unsorted relocation determinism" {
+    const allocator = std.testing.allocator;
+    const sorted_relocs = [_]u32{ 0x1008, 0x1010, 0x2004 };
+    const unsorted_relocs = [_]u32{ 0x2004, 0x1010, 0x1008 };
+
+    const b1 = try emitRelocationBlocks(allocator, &sorted_relocs);
+    defer allocator.free(b1);
+    const b2 = try emitRelocationBlocks(allocator, &unsorted_relocs);
+    defer allocator.free(b2);
+
+    try std.testing.expectEqualSlices(u8, b1, b2);
 }
 
 test "pe emitter synthetic bootloader validation" {

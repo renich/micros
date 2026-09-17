@@ -23,6 +23,7 @@ pub const cas = @import("kernel/storage/cas.zig");
 pub const fat32 = @import("kernel/storage/fat32.zig");
 pub const rebuild = @import("kernel/storage/rebuild.zig");
 pub const bundle_writer = @import("kernel/storage/bundle_writer.zig");
+pub const kernel_synthesizer = @import("kernel/storage/kernel_synthesizer.zig");
 pub const storage_abi = @import("kernel/storage/storage_abi.zig");
 pub const pe_emitter = @import("boot/pe_emitter.zig");
 pub const net = @import("kernel/net.zig");
@@ -54,6 +55,7 @@ test "kernel module tests" {
     _ = @import("kernel/storage/fat32.zig");
     _ = @import("kernel/storage/rebuild.zig");
     _ = @import("kernel/storage/bundle_writer.zig");
+    _ = @import("kernel/storage/kernel_synthesizer.zig");
     _ = @import("kernel/storage/storage_abi.zig");
     _ = @import("boot/pe_emitter.zig");
     _ = @import("kernel/net.zig");
@@ -152,6 +154,26 @@ test "Genesis Bundle contains and compiles bundle.mx" {
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
     var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, bundle_source);
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        defer stmt.deinit(std_mod.testing.allocator);
+        try compiler.compile(stmt);
+    }
+    try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
+    try std_mod.testing.expect(chunk.code.items.len > 0);
+}
+
+test "Genesis Bundle contains and compiles rebuild.mx" {
+    const std_mod = @import("std");
+    const raw_bundle = @embedFile("kernel/genesis.mcb");
+    const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
+    const rebuild_source = reader.findData("rebuild.mx").?;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(std_mod.testing.allocator);
+
+    var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, rebuild_source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);

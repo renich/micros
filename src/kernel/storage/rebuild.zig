@@ -77,10 +77,35 @@ pub const RebuildEngine = struct {
         return manifest.*;
     }
 
-    fn stageEspKernel(dev: *block.BlockDevice, kernel_data: []const u8) !void {
+    fn getActiveSlot(dev: *block.BlockDevice, allocator: std.mem.Allocator) u8 {
+        if (fat32.readFile(dev, "/EFI/BOOT/BOOTSTATE.DAT", allocator)) |data| {
+            defer allocator.free(data);
+            if (data.len > 0 and (data[0] == 'A' or data[0] == 'B')) return data[0];
+        } else |_| {}
+        return 'A';
+    }
+
+    fn stageEspKernel(dev: *block.BlockDevice, kernel_data: []const u8, allocator: std.mem.Allocator) !void {
+        const active_slot = getActiveSlot(dev, allocator);
+        const target_slot: u8 = if (active_slot == 'A') 'B' else 'A';
+        const target_path = if (target_slot == 'A') "/EFI/BOOT/SLOT_A.EFI" else "/EFI/BOOT/SLOT_B.EFI";
+
+        try fat32.writeFile(dev, target_path, kernel_data);
         try fat32.writeFile(dev, "/EFI/BOOT/BOOTX64.EFI", kernel_data);
+
+        var new_state = [_]u8{ target_slot, '\n' };
+        _ = fat32.writeFile(dev, "/EFI/BOOT/BOOTSTATE.DAT", &new_state) catch {};
+
         var trial_marker = [_]u8{'1'};
         _ = fat32.writeFile(dev, "/EFI/BOOT/TRIAL.DAT", &trial_marker) catch {};
+    }
+
+    pub fn setEspDevice(self: *RebuildEngine, esp_dev: ?*block.BlockDevice) void {
+        self.esp_dev = esp_dev;
+    }
+
+    pub fn setStorageDevice(self: *RebuildEngine, dev: ?*block.BlockDevice) void {
+        self.dev = dev;
     }
 
     pub fn stageSystemUpdate(
@@ -119,18 +144,18 @@ pub const RebuildEngine = struct {
             self.dev,
         );
 
-        if (self.esp_dev) |edev| try stageEspKernel(edev, kernel_data);
+        if (self.esp_dev) |edev| try stageEspKernel(edev, kernel_data, self.cas.cache.allocator);
 
         try self.cas.setRootHash(&manifest_hash, self.dev);
         return manifest_hash;
     }
 
-    pub fn confirmBoot(self: *RebuildEngine) !void {
+    pub fn confirmBoot(self: *RebuildEngine) !bool {
         var manifest = self.getActiveManifest() catch |err| switch (err) {
-            error.NoActiveManifest => return,
+            error.NoActiveManifest => return false,
             else => return err,
         };
-        if (!manifest.isTrial()) return;
+        if (!manifest.isTrial()) return false;
 
         manifest.flags = (manifest.flags & ~MANIFEST_FLAG_TRIAL_CANARY) | MANIFEST_FLAG_STABLE;
         const raw_manifest: [*]const u8 = @ptrCast(&manifest);
@@ -146,6 +171,7 @@ pub const RebuildEngine = struct {
         }
 
         try self.cas.setRootHash(&updated_hash, self.dev);
+        return true;
     }
 
     pub fn rollbackToPrevious(self: *RebuildEngine, allocator: std.mem.Allocator) !void {
@@ -206,7 +232,7 @@ test "rebuild engine state machine lifecycle" {
     try std.testing.expect(!man1.isStable());
 
     // Confirm boot
-    try engine.confirmBoot();
+    try std.testing.expect(try engine.confirmBoot());
     const man1_confirmed = try engine.getActiveManifest();
     try std.testing.expectEqual(@as(u64, 1), man1_confirmed.generation);
     try std.testing.expect(!man1_confirmed.isTrial());
