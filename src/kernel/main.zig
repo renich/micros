@@ -28,6 +28,7 @@ const ps2_kbd_mod = @import("drivers/ps2_kbd.zig");
 const pci_mod = @import("drivers/pci.zig");
 const virtio_net_mod = @import("drivers/virtio_net.zig");
 const virtio_blk_mod = @import("drivers/virtio_blk.zig");
+const nvme_mod = @import("drivers/nvme.zig");
 const block_mod = @import("drivers/block.zig");
 const block_cache_mod = @import("storage/block_cache.zig");
 const cas_mod = @import("storage/cas.zig");
@@ -68,6 +69,7 @@ var global_net_stack: ?net_mod.stack.NetworkStack = null;
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
 var global_sched: ?*fiber_mod.Scheduler = null;
 var global_virtio_blk: ?virtio_blk_mod.VirtioBlkDevice = null;
+var global_nvme: ?nvme_mod.NvmeDevice = null;
 var global_block_device: ?block_mod.BlockDevice = null;
 var global_block_cache: ?block_cache_mod.BlockCache = null;
 var global_cas: ?cas_mod.CasEngine = null;
@@ -585,7 +587,63 @@ fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocat
     initStorageEngines(allocator);
 }
 
+const NvmeDmaPages = struct {
+    asq: u64,
+    acq: u64,
+    iosq: u64,
+    iocq: u64,
+    prp: u64,
+    dma: u64,
+
+    fn alloc() ?NvmeDmaPages {
+        return NvmeDmaPages{
+            .asq = pmm.allocPage() orelse return null,
+            .acq = pmm.allocPage() orelse return null,
+            .iosq = pmm.allocPage() orelse return null,
+            .iocq = pmm.allocPage() orelse return null,
+            .prp = pmm.allocPage() orelse return null,
+            .dma = pmm.allocContiguousPages(16) orelse return null,
+        };
+    }
+};
+
+fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
+    const p = NvmeDmaPages.alloc() orelse return false;
+    const hhdm = boot_info.hhdm_offset;
+    global_nvme = nvme_mod.NvmeDevice.init(
+        nvme_pci,
+        p.asq,
+        @ptrFromInt(p.asq + hhdm),
+        p.acq,
+        @ptrFromInt(p.acq + hhdm),
+        p.iosq,
+        @ptrFromInt(p.iosq + hhdm),
+        p.iocq,
+        @ptrFromInt(p.iocq + hhdm),
+        p.prp,
+        @ptrFromInt(p.prp + hhdm),
+        p.dma,
+        @ptrFromInt(p.dma + hhdm),
+    ) catch |err| {
+        serial.writeString("[kernel] NVMe init failed: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        return false;
+    };
+    global_block_device = global_nvme.?.blockDevice();
+    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mnvme\x1b[90m: \x1b[97mPCIe NVMe 1.4 persistent drive (capacity: \x1b[0m");
+    serial.writeDec(global_nvme.?.total_sectors);
+    serial.writeString("\x1b[97m sectors)\x1b[0m\n");
+    return true;
+}
+
 fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
+    if (pci_mod.findNvmeDevice()) |nvme_dev| {
+        if (initNvmeDevice(nvme_dev, boot_info)) {
+            initStorageEngines(allocator);
+            return;
+        }
+    }
     const maybe_blk = pci_mod.findBlockDevice();
     if (maybe_blk) |blk_dev| {
         if (blk_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
@@ -624,7 +682,7 @@ fn registerNetworkCap(genesis: *actor_mod.Actor) !void {
 }
 
 fn registerStorageCap(genesis: *actor_mod.Actor) !void {
-    if (global_virtio_blk != null and global_cas != null) {
+    if ((global_virtio_blk != null or global_nvme != null) and global_cas != null) {
         _ = try genesis.insertCap(cap_mod.Capability{
             .cap_type = .storage_device,
             .rights = cap_mod.Rights.ALL,

@@ -29,6 +29,8 @@ pub const CLASS_STORAGE: u8 = 0x01;
 pub const CLASS_NETWORK: u8 = 0x02;
 pub const CLASS_DISPLAY: u8 = 0x03;
 pub const SUBCLASS_ETHERNET: u8 = 0x00;
+pub const SUBCLASS_NVME: u8 = 0x08;
+pub const PROG_IF_NVME: u8 = 0x02;
 
 pub const VENDOR_VIRTIO: u16 = 0x1AF4;
 pub const VENDOR_INTEL: u16 = 0x8086;
@@ -69,7 +71,13 @@ pub const PciDevice = struct {
     pub fn getMmioAddr(self: PciDevice, bar_index: usize) ?u64 {
         const val = self.getBar(bar_index);
         if ((val & 0x01) != 0) return null;
-        return @as(u64, val & 0xFFFF_FFF0);
+        const low = @as(u64, val & 0xFFFF_FFF0);
+        const bar_type = (val >> 1) & 0x03;
+        if (bar_type == 0x02 and bar_index < 5) {
+            const high = @as(u64, self.getBar(bar_index + 1));
+            return (high << 32) | low;
+        }
+        return low;
     }
 
     pub fn getBar(self: PciDevice, index: usize) u32 {
@@ -215,6 +223,17 @@ pub fn findBlockDevice() ?PciDevice {
     return null;
 }
 
+pub fn findNvmeDevice() ?PciDevice {
+    var devices: [32]PciDevice = undefined;
+    const count = scanAll(&devices);
+    for (devices[0..count]) |dev| {
+        if (dev.class_code == CLASS_STORAGE and dev.subclass == SUBCLASS_NVME and dev.prog_if == PROG_IF_NVME) {
+            return dev;
+        }
+    }
+    return null;
+}
+
 test "pci config address generation" {
     const addr = makeConfigAddress(0, 3, 0, 0x10);
     try std.testing.expect((addr & PCI_ENABLE_BIT) != 0);
@@ -235,7 +254,7 @@ test "pci device bar interpretation" {
         .header_type = 0,
         .irq_line = 11,
         .bar0 = 0xC001, // I/O Port 0xC000
-        .bar1 = 0xFEBD_0000, // MMIO
+        .bar1 = 0xFEBD_0000, // MMIO 32-bit
         .bar2 = 0,
         .bar3 = 0,
         .bar4 = 0,
@@ -245,4 +264,30 @@ test "pci device bar interpretation" {
     try std.testing.expectEqual(@as(?u16, 0xC000), dev.getIoPort(0));
     try std.testing.expect(!dev.isIoBar(1));
     try std.testing.expectEqual(@as(?u64, 0xFEBD_0000), dev.getMmioAddr(1));
+}
+
+test "pci 64-bit bar mmio decoding" {
+    const nvme_dev = PciDevice{
+        .bus = 0,
+        .device = 4,
+        .function = 0,
+        .vendor_id = 0x1B36, // QEMU NVMe
+        .device_id = 0x0010,
+        .class_code = CLASS_STORAGE,
+        .subclass = SUBCLASS_NVME,
+        .prog_if = PROG_IF_NVME,
+        .header_type = 0,
+        .irq_line = 10,
+        .bar0 = 0xFEBD_0004, // 64-bit MMIO (type 0x02, bit 2:1 = 0b10)
+        .bar1 = 0x0000_0002, // Upper 32 bits (0x2_FEBD_0000)
+        .bar2 = 0,
+        .bar3 = 0,
+        .bar4 = 0,
+        .bar5 = 0,
+    };
+    try std.testing.expect(!nvme_dev.isIoBar(0));
+    try std.testing.expectEqual(@as(?u64, 0x0000_0002_FEBD_0000), nvme_dev.getMmioAddr(0));
+    try std.testing.expectEqual(CLASS_STORAGE, nvme_dev.class_code);
+    try std.testing.expectEqual(SUBCLASS_NVME, nvme_dev.subclass);
+    try std.testing.expectEqual(PROG_IF_NVME, nvme_dev.prog_if);
 }
