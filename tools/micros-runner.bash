@@ -197,7 +197,7 @@ elif [[ "$MODE" == "uefi" ]]; then
     fi
 
     if [[ "$EXPECT" == "Substrate self-test verified (Macros 20+22=42)" ]]; then
-        EXPECT="MicrOS (uOS) Sovereign Genesis Actor Online"
+        EXPECT="MicrOS Interactive Terminal"
     fi
 
     ESP_DIR="$BUILD_DIR/esp"

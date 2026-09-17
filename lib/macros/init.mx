@@ -1,14 +1,4 @@
-// MicrOS (µOS) Genesis Actor Startup Script
-// Executed natively by the Macros VM inside Actor 0.
+// MicrOS (µOS) Init Script
+// Executed by Actor 0.
 
-print("=============================================");
-print("MicrOS (uOS) Sovereign Genesis Actor Online");
-print("Capability Space Active: Zero PIDs, Zero Libc");
-print("=============================================");
-
-fn genesis_welcome() {
-    print("Welcome to the sovereign computational substrate.");
-    print("All resources are mediated via unforgeable capabilities.");
-}
-
-genesis_welcome();
+print("µOS system initialized.");

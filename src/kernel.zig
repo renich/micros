@@ -64,8 +64,8 @@ test "Genesis Bundle contains and compiles harness.mx" {
 test "Compiles and executes MOCK_RESPONSE code block" {
     const std_mod = @import("std");
     const source =
-        \\sys_serial_write("[MockAi] Autonomous sovereign directive active.\n");
-        \\sys_fb_draw_string(50, 50, "MICROS OFFLINE SOVEREIGN HARNESS", 65280, 0);
+        \\sys_serial_write("[MockAi] System ready.\n");
+        \\sys_fb_draw_string(50, 50, "MICROS OFFLINE HARNESS", 65280, 0);
     ;
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
@@ -103,7 +103,7 @@ fn testAiPromptMock(vm_ptr: *anyopaque, args: []@import("macros/eval.zig").Value
     _ = vm_ptr;
     _ = args;
     const resp =
-        "Sovereign Directive: MOCK-0001\n\n" ++
+        "Status: MOCK-0001\n\n" ++
         ".. code-block:: macros\n\n" ++
         "   sys_serial_write(\"[MockAi] Hello\\n\");\n" ++
         "   sys_fb_draw_string(50, 50, \"MICROS\", 65280, 0);\n";
@@ -161,7 +161,7 @@ test "Harness VM stack depth tracking with simulated commands" {
 
 test "Tokenize mock extracted code" {
     const std_mod = @import("std");
-    const source = "\n   sys_serial_write(\"[MockAi] Autonomous sovereign directive active.\");\n   sys_fb_draw_string(50, 50, \"MICROS OFFLINE SOVEREIGN HARNESS\", 65280, 0);\n";
+    const source = "\n   sys_serial_write(\"[MockAi] System ready.\");\n   sys_fb_draw_string(50, 50, \"MICROS OFFLINE HARNESS\", 65280, 0);\n";
     var lex = @import("macros/lexer.zig").Lexer.init(source);
     const first_tok = lex.nextToken();
     try std_mod.testing.expectEqualStrings("sys_serial_write", first_tok.lexeme);

@@ -75,8 +75,7 @@ fn kernelPanic(stage: []const u8) noreturn {
 }
 
 fn printBanner() void {
-    serial.writeString("\n\x1b[1;97mµOS (MicrOS) version 0.14.0-sovereign\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n");
-    serial.writeString("\x1b[90mZero Libc · Capability Security · Autonomous Genesis\x1b[0m\n\n");
+    serial.writeString("\n\x1b[1;97mµOS (MicrOS) 0.15.0\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
 }
 
 fn initHardware(boot_info: *const BootInfo) void {
@@ -327,7 +326,7 @@ fn ensureTlsConnection() bool {
             }
         }
     }
-    serial.writeString("[kernel] Re-establishing TLS connection for sovereign turn...\n");
+    serial.writeString("[kernel] Re-establishing TLS connection...\n");
     global_tls_ready = false;
     global_tls_adapter.close();
     return attemptEstablishSession();
@@ -667,7 +666,7 @@ fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {
         chunk.deinit(allocator);
         allocator.destroy(chunk);
     }
-    const msg = eval_mod.Value{ .string = "Genesis Actor executing in Actor 0 under CSpace capability control." };
+    const msg = eval_mod.Value{ .string = "Actor 0 initialized." };
     const c_idx = try chunk.addConstant(allocator, msg);
 
     try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.constant));

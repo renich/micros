@@ -1,5 +1,5 @@
-// MicrOS (µOS) Sovereign Actor Harness & Construction Environment
-// Executed natively inside Actor 0 under capability control.
+// MicrOS (µOS) Interactive Actor Harness
+// Standalone terminal interface running inside Actor 0.
 // Provides live status, vector canvas rendering, actor inspection, and command loop.
 
 fn init_theme() {
@@ -29,8 +29,8 @@ fn init_ansi() {
 
 fn draw_header() {
     sys_fb_draw_rect(0, 0, 1280, 26, CLR_HEADER_BG);
-    sys_fb_draw_string(20, 9, "uOS (MicrOS) Sovereign Substrate  [Milestone 14]", CLR_TEXT, CLR_HEADER_BG);
-    sys_fb_draw_string(920, 9, "Zero Libc . Capability Security", CLR_MUTED, CLR_HEADER_BG);
+    sys_fb_draw_string(20, 9, "uOS (MicrOS) 0.15.0", CLR_TEXT, CLR_HEADER_BG);
+    sys_fb_draw_string(1180, 9, "x86_64", CLR_MUTED, CLR_HEADER_BG);
     sys_fb_draw_rect(0, 25, 1280, 1, CLR_BORDER);
 }
 
@@ -89,7 +89,7 @@ fn render_inspector() {
     var_y = var_y + 16;
     sys_fb_draw_string(880, var_y, "Fault Guard:    " + int_to_str(sys_fault_count()) + " faults", CLR_MUTED, CLR_BG);
     var_y = var_y + 16;
-    sys_fb_draw_string(880, var_y, "Substrate:      Sovereign Active", CLR_GREEN, CLR_BG);
+    sys_fb_draw_string(880, var_y, "State:          Online", CLR_GREEN, CLR_BG);
 }
 
 fn find_str(haystack, needle) {
@@ -137,14 +137,14 @@ fn is_prefix(str, pre) {
 fn cmd_help() {
     console_writeln("-- System Commands -----------------------------", CLR_MUTED);
     console_writeln("  help          - Show this command reference", CLR_TEXT);
-    console_writeln("  status        - Substrate health and telemetry", CLR_TEXT);
+    console_writeln("  status        - System health and telemetry", CLR_TEXT);
     console_writeln("  actors        - List registered actors and state", CLR_TEXT);
     console_writeln("  clear         - Clear the console viewport", CLR_TEXT);
     console_writeln("  kill <id>     - Terminate actor by ID", CLR_TEXT);
-    console_writeln("  exit          - Halt sovereign harness", CLR_TEXT);
-    console_writeln("-- Cognitive & Synthesis -----------------------", CLR_MUTED);
+    console_writeln("  exit          - Halt harness", CLR_TEXT);
+    console_writeln("-- AI & Synthesis ------------------------------", CLR_MUTED);
     console_writeln("  ai <prompt>   - Dispatch natural language task to AI", CLR_TEXT);
-    console_writeln("-- Sovereign Persistence (CAS) -----------------", CLR_MUTED);
+    console_writeln("-- Storage (CAS) -------------------------------", CLR_MUTED);
     console_writeln("  store <code>  - Store raw code or text into CAS", CLR_TEXT);
     console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash", CLR_TEXT);
     console_writeln("  persist <id>  - Persist actor source to CAS root", CLR_TEXT);
@@ -152,7 +152,7 @@ fn cmd_help() {
 }
 
 fn cmd_status() {
-    console_writeln("* Substrate : Sovereign (Zero Defects)", CLR_GREEN);
+    console_writeln("* Status    : Ready", CLR_GREEN);
     console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active", CLR_TEXT);
     console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained", CLR_TEXT);
 }
@@ -303,11 +303,11 @@ fn handle_newline(buf) {
     console_newline();
     if (len(buf) > 0) {
         if (buf == "exit") {
-            console_writeln("Halting Sovereign Harness.", CLR_MUTED);
+            console_writeln("Halting harness.", CLR_MUTED);
             return false;
         }
         if (buf == "quit") {
-            console_writeln("Halting Sovereign Harness.", CLR_MUTED);
+            console_writeln("Halting harness.", CLR_MUTED);
             return false;
         }
         eval_command(buf);
@@ -368,9 +368,8 @@ fn harness_main() {
     draw_header();
     draw_panels();
     render_inspector();
-    sys_serial_write("\n[harness] MicrOS (uOS) Sovereign Genesis Actor Online\n");
-    console_writeln("MicrOS (uOS) Sovereign Genesis Actor Online", CLR_TEXT);
-    console_writeln("Type 'help' for commands, 'ai <prompt>' to synthesize actors.", CLR_MUTED);
+    console_writeln("MicrOS Interactive Terminal", CLR_TEXT);
+    console_writeln("Type 'help' for commands.", CLR_MUTED);
     console_newline();
     harness_loop();
 }
