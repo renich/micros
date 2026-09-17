@@ -10,6 +10,31 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 16 (Reactive Vector Compositor & Multi-Actor Windowing)**:
+  - **Double-Buffered Backbuffer & Page Alignment**: Implemented ``src/kernel/compositor/canvas.zig`` managing a 1280x800x32bpp backbuffer in kernel RAM with mathematically enforced 4096-byte page alignment (``align(4096)``) to eliminate tearing, bus saturation, and scanline flicker.
+  - **Bounded AABB Damage Pipeline**: Implemented Axis-Aligned Bounding Box (AABB) dirty rectangle tracking (``DamageRect``) with ``unionWith``, ``intersectWith``, and point/rect accumulation, transferring only dirty scanline extents to physical VRAM during vertical refresh cycles.
+  - **Shared-Memory Actor Surfaces & Zero-Copy IPC**: Implemented ``src/kernel/compositor/surface.zig`` allowing individual actors to allocate isolated pixel surfaces in their own capability domains and push zero-copy ``SurfaceCommit`` tokens over lock-free SPSC IPC rings (``RingBuffer``).
+  - **Multi-Actor Window Manager & Z-Order Tiling**: Implemented ``src/kernel/compositor/wm.zig`` providing automatic golden-ratio binary space partitioning (BSP) tiling, floating HUD overlays, active/inactive window border styling, 16px title bars, and Z-order stacking without legacy X11 or Wayland protocol overhead.
+  - **Pointer Ingress & Focus Arbitration**: Implemented 3-byte PS/2 mouse packet decoding (``decodePs2Packet``), coordinate clamping, non-destructive 8x8 cursor sprite caching (``CursorBacking``), top-to-bottom spatial hit-testing, and ``Ctrl+Alt+Space`` hotkey arbitration toggling focus instantly between App 0 MicroShell and active visual actors in ``src/kernel/compositor/input.zig``.
+  - **Native C-ABI Windowing Syscalls**: Exposed unified native windowing and compositor bindings in ``src/kernel/abi.zig`` (``sys_window_create``, ``sys_window_close``, ``sys_window_focus``, ``sys_window_draw_rect``, ``sys_window_draw_string``, ``sys_compositor_flush``, ``sys_pointer_read``).
+  - **Kernel Integration & Automated Framebuffer Verification**: Integrated double-buffered compositor initialization into ``kmain`` (``src/kernel/main.zig``), enhanced ``tools/micros-runner.bash`` to reliably capture QEMU monitor screendumps via UNIX domain sockets, and verified visual output with ``tools/src/fb_verify.zig`` (passing with variance 11.64).
+  - **Master Specification & Roadmap**: Authored Master Technical Specification ``docs/technical/specs/reactive-compositor.rst`` (``SPEC-TECH-COMPOSITOR-001``) and updated roadmap ``docs/project/roadmaps/milestone-16-reactive-compositor.rst`` to Completed & Verified.
+
+- **Milestone 15b (Process Hierarchy Decoupling & Actor Supervision)**:
+  - **4-Layer Process Taxonomy**: Decoupled the boot architecture into Layer 0 Microkernel (Zig, Ring 0, mechanism only) -> Layer 1 Actor 0 Supervisor (``lib/macros/init.mx``) -> Layer 2 App 0 MicroShell (``lib/macros/msh.mx``) -> Layer 3 App 1 Interactive Studio (``lib/macros/harness.mx``).
+  - **Unified Sovereign System ABI**: Refactored ``src/kernel/harness_bindings.zig`` into ``src/kernel/abi.zig``, exposing a single, unified native C-ABI substrate for microkernel capabilities, actor lifecycle, storage, and IPC.
+  - **Immortal Erlang-Style Supervisor**: Implemented autonomous supervision loop in ``init.mx`` that monitors App 0 MicroShell via ``sys_actor_wait`` and auto-respawns it upon fault or exit.
+  - **Actor Lifecycle Synchronization**: Updated ``ActorThreadContext`` with explicit lifecycle tracking (``running``, ``faulted``, ``terminated``) in ``src/kernel/actor.zig`` and implemented ``sys_actor_wait`` native blocking synchronization.
+  - **Interactive Harness Separation**: Converted ``lib/macros/harness.mx`` into an on-demand graphical studio spawned from ``msh`` via ``harness`` command, returning cleanly to the shell on ``exit`` with full framebuffer wipe.
+  - **Master Specification & Roadmap**: Authored Master Technical Specification ``docs/technical/specs/process-hierarchy.rst`` (``SPEC-TECH-HIERARCHY-001``) and roadmap ``docs/project/roadmaps/milestone-15b-process-hierarchy.rst``.
+
+- **Milestone 15 (Typed Structured Tool Calling Substrate)**:
+  - **Freestanding Tool Definition & Schema Registry**: Implemented ``src/kernel/ai/tools.zig`` defining strongly typed compile-time tool declarations for Gemini (``functionDeclarations``) and OpenAI (``tools`` array) covering ``spawn_actor``, ``grant_capability``, ``write_storage``, ``read_storage``, ``draw_canvas``, and ``query_telemetry``.
+  - **Zero-Allocation Streaming Tool Call Parser**: Implemented zero-allocation JSON streaming parser in ``src/kernel/ai/tools.zig`` extracting function names and JSON argument payloads with mathematical recursion limits (nesting depth <= 3).
+  - **CSpace Security Gate & Capability Dispatcher**: Implemented capability-gated execution routing in ``src/kernel/ai/tools.zig`` verifying ``Rights.ACTOR_CONTROL`` and storage rights before executing operations, preventing rights escalation.
+  - **Native ABI Tool Call Binding**: Registered native ``sys_ai_tool_call`` in ``src/kernel/abi.zig`` enabling Resident AI models to execute structured microkernel operations directly without host dependencies.
+  - **Master Specification & Roadmap**: Authored Master Technical Specification ``docs/technical/specs/structured-tool-calling.rst`` (``SPEC-TECH-TOOLS-001``) and updated roadmap ``docs/project/roadmaps/milestone-15-structured-tool-calling.rst`` to Complete.
+
 - **AI Code Block Extraction & Actor Fault Containment**:
   - **Native AST-Safe Code Extraction**: Introduced native ``sys_ai_extract_code`` binding in ``src/kernel/harness_bindings.zig`` delegating to ``AiClient.extractCodeBlock``, parsing indentation boundaries and terminating cleanly on unindented section headers (e.g., trailing ``Kernel Directives``) in resident AI responses.
   - **Child Actor Fault Containment**: Hardened ``nativeSysActorSpawnCode`` to catch script compilation errors and return ``-1`` gracefully, preventing VM runtime panics in Genesis Actor 0 when resident AI returns malformed code.

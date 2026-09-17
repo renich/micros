@@ -11,7 +11,7 @@ MicrOS (µOS)
 :Project: MicrOS (µOS)
 :Substrate: Zig 0.16.0 (Zero-Libc Microkernel)
 :Applications: Macros (Statically Typed, Immix Mark-Region GC, Green Fibers)
-:Status: Sovereign Substrate & Persistent Sovereign Storage (Milestone 14)
+:Status: Reactive Vector Compositor & Multi-Actor Windowing (Milestone 16)
 :License: GPLv3 or later
 
 |
@@ -119,6 +119,8 @@ Detailed architectural specifications and roadmaps are located in `docs/ <docs/R
 * `MicrOS Genesis Blueprint <docs/micros_genesis_plan.rst>`_: The complete manifesto and master plan.
 * `MicrOS Story: 38 Milliseconds to Light <docs/micros-story.rst>`_: Narrative walkthrough of a day on sovereign silicon.
 * `Master Technical Specification <docs/technical/spec.rst>`_: Substrate, CSpace capability tokens, and syscall ABI.
+* `Reactive Vector Compositor <docs/technical/specs/reactive-compositor.rst>`_: Double-buffered backbuffer, AABB damage tracking, and BSP windowing.
+* `Process Hierarchy Decoupling <docs/technical/specs/process-hierarchy.rst>`_: 4-layer taxonomy (Microkernel -> Actor 0 Supervisor -> App 0 MicroShell -> App 1 Interactive Studio).
 * `Sovereign Storage Substrate <docs/technical/specs/sovereign-storage-substrate.rst>`_: VirtIO-Blk driver, LRU block cache, and BLAKE3 CAS engine.
 * `Sovereign Interactive Harness <docs/technical/specs/sovereign-interactive-harness.rst>`_: Unified input, REPL dispatcher, and live actor spawning.
 * `Sovereign Gemini Orchestrator <docs/technical/specs/sovereign-gemini-orchestrator.rst>`_: Freestanding TLS 1.3 and AI loop.
