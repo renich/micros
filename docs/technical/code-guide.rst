@@ -55,9 +55,8 @@ Control originates in ``pub fn main() uefi.Status`` within ``boot.efi``:
 * **Firmware Handshake**: Connects to the UEFI System Table and initializes serial/console output.
 * **Framebuffer Discovery**: Locates the UEFI Graphics Output Protocol (GOP), capturing base address, screen geometry (1280x800), scanline stride, and color format into ``FramebufferInfo``.
 * **Memory Map Acquisition**: Queries the UEFI memory map into a contiguous buffer of ``MemoryDescriptor`` entries, classifying usable RAM, bootloader data, and reserved memory.
-* **BootInfo Packaging**: Assembles physical memory boundaries, Higher Half Direct Map (HHDM) offsets, and framebuffer metadata into a verified ``BootInfo`` struct with magic signature ``0x4D494352_4F534249``.
-* **Exit Boot Services**: Invokes ``uefi.boot_services.exitBootServices``, terminating UEFI runtime drivers.
-* **Kernel Transition**: Jumps directly to the microkernel entry point: ``kernel_main.kmain(&global_boot_info)``.
+* **BootInfo Packaging**: Assembles physical memory boundaries, Higher Half Direct Map (HHDM) offsets, and framebuffer metadata into a verified ``BootInfo`` struct with magic signature ``0x4D494352_4F534B45``.
+* **Kernel Transition**: Passes control directly to the microkernel entry point: ``kernel_main.kmain(&global_boot_info)``.
 
 2. Sovereign Microkernel Root (src/kernel/main.zig):
 ----------------------------------------------------
@@ -106,9 +105,9 @@ The core engine written in freestanding Zig:
 * ``src/kernel/``: Sovereign microkernel implementation:
    * ``arch/x86_64/``: Assembly context switching, GDT, IDT, port I/O, control register definitions.
    * ``mem/``: Physical page frame allocator (``pmm.zig``) and Virtual Memory Manager (``vmm.zig``).
-   * ``drivers/``: VirtIO-Net 1.0, VirtIO-Blk 1.0, PCI enumeration, and PS/2 keyboard drivers.
+   * ``drivers/``: VirtIO-Net 1.0, VirtIO-Blk 1.0, PCIe NVMe 1.4 storage controller, GUID Partition Table (GPT), PCI enumeration, and PS/2 keyboard drivers.
    * ``cap/``: Capability-based access control engine (``capability.zig``, ``cspace.zig``).
-   * ``storage/``: Content-Addressed Storage engine (``cas.zig``, ``chunk.zig``, ``block_cache.zig``, ``superblock.zig``).
+   * ``storage/``: Content-Addressed Storage engine (``cas.zig``), block cache (``block_cache.zig``), chunking (``chunk.zig``), and FAT32 ESP filesystem driver (``fat32.zig``).
    * ``ipc/``: Lockless ring buffers (``ring.zig``) and typed event channels (``events.zig``).
    * ``compositor/``: Vector graphics engine, 1280x800 canvas, font rendering, mouse cursor, and BSP tiling window manager.
    * ``net/``: In-kernel network stack (DHCP client, DNS resolver, TCP state machine, TLS 1.3 adapter).
@@ -116,8 +115,8 @@ The core engine written in freestanding Zig:
    * ``actor.zig`` & ``supervisor.zig``: Actor lifecycle management and supervision hierarchies.
    * ``abi.zig``: Microkernel ABI bindings exposed to the Macros VM.
    * ``main.zig``: Microkernel root entry point (``kmain``).
-* ``src/sys/``: Freestanding Linux syscall library (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``).
-* ``src/msh/``: Host MicroShell implementation (``shell.zig``, ``builtins.zig``).
+* ``src/sys/``: Freestanding Linux syscall and hardware abstraction library (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``, ``hal.zig``).
+* ``src/msh/``: Host MicroShell implementation (``shell.zig`` with built-in commands).
 
 Language Engine & Runtime (src/macros/):
 ----------------------------------------
@@ -147,15 +146,15 @@ Verification & Build Toolchain (tools/):
 ----------------------------------------
 Host verification utilities ensuring system correctness:
 
-* ``micros-runner.bash``: Headless event-driven QEMU test harness with serial sentinel detection.
-* ``src/fb_verify.zig`` (``micros-fb-verify``): Sub-millisecond framebuffer pixel variance validator.
-* ``src/lint.zig`` (``micros-lint``): Native Zig AST linter enforcing code quality metrics.
-* ``src/sym.zig`` (``micros-sym``): Freestanding 64-bit ELF symbol unwinder and address-to-line resolver.
-* ``micros-inspect.bash``: QEMU monitor socket CPU state and register disassembler.
-* ``src/telem.zig`` (``micros-telem``): Native 64-byte binary telemetry stream decoder.
-* ``micros-spec-trace.bash``: Bidirectional specification traceability auditor across all four specification tiers.
-* ``src/virtio_bench.zig`` (``micros-virtio-bench``): VirtIO split-virtqueue validator and RDTSC DMA micro-benchmarker.
-* ``src/bundle.zig`` (``micros-bundle``): Packs Stage 1 ``.mx`` source files into the binary ``genesis.mcb`` archive.
+* ``tools/micros-runner`` (``tools/micros-runner.bash``): Headless event-driven QEMU test harness with serial sentinel detection.
+* ``tools/src/fb_verify.zig`` (``tools/bin/micros-fb-verify``): Sub-millisecond framebuffer pixel variance validator.
+* ``tools/src/lint.zig`` (``tools/bin/micros-lint``): Native Zig AST linter enforcing code quality metrics.
+* ``tools/src/sym.zig`` (``tools/bin/micros-sym``): Freestanding 64-bit ELF symbol unwinder and address-to-line resolver.
+* ``tools/micros-inspect`` (``tools/micros-inspect.bash``): QEMU monitor socket CPU state and register disassembler.
+* ``tools/src/telem.zig`` (``tools/bin/micros-telem``): Native 64-byte binary telemetry stream decoder.
+* ``tools/micros-spec-trace`` (``tools/micros-spec-trace.bash``): Bidirectional specification traceability auditor across all four specification tiers.
+* ``tools/src/virtio_bench.zig`` (``tools/bin/micros-virtio-bench``): VirtIO split-virtqueue validator and RDTSC DMA micro-benchmarker.
+* ``tools/src/bundle.zig`` (``tools/bin/micros-bundle``): Packs Stage 1 ``.mx`` source files into the binary ``genesis.mcb`` archive.
 
 Subsystem Deep Dives: How Moving Parts Interact
 ===============================================
@@ -168,12 +167,12 @@ The microkernel exposes hardware capabilities to Macros through ``src/kernel/abi
 .. code-block:: zig
 
    // Example ABI Registration in src/kernel/abi.zig
-   pub fn registerBuiltins(vm: *vm_mod.VM) !void {
-       try vm.registerNative("sys_actor_spawn_code", nativeActorSpawnCode);
-       try vm.registerNative("sys_bundle_read", nativeBundleRead);
-       try vm.registerNative("sys_yield", nativeYield);
-       try vm.registerNative("sys_actor_state", nativeActorState);
-       try vm.registerNative("sys_wm_create_window", nativeWmCreateWindow);
+   pub fn registerSyscalls(vm: *VM) !void {
+       try vm.globals.put("sys_actor_spawn_code", Value{ .native = nativeSysActorSpawnCode });
+       try vm.globals.put("sys_bundle_read", Value{ .native = nativeSysBundleRead });
+       try vm.globals.put("sys_yield", Value{ .native = nativeSysYield });
+       try vm.globals.put("sys_actor_state", Value{ .native = nativeSysActorState });
+       try vm.globals.put("sys_window_create", Value{ .native = nativeSysWindowCreate });
    }
 
 When a Macros script executes ``sys_bundle_read("msh.mx")``, the VM pauses interpreted bytecode, marshals arguments from the VM operand stack, invokes the native Zig function, and pushes the resulting ``eval.Value`` back onto the stack without memory leakage.
@@ -185,14 +184,14 @@ Memory management operates across two cooperating levels:
 1. **Hardware Page Level (PMM/VMM)**:
    The physical memory manager (``pmm.zig``) manages physical 4096-byte page frames via a bitmap. The virtual memory manager (``vmm.zig``) builds 4-level page tables (PML4, PDPT, PD, PT) mapping physical RAM to the Higher Half Direct Map (HHDM).
 2. **Object Level (Immix Mark-Region GC)**:
-   The Macros runtime uses an Immix mark-region collector (``src/macros/gc.zig``). It allocates heap space in 32 KiB blocks partitioned into 256 lines of 128 bytes. Small objects are allocated rapidly using bump pointers into recyclable free line holes, eliminating external fragmentation. Large objects (> 512 bytes) are mapped directly to dedicated virtual pages.
+   The Macros runtime uses an Immix mark-region collector (``src/macros/gc.zig``). It allocates heap space in 32 KiB blocks partitioned into 128 lines of 256 bytes. Small objects are allocated rapidly using bump pointers into recyclable free line holes, eliminating external fragmentation. Large objects (>= 4096 bytes) are mapped directly to dedicated virtual pages.
 
 Cooperative Green-Thread Fibers:
 --------------------------------
 MicrOS rejects preemptive kernel threads for application orchestration, relying instead on lightweight userspace fibers (``src/macros/fiber.zig``):
 
-* **Fiber Structure**: Each fiber is provisioned with an isolated 64 KiB page-aligned stack.
-* **Context Switching**: The assembly routine in ``src/macros/context_switch.s`` saves callee-saved registers (``rbx``, ``rbp``, ``r12``, ``r13``, ``r14``, ``r15``) onto the current stack, swaps the stack pointer (``rsp``), and restores the destination registers.
+* **Fiber Structure**: Each fiber is provisioned with an isolated 512 KiB page-aligned stack (``STACK_SIZE = 512 * 1024``) to accommodate TLS 1.3 cryptographic state and nested execution.
+* **Context Switching**: The assembly routines in ``src/macros/context_switch.s`` save callee-saved registers onto the stack, swap ``rsp``, and restore destination registers: System V AMD64 ABI (``switchContextSysV``, 6 registers: ``rbx``, ``rbp``, ``r12``, ``r13``, ``r14``, ``r15``) for Linux sandbox mode, and Microsoft x64 ABI (``switchContextWin64``, 8 registers: ``rbp``, ``rbx``, ``rdi``, ``rsi``, ``r12``, ``r13``, ``r14``, ``r15``) for bare-metal UEFI mode.
 * **Non-Preemptive Scheduling**: Fibers yield CPU time cooperatively via ``yield()`` or when awaiting I/O events, eliminating kernel locking overhead.
 
 Content-Addressed Storage Substrate (CAS):
@@ -243,8 +242,8 @@ When contributing to MicrOS, consult the following procedural paths for common d
 Adding a New Microkernel Syscall or Capability:
 -----------------------------------------------
 #. **Define the ABI Prototype**: In ``src/kernel/abi.zig``, implement the native Zig handler (e.g., ``nativeMyFeature``), unpacking arguments from ``args: []eval.Value``.
-#. **Register in Builtins**: Add the mapping inside ``registerBuiltins`` in ``src/kernel/abi.zig``:
-   ``try vm.registerNative("sys_my_feature", nativeMyFeature);``
+#. **Register in Syscalls**: Add the mapping inside ``registerSyscalls`` in ``src/kernel/abi.zig``:
+   ``try vm.globals.put("sys_my_feature", Value{ .native = nativeSysMyFeature });``
 #. **Implement Kernel Logic**: If accessing a hardware driver or memory subsystem, invoke the appropriate domain module in ``src/kernel/``, validating the calling actor's CSpace capability.
 #. **Expose to Userland**: Call the new primitive in ``lib/macros/init.mx`` or ``lib/macros/msh.mx``.
 
@@ -284,8 +283,8 @@ Before submitting changes, run the mandatory verification sequence:
    # 5. Run full unit test suite
    zig build test
 
-   # 6. Execute headless bare-metal boot in QEMU
-   make test-uefi
+   # 6. Execute headless bare-metal boot in QEMU (or 'make qemu-uefi' for interactive)
+   ./tools/micros-runner --mode uefi
 
    # 7. Execute direct-syscall sandbox test
    make test-sandbox

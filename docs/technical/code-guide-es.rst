@@ -55,9 +55,8 @@ El control inicia en ``pub fn main() uefi.Status`` dentro de ``boot.efi``:
 * **Handshake con Firmware**: Conecta con la Tabla del Sistema UEFI e inicializa la salida por consola serie.
 * **Descubrimiento de Pantalla**: Localiza el protocolo UEFI Graphics Output Protocol (GOP), extrayendo dirección base, resolución (1280x800), paso de línea y formato de píxeles en ``FramebufferInfo``.
 * **Lectura del Mapa de Memoria**: Consulta el mapa de memoria de UEFI en un búfer contiguo de descriptores ``MemoryDescriptor``, clasificando RAM utilizable, datos del cargador y memoria reservada.
-* **Empaquetado de BootInfo**: Estructura los límites de memoria física, desplazamientos HHDM y parámetros gráficos en la estructura validada ``BootInfo`` con firma mágica ``0x4D494352_4F534249``.
-* **Salida de Servicios de Arranque**: Invoca ``uefi.boot_services.exitBootServices``, desconectando los controladores de UEFI.
-* **Transición al Microkernel**: Salta directamente al punto de entrada del microkernel: ``kernel_main.kmain(&global_boot_info)``.
+* **Empaquetado de BootInfo**: Estructura los límites de memoria física, desplazamientos HHDM y parámetros gráficos en la estructura validada ``BootInfo`` con firma mágica ``0x4D494352_4F534B45``.
+* **Transición Directa al Microkernel**: Cede el control de ejecución directamente al punto de entrada del microkernel: ``kernel_main.kmain(&global_boot_info)``.
 
 2. Raíz del Microkernel Soberano (src/kernel/main.zig):
 -------------------------------------------------------
@@ -106,9 +105,9 @@ El núcleo del sistema escrito en Zig independiente:
 * ``src/kernel/``: Implementación central del microkernel soberano:
    * ``arch/x86_64/``: Conmutación de contexto en ensamblador, GDT, IDT, puertos de E/S, registros de control.
    * ``mem/``: Asignador de marcos de página física (``pmm.zig``) y Administrador de Memoria Virtual (``vmm.zig``).
-   * ``drivers/``: VirtIO-Net 1.0, VirtIO-Blk 1.0, escaneo de bus PCI y teclado PS/2.
+   * ``drivers/``: VirtIO-Net 1.0, VirtIO-Blk 1.0, controlador de almacenamiento PCIe NVMe 1.4, Tabla de Particiones GUID (GPT), escaneo de bus PCI y teclado PS/2.
    * ``cap/``: Motor de control de accesos basado en capacidades (``capability.zig``, ``cspace.zig``).
-   * ``storage/``: Motor de almacenamiento direccionado por contenido (``cas.zig``, ``chunk.zig``, ``block_cache.zig``, ``superblock.zig``).
+   * ``storage/``: Motor de almacenamiento direccionado por contenido (``cas.zig``), caché de bloques (``block_cache.zig``), fragmentación (``chunk.zig``) y controlador de sistema de archivos ESP FAT32 (``fat32.zig``).
    * ``ipc/``: Búferes circulares sin cerrojos (``ring.zig``) y canales de eventos tipados (``events.zig``).
    * ``compositor/``: Motor de gráficos vectoriales, lienzo de 1280x800, renderizado de fuentes, cursor de ratón y gestor de ventanas BSP en mosaico.
    * ``net/``: Pila de red integrada en el kernel (cliente DHCP, resolución DNS, máquina de estados TCP, adaptador TLS 1.3).
@@ -116,8 +115,8 @@ El núcleo del sistema escrito en Zig independiente:
    * ``actor.zig`` y ``supervisor.zig``: Gestión del ciclo de vida de actores y jerarquías de supervisión.
    * ``abi.zig``: Enlaces de funciones ABI y llamadas al sistema expuestas a la máquina virtual Macros.
    * ``main.zig``: Punto de entrada raíz del microkernel (``kmain``).
-* ``src/sys/``: Librería de llamadas al sistema de Linux independiente de libc (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``).
-* ``src/msh/``: Implementación de MicroShell para el host (``shell.zig``, ``builtins.zig``).
+* ``src/sys/``: Librería de llamadas al sistema de Linux y capa de abstracción de hardware (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``, ``hal.zig``).
+* ``src/msh/``: Implementación de MicroShell para el host (``shell.zig`` con comandos integrados).
 
 Motor del Lenguaje y Tiempo de Ejecución (src/macros/):
 -------------------------------------------------------
@@ -147,15 +146,15 @@ Cadena de Herramientas de Verificación y Compilación (tools/):
 --------------------------------------------------------------
 Utilidades del host que aseguran la corrección y calidad del sistema:
 
-* ``micros-runner.bash``: Entorno de pruebas desatendido en QEMU dirigido por eventos y centinelas serie.
-* ``src/fb_verify.zig`` (``micros-fb-verify``): Validador visual submilimétrico de búferes gráficos.
-* ``src/lint.zig`` (``micros-lint``): Linter nativo sobre el AST de Zig que evalúa métricas de calidad.
-* ``src/sym.zig`` (``micros-sym``): Desenredador independiente de símbolos ELF y traductor de direcciones a líneas.
-* ``micros-inspect.bash``: Inspector del monitor de QEMU para desensamblado de registros de CPU durante pánicos.
-* ``src/telem.zig`` (``micros-telem``): Decodificador nativo de telemetría binaria de 64 bytes.
-* ``micros-spec-trace.bash``: Auditor de trazabilidad bidireccional entre las cuatro capas de especificaciones.
-* ``src/virtio_bench.zig`` (``micros-virtio-bench``): Validador geométrico de VirtIO y banco de pruebas DMA vía RDTSC.
-* ``src/bundle.zig`` (``micros-bundle``): Empaquetador de archivos fuente ``.mx`` en el archivo binario ``genesis.mcb``.
+* ``tools/micros-runner`` (``tools/micros-runner.bash``): Entorno de pruebas desatendido en QEMU dirigido por eventos y centinelas serie.
+* ``tools/src/fb_verify.zig`` (``tools/bin/micros-fb-verify``): Validador visual submilimétrico de búferes gráficos.
+* ``tools/src/lint.zig`` (``tools/bin/micros-lint``): Linter nativo sobre el AST de Zig que evalúa métricas de calidad.
+* ``tools/src/sym.zig`` (``tools/bin/micros-sym``): Desenredador independiente de símbolos ELF y traductor de direcciones a líneas.
+* ``tools/micros-inspect`` (``tools/micros-inspect.bash``): Inspector del monitor de QEMU para desensamblado de registros de CPU durante pánicos.
+* ``tools/src/telem.zig`` (``tools/bin/micros-telem``): Decodificador nativo de telemetría binaria de 64 bytes.
+* ``tools/micros-spec-trace`` (``tools/micros-spec-trace.bash``): Auditor de trazabilidad bidireccional entre las cuatro capas de especificaciones.
+* ``tools/src/virtio_bench.zig`` (``tools/bin/micros-virtio-bench``): Validador geométrico de VirtIO y banco de pruebas DMA vía RDTSC.
+* ``tools/src/bundle.zig`` (``tools/bin/micros-bundle``): Empaquetador de archivos fuente ``.mx`` en el archivo binario ``genesis.mcb``.
 
 Análisis de Subsistemas: Interacción entre Componentes
 ======================================================
@@ -168,12 +167,12 @@ El microkernel expone las capacidades del hardware a Macros mediante ``src/kerne
 .. code-block:: zig
 
    // Registro de ABI en src/kernel/abi.zig
-   pub fn registerBuiltins(vm: *vm_mod.VM) !void {
-       try vm.registerNative("sys_actor_spawn_code", nativeActorSpawnCode);
-       try vm.registerNative("sys_bundle_read", nativeBundleRead);
-       try vm.registerNative("sys_yield", nativeYield);
-       try vm.registerNative("sys_actor_state", nativeActorState);
-       try vm.registerNative("sys_wm_create_window", nativeWmCreateWindow);
+   pub fn registerSyscalls(vm: *VM) !void {
+       try vm.globals.put("sys_actor_spawn_code", Value{ .native = nativeSysActorSpawnCode });
+       try vm.globals.put("sys_bundle_read", Value{ .native = nativeSysBundleRead });
+       try vm.globals.put("sys_yield", Value{ .native = nativeSysYield });
+       try vm.globals.put("sys_actor_state", Value{ .native = nativeSysActorState });
+       try vm.globals.put("sys_window_create", Value{ .native = nativeSysWindowCreate });
    }
 
 Cuando un script en Macros ejecuta ``sys_bundle_read("msh.mx")``, la VM pausa el código de bytes, extrae los argumentos de la pila de operandos, invoca la función nativa en Zig y devuelve el resultado ``eval.Value`` a la pila sin fugas de memoria.
@@ -185,14 +184,14 @@ La administración de memoria se organiza en dos niveles complementarios:
 1. **Nivel de Páginas de Hardware (PMM/VMM)**:
    El administrador de memoria física (``pmm.zig``) gestiona marcos de 4096 bytes mediante un mapa de bits. El administrador de memoria virtual (``vmm.zig``) construye tablas de paginación de 4 niveles que mapean la RAM física al mapa directo superior (HHDM).
 2. **Nivel de Objetos (Recolector Immix)**:
-   El entorno de Macros utiliza un recolector por regiones y marcas Immix (``src/macros/gc.zig``). Reserva memoria en bloques de 32 KiB subdivididos en 256 líneas de 128 bytes. Los objetos pequeños se asignan rápidamente mediante bump pointers en huecos libres de líneas contiguas, eliminando la fragmentación externa. Los objetos grandes (> 512 bytes) se mapean directamente a páginas virtuales dedicadas.
+   El entorno de Macros utiliza un recolector por regiones y marcas Immix (``src/macros/gc.zig``). Reserva memoria en bloques de 32 KiB subdivididos en 128 líneas de 256 bytes. Los objetos pequeños se asignan rápidamente mediante bump pointers en huecos libres de líneas contiguas, eliminando la fragmentación externa. Los objetos grandes (>= 4096 bytes) se mapean directamente a páginas virtuales dedicadas.
 
 Fibras Cooperativas en Espacio de Usuario:
 ------------------------------------------
 MicrOS descarta los hilos preemptivos del kernel para la orquestación de aplicaciones, utilizando fibras ligeras en espacio de usuario (``src/macros/fiber.zig``):
 
-* **Estructura de la Fibra**: Cada fibra dispone de una pila aislada de 64 KiB alineada a páginas.
-* **Conmutación de Contexto**: La rutina en ensamblador en ``src/macros/context_switch.s`` guarda los registros callee-saved (``rbx``, ``rbp``, ``r12``, ``r13``, ``r14``, ``r15``) en la pila actual, conmuta el puntero de pila (``rsp``) y restaura los registros de la fibra destino.
+* **Estructura de la Fibra**: Cada fibra dispone de una pila aislada de 512 KiB alineada a páginas (``STACK_SIZE = 512 * 1024``) para alojar el estado criptográfico de TLS 1.3 y la ejecución anidada.
+* **Conmutación de Contexto**: Las rutinas en ensamblador en ``src/macros/context_switch.s`` guardan los registros callee-saved en la pila, conmutan ``rsp`` y restauran los registros destino: ABI System V AMD64 (``switchContextSysV``, 6 registros: ``rbx``, ``rbp``, ``r12``, ``r13``, ``r14``, ``r15``) para el modo sandbox en Linux, y ABI Microsoft x64 (``switchContextWin64``, 8 registros: ``rbp``, ``rbx``, ``rdi``, ``rsi``, ``r12``, ``r13``, ``r14``, ``r15``) para el modo bare-metal en UEFI.
 * **Planificación no Preemptiva**: Las fibras ceden voluntariamente el control mediante ``yield()`` o al esperar eventos de E/S, eliminando el coste de sincronización en el kernel.
 
 Substrato de Almacenamiento Direccionado por Contenido (CAS):
@@ -243,8 +242,8 @@ Al realizar contribuciones en MicrOS, consulta los siguientes flujos de trabajo 
 Cómo Agregar una Nueva Syscall o Capacidad al Microkernel:
 ----------------------------------------------------------
 #. **Definir el Prototipo en la ABI**: En ``src/kernel/abi.zig``, implementa el manejador nativo en Zig (por ejemplo, ``nativeMiCaracteristica``), extrayendo los argumentos de ``args: []eval.Value``.
-#. **Registrar en Builtins**: Registra la función dentro de ``registerBuiltins`` en ``src/kernel/abi.zig``:
-   ``try vm.registerNative("sys_mi_caracteristica", nativeMiCaracteristica);``
+#. **Registrar en Syscalls**: Registra la función dentro de ``registerSyscalls`` en ``src/kernel/abi.zig``:
+   ``try vm.globals.put("sys_mi_caracteristica", Value{ .native = nativeSysMiCaracteristica });``
 #. **Implementar la Lógica en el Kernel**: Si accede a un controlador o subsistema de memoria, invoca el módulo correspondiente en ``src/kernel/``, validando la capacidad CSpace del actor solicitante.
 #. **Exponer al Espacio de Usuario**: Utiliza la nueva primitiva en ``lib/macros/init.mx`` o ``lib/macros/msh.mx``.
 
@@ -284,8 +283,8 @@ Antes de enviar modificaciones, ejecuta la secuencia completa de validación:
    # 5. Ejecutar suite de pruebas unitarias
    zig build test
 
-   # 6. Ejecutar arranque desatendido bare-metal en QEMU
-   make test-uefi
+   # 6. Ejecutar arranque desatendido bare-metal en QEMU (o 'make qemu-uefi' interactivo)
+   ./tools/micros-runner --mode uefi
 
    # 7. Ejecutar prueba del sandbox de llamadas directas
    make test-sandbox
