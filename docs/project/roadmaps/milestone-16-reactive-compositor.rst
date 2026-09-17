@@ -2,7 +2,7 @@ Milestone 16: Reactive Vector Compositor & Multi-Actor Windowing
 ================================================================
 
 :Objective: Evolve the bare-metal UEFI GOP framebuffer from a static single-actor split canvas into an asynchronous, multi-actor reactive vector compositor. Implement double-buffered backbuffer blitting, bounded damage regions (AABBs), shared-memory actor surface IPC, a window manager with dynamic tiling and Z-order layering, and multi-actor visual telemetry.
-:Status: Planned
+:Status: Completed
 :Specification: SPEC-TECH-COMPOSITOR-001
 
 Milestones & Deliverables
