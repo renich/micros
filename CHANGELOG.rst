@@ -10,6 +10,13 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **AI Code Block Extraction & Actor Fault Containment**:
+  - **Native AST-Safe Code Extraction**: Introduced native ``sys_ai_extract_code`` binding in ``src/kernel/harness_bindings.zig`` delegating to ``AiClient.extractCodeBlock``, parsing indentation boundaries and terminating cleanly on unindented section headers (e.g., trailing ``Kernel Directives``) in resident AI responses.
+  - **Child Actor Fault Containment**: Hardened ``nativeSysActorSpawnCode`` to catch script compilation errors and return ``-1`` gracefully, preventing VM runtime panics in Genesis Actor 0 when resident AI returns malformed code.
+  - **Decomposed Compilation & VM Setup**: Refactored ``spawnActorFromCode`` in ``src/kernel/main.zig`` into modular helpers (``compileActorSource``, ``attachActorVm``) adhering strictly to the 40-line function limit.
+  - **Linux-Kernel Aesthetic & Dark Theme**: Replaced decorative ASCII box borders and bright banner styling with an elegant, minimalist Linux-kernel-inspired boot typography (``µOS (MicrOS) version 0.14.0-sovereign``) and dark slate theme in ``lib/macros/harness.mx``.
+  - **Comprehensive Colocated Testing**: Added unit tests in ``src/kernel/ai/client.zig`` validating extraction from live Gemini responses and in ``src/kernel/harness_bindings.zig`` validating fault-tolerant child actor spawning.
+
 - **Zero-Crash TLS 1.3 & ABI Calling Convention Hardening**:
   - **Fiber Stack Expansion & Heap Hardening**: Increased fiber stack allocation from 128 KiB to 512 KiB (``src/macros/fiber.zig``) and kernel heap from 4 MiB to 8 MiB (``src/kernel/main.zig``), eradicating silent stack overflow over adjacent VM state during freestanding TLS 1.3 cryptographic key exchange and handshakes.
   - **Win64 ABI Calling Convention & Shadow Space in IDT**: Fixed exception and interrupt assembly trampolines in ``src/kernel/arch/x86_64/idt.zig`` to adhere strictly to UEFI / Windows x64 calling conventions (passing arguments via ``%rcx`` and allocating mandatory 32-byte shadow store + 8-byte alignment), preventing triple-fault CPU resets upon hardware traps.

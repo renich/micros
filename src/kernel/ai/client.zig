@@ -238,3 +238,28 @@ test "client extract rst code block 4-space" {
     const expected = "var x = 42;\nprint(x);\n";
     try std.testing.expectEqualStrings(expected, code_buf[0..len.?]);
 }
+
+test "client extract exact gemini resident ai response" {
+    const sample =
+        "Writing boot banner and diagnostics to the linear GOP canvas and serial console:\n\n" ++
+        ".. code-block:: macros\n\n" ++
+        "   sys_serial_write(\"uOS: Operator link acknowledged. CSpace 0 verified.\\n\");\n" ++
+        "   sys_fb_clear(0);\n" ++
+        "   sys_fb_draw_rect(0, 0, 1280, 44, 1120295);\n" ++
+        "   sys_fb_draw_string(24, 14, \"MicrOS (uOS) // Sovereign Root Intelligence [CSpace 0]\", 65280, 1120295);\n" ++
+        "   sys_fb_draw_rect(0, 44, 1280, 2, 65280);\n" ++
+        "   sys_fb_draw_string(24, 68, \"Substrate: Bare-metal x86_64 | Zero-libc ABI\", 16777215, 0);\n" ++
+        "   sys_fb_draw_string(24, 92, \"Display Canvas: 1280x800 GOP linear buffer\", 16777215, 0);\n" ++
+        "   sys_fb_draw_string(24, 116, \"IPC Model: SPSC Typed Rings | VirtIO Active\", 16777215, 0);\n" ++
+        "   sys_fb_draw_string(24, 140, \"Awaiting directives...\", 8421504, 0);\n\n" ++
+        "Kernel Directives\n" ++
+        "-----------------\n\n" ++
+        "State your operational requirements:\n" ++
+        "* Subsystem memory mapping and page allocation\n";
+    var code_buf: [2048]u8 = undefined;
+    const len = AiClient.extractCodeBlock(sample, &code_buf);
+    try std.testing.expect(len != null);
+    try std.testing.expect(std.mem.indexOf(u8, code_buf[0..len.?], "Kernel Directives") == null);
+    try std.testing.expect(std.mem.startsWith(u8, code_buf[0..len.?], "sys_serial_write"));
+    try std.testing.expect(std.mem.endsWith(u8, code_buf[0..len.?], "sys_fb_draw_string(24, 140, \"Awaiting directives...\", 8421504, 0);\n"));
+}

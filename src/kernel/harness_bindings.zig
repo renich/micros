@@ -19,6 +19,7 @@ const serial = @import("serial.zig");
 const supervisor_mod = @import("supervisor.zig");
 const ps2_mod = @import("drivers/ps2_kbd.zig");
 const fiber_mod = @import("../macros/fiber.zig");
+const ai_mod = @import("ai.zig");
 
 pub const HarnessContext = struct {
     registry: *ActorRegistry,
@@ -204,6 +205,19 @@ fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .string = duped };
 }
 
+var ai_extract_buf: [8192]u8 = undefined;
+
+fn nativeSysAiExtractCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    const resp = args[0].string;
+    if (ai_mod.client.AiClient.extractCodeBlock(resp, &ai_extract_buf)) |len| {
+        const duped = try vm.allocator.dupe(u8, ai_extract_buf[0..len]);
+        return Value{ .string = duped };
+    }
+    return Value{ .string = "" };
+}
+
 fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
@@ -211,7 +225,7 @@ fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const spawn_fn = ctx.spawn_code_fn orelse return error.NoSpawnHandler;
     const name = args[0].string;
     const src = args[1].string;
-    const child_id = try spawn_fn(vm.allocator, name, src);
+    const child_id = spawn_fn(vm.allocator, name, src) catch return Value{ .integer = -1 };
     return Value{ .integer = @as(i64, child_id) };
 }
 
@@ -303,6 +317,7 @@ pub fn registerBindings(vm: *VM) !void {
     try vm.globals.put("sys_serial_read", Value{ .native = nativeSysSerialRead });
     try vm.globals.put("sys_kbd_read", Value{ .native = nativeSysKbdRead });
     try vm.globals.put("sys_ai_prompt", Value{ .native = nativeSysAiPrompt });
+    try vm.globals.put("sys_ai_extract_code", Value{ .native = nativeSysAiExtractCode });
     try vm.globals.put("sys_actor_spawn_code", Value{ .native = nativeSysActorSpawnCode });
     try vm.globals.put("sys_yield", Value{ .native = nativeSysYield });
     try vm.globals.put("sys_actor_name", Value{ .native = nativeSysActorName });
@@ -399,6 +414,13 @@ fn testMockSpawn(allocator: std.mem.Allocator, name: []const u8, source: []const
     return 7;
 }
 
+fn testMockSpawnFail(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
+    _ = allocator;
+    _ = name;
+    _ = source;
+    return error.UnexpectedToken;
+}
+
 fn testMockCasPut(data: []const u8, out_hex: *[64]u8) anyerror!void {
     _ = data;
     @memcpy(out_hex, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
@@ -465,4 +487,42 @@ test "Harness storage native bindings" {
     var scas_args = [_]Value{Value{ .string = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }};
     const scas_val = try nativeSysActorSpawnCas(&vm, &scas_args);
     try std.testing.expectEqual(@as(i64, 42), scas_val.integer);
+}
+
+test "Harness native AI extract and fault-tolerant spawn" {
+    const allocator = std.testing.allocator;
+    var chunk = @import("../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var registry = ActorRegistry.init();
+    var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
+    defer supervisor.deinit(allocator);
+
+    var ctx = HarnessContext{
+        .registry = &registry,
+        .supervisor = supervisor,
+        .spawn_code_fn = testMockSpawnFail,
+    };
+    setContext(&ctx);
+    defer clearContext();
+
+    // 1. Test AI extract code with valid markdown block
+    const md_input = "Here is the code:\n```macros\nvar z = 99;\n```\nDone.";
+    var extract_args = [_]Value{Value{ .string = md_input }};
+    const ext_val = try nativeSysAiExtractCode(&vm, &extract_args);
+    defer allocator.free(ext_val.string);
+    try std.testing.expectEqualStrings("var z = 99;\n", ext_val.string);
+
+    // 2. Test AI extract code with no code block
+    var no_code_args = [_]Value{Value{ .string = "Plain prose without code." }};
+    const ext_empty = try nativeSysAiExtractCode(&vm, &no_code_args);
+    try std.testing.expectEqualStrings("", ext_empty.string);
+
+    // 3. Test spawn failure returns -1 instead of panicking/bubbling error
+    var fail_args = [_]Value{ Value{ .string = "broken" }, Value{ .string = "syntax error!!" } };
+    const fail_val = try nativeSysActorSpawnCode(&vm, &fail_args);
+    try std.testing.expectEqual(@as(i64, -1), fail_val.integer);
 }

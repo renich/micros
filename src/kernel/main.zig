@@ -40,9 +40,9 @@ const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
 const KERNEL_HEAP_SIZE: usize = 8 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
 
-const COLOR_BG: u32 = 0x000F1E;
-const COLOR_TITLE: u32 = 0x00E0FF;
-const COLOR_SUBTITLE: u32 = 0x50FA7B;
+const COLOR_BG: u32 = 0x000000;
+const COLOR_TITLE: u32 = 0xE6EDF3;
+const COLOR_SUBTITLE: u32 = 0x7D8590;
 
 const CAP_OBJ_FRAMEBUFFER: u32 = 1;
 const CAP_OBJ_IPC_RING: u32 = 2;
@@ -74,10 +74,8 @@ fn kernelPanic(stage: []const u8) noreturn {
 }
 
 fn printBanner() void {
-    serial.writeString("\n\x1b[90m┌──────────────────────────────────────────────────────────┐\x1b[0m\n");
-    serial.writeString("\x1b[90m│  \x1b[1;96mµOS\x1b[0m \x1b[90m·\x1b[0m \x1b[97mMicrOS Sovereign Substrate (Milestone 14)\x1b[0m         \x1b[90m│\x1b[0m\n");
-    serial.writeString("\x1b[90m│  \x1b[2;37mZero Libc · Capability Security · Autonomous Genesis\x1b[0m    \x1b[90m│\x1b[0m\n");
-    serial.writeString("\x1b[90m└──────────────────────────────────────────────────────────┘\x1b[0m\n\n");
+    serial.writeString("\n\x1b[1;97mµOS (MicrOS) version 0.14.0-sovereign\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n");
+    serial.writeString("\x1b[90mZero Libc · Capability Security · Autonomous Genesis\x1b[0m\n\n");
 }
 
 fn initHardware(boot_info: *const BootInfo) void {
@@ -402,9 +400,40 @@ fn logActorSpawn(id: u32, name: []const u8) void {
     serial.writeString("\x1b[97m) online\x1b[0m\n");
 }
 
+fn compileActorSource(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!*chunk_mod.Chunk {
+    return compileActorScript(allocator, source) catch |err| {
+        serial.writeString("[kernel] Actor compilation failed for '");
+        serial.writeString(name);
+        serial.writeString("': ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        return err;
+    };
+}
+
+fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *chunk_mod.Chunk) !void {
+    const child_vm = try allocator.create(vm_mod.VM);
+    try child_vm.initInPlace(allocator, chunk);
+    errdefer {
+        child_vm.deinit();
+        allocator.destroy(child_vm);
+    }
+    try harness_bindings_mod.registerBindings(child_vm);
+    if (global_sched) |sched| {
+        const fib = try sched.spawn(actorThread, child_vm);
+        child.fiber_ctx = @ptrCast(fib);
+    }
+}
+
 fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
     const persistent_source = try allocator.dupe(u8, source);
     errdefer allocator.free(persistent_source);
+
+    const chunk = try compileActorSource(allocator, name, persistent_source);
+    errdefer {
+        chunk.deinit(allocator);
+        allocator.destroy(chunk);
+    }
 
     const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, 0);
     errdefer global_registry.terminate(allocator, child.id) catch {};
@@ -419,21 +448,7 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
         });
     }
 
-    const chunk = try compileActorScript(allocator, persistent_source);
-    const child_vm = try allocator.create(vm_mod.VM);
-    try child_vm.initInPlace(allocator, chunk);
-    errdefer {
-        child_vm.deinit();
-        allocator.destroy(child_vm);
-    }
-
-    try harness_bindings_mod.registerBindings(child_vm);
-
-    if (global_sched) |sched| {
-        const fib = try sched.spawn(actorThread, child_vm);
-        child.fiber_ctx = @ptrCast(fib);
-    }
-
+    try attachActorVm(allocator, child, chunk);
     if (child.id < actor_mod.MAX_ACTORS) {
         global_actor_sources[child.id] = persistent_source;
     }
@@ -555,9 +570,6 @@ fn initGenesisDisplay(boot_info: *const BootInfo) void {
 
     var framebuffer = fb_mod.Framebuffer.init(boot_info.framebuffer);
     framebuffer.clear(COLOR_BG);
-    framebuffer.drawString(20, 20, "MicrOS (uOS) Sovereign Substrate", COLOR_TITLE, COLOR_BG);
-    framebuffer.drawString(20, 36, "Genesis Actor Active. Zero PIDs. Ambient Authority Eradicated.", COLOR_SUBTITLE, COLOR_BG);
-    framebuffer.drawRect(20, 52, 600, 2, COLOR_TITLE);
 }
 
 fn registerNetworkCap(genesis: *actor_mod.Actor) !void {

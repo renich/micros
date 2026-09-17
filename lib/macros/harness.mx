@@ -2,6 +2,19 @@
 // Executed natively inside Actor 0 under capability control.
 // Provides live status, vector canvas rendering, actor inspection, and command loop.
 
+fn init_theme() {
+    CLR_BG = 0;             // Pure pitch black: 0x000000
+    CLR_HEADER_BG = 856343; // Dark charcoal header: 0x0D1117
+    CLR_BORDER = 2238254;   // Hairline graphite border: 0x22272E
+    CLR_TEXT = 15132390;    // Crisp neutral white: 0xE6EDF3
+    CLR_MUTED = 8226192;    // Refined slate gray: 0x7D8590
+    CLR_ACCENT = 5809919;   // Ice sapphire blue: 0x58A6FF
+    CLR_GREEN = 4176208;    // Emerald green: 0x3FB950
+    CLR_WARN = 13801762;    // Amber: 0xD29922
+    cur_x = 20;
+    cur_y = 58;
+}
+
 fn init_ansi() {
     ESC = char_to_str(27);
     ANSI_RESET = ESC + "[0m";
@@ -15,42 +28,39 @@ fn init_ansi() {
 }
 
 fn draw_header() {
-    sys_fb_draw_rect(0, 0, 1280, 48, 100000);
-    sys_fb_draw_string(20, 12, "MicrOS (uOS) Sovereign Harness v1.0", 57599, 100000);
-    sys_fb_draw_string(450, 12, "Zero PIDs | Zero Libc | Actor Substrate Active", 5306999, 100000);
-    sys_fb_draw_rect(0, 46, 1280, 2, 57599);
+    sys_fb_draw_rect(0, 0, 1280, 26, CLR_HEADER_BG);
+    sys_fb_draw_string(20, 9, "uOS (MicrOS) Sovereign Substrate  [Milestone 14]", CLR_TEXT, CLR_HEADER_BG);
+    sys_fb_draw_string(920, 9, "Zero Libc . Capability Security", CLR_MUTED, CLR_HEADER_BG);
+    sys_fb_draw_rect(0, 25, 1280, 1, CLR_BORDER);
 }
 
 fn draw_panels() {
-    sys_fb_draw_rect(20, 60, 800, 680, 65822);
-    sys_fb_draw_rect(20, 60, 800, 28, 131614);
-    sys_fb_draw_string(30, 68, "Console & Evaluator", 16777215, 131614);
+    sys_fb_draw_rect(860, 26, 1, 774, CLR_BORDER);
 
-    sys_fb_draw_rect(840, 60, 420, 680, 65822);
-    sys_fb_draw_rect(840, 60, 420, 28, 131614);
-    sys_fb_draw_string(850, 68, "Actor & Capability Inspector", 16777215, 131614);
+    sys_fb_draw_string(20, 36, "CONSOLE", CLR_MUTED, CLR_BG);
+    sys_fb_draw_rect(20, 48, 820, 1, CLR_BORDER);
+
+    sys_fb_draw_string(880, 36, "ACTORS & TELEMETRY", CLR_MUTED, CLR_BG);
+    sys_fb_draw_rect(880, 48, 380, 1, CLR_BORDER);
 }
 
-cur_x = 30;
-cur_y = 100;
-
 fn cmd_clear() {
-    sys_fb_draw_rect(22, 90, 796, 646, 65822);
-    cur_x = 30;
-    cur_y = 100;
+    sys_fb_draw_rect(20, 58, 830, 730, CLR_BG);
+    cur_x = 20;
+    cur_y = 58;
 }
 
 fn console_write(text, color) {
-    sys_fb_draw_string(cur_x, cur_y, text, color, 65822);
+    sys_fb_draw_string(cur_x, cur_y, text, color, CLR_BG);
     cur_x = cur_x + len(text) * 8;
     sys_serial_write(text);
 }
 
 fn console_newline() {
-    cur_x = 30;
+    cur_x = 20;
     cur_y = cur_y + 16;
     sys_serial_write("\n");
-    if (cur_y > 680) {
+    if (cur_y > 750) {
         cmd_clear();
     }
 }
@@ -61,25 +71,25 @@ fn console_writeln(text, color) {
 }
 
 fn render_inspector() {
-    sys_fb_draw_rect(842, 90, 416, 646, 65822);
-    sys_fb_draw_string(850, 100, "Active Actors: " + int_to_str(sys_actor_count()), 57599, 65822);
+    sys_fb_draw_rect(880, 58, 380, 730, CLR_BG);
+    sys_fb_draw_string(880, 60, "Active Actors:  " + int_to_str(sys_actor_count()), CLR_TEXT, CLR_BG);
     
-    var_y = 124;
+    var_y = 84;
     var_id = 0;
     while (var_id < 8) {
         st = sys_actor_state(var_id);
         if (st >= 0) {
             nm = sys_actor_name(var_id);
-            sys_fb_draw_string(850, var_y, "Actor " + int_to_str(var_id) + ": " + nm, 16777215, 65822);
+            sys_fb_draw_string(880, var_y, "Actor " + int_to_str(var_id) + ":  " + nm, CLR_MUTED, CLR_BG);
             var_y = var_y + 16;
         }
         var_id = var_id + 1;
     }
 
     var_y = var_y + 16;
-    sys_fb_draw_string(850, var_y, "Total Faults: " + int_to_str(sys_fault_count()), 5306999, 65822);
+    sys_fb_draw_string(880, var_y, "Fault Guard:    " + int_to_str(sys_fault_count()) + " faults", CLR_MUTED, CLR_BG);
     var_y = var_y + 16;
-    sys_fb_draw_string(850, var_y, "Health: Sovereign", 5306999, 65822);
+    sys_fb_draw_string(880, var_y, "Substrate:      Sovereign Active", CLR_GREEN, CLR_BG);
 }
 
 fn find_str(haystack, needle) {
@@ -97,6 +107,10 @@ fn find_str(haystack, needle) {
 }
 
 fn extract_code(resp) {
+    native_code = sys_ai_extract_code(resp);
+    if (len(native_code) > 0) {
+        return native_code;
+    }
     p1 = find_str(resp, "```");
     if (p1 >= 0) {
         rest = substr(resp, p1 + 3, len(resp));
@@ -110,20 +124,6 @@ fn extract_code(resp) {
         }
         return rest;
     }
-    p_rst = find_str(resp, ".. code-block::");
-    dir_len = 15;
-    if (p_rst < 0) {
-        p_rst = find_str(resp, ".. code::");
-        dir_len = 9;
-    }
-    if (p_rst >= 0) {
-        rest_rst = substr(resp, p_rst + dir_len, len(resp));
-        nl_rst = find_str(rest_rst, "\n");
-        if (nl_rst >= 0) {
-            return substr(rest_rst, nl_rst + 1, len(rest_rst));
-        }
-        return rest_rst;
-    }
     return "";
 }
 
@@ -135,26 +135,26 @@ fn is_prefix(str, pre) {
 }
 
 fn cmd_help() {
-    console_writeln("-- System Commands -----------------------------", 57599);
-    console_writeln("  help          - Show this command reference", 16777215);
-    console_writeln("  status        - Substrate health and telemetry", 16777215);
-    console_writeln("  actors        - List registered actors and state", 16777215);
-    console_writeln("  clear         - Clear the console viewport", 16777215);
-    console_writeln("  kill <id>     - Terminate actor by ID", 16777215);
-    console_writeln("  exit          - Halt sovereign harness", 16777215);
-    console_writeln("-- Cognitive & Synthesis -----------------------", 57599);
-    console_writeln("  ai <prompt>   - Dispatch natural language task to AI", 16777215);
-    console_writeln("-- Sovereign Persistence (CAS) -----------------", 57599);
-    console_writeln("  store <code>  - Store raw code or text into CAS", 16777215);
-    console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash", 16777215);
-    console_writeln("  persist <id>  - Persist actor source to CAS root", 16777215);
-    console_writeln("  spawn_cas <h> - Restore & spawn actor from CAS hash", 16777215);
+    console_writeln("-- System Commands -----------------------------", CLR_MUTED);
+    console_writeln("  help          - Show this command reference", CLR_TEXT);
+    console_writeln("  status        - Substrate health and telemetry", CLR_TEXT);
+    console_writeln("  actors        - List registered actors and state", CLR_TEXT);
+    console_writeln("  clear         - Clear the console viewport", CLR_TEXT);
+    console_writeln("  kill <id>     - Terminate actor by ID", CLR_TEXT);
+    console_writeln("  exit          - Halt sovereign harness", CLR_TEXT);
+    console_writeln("-- Cognitive & Synthesis -----------------------", CLR_MUTED);
+    console_writeln("  ai <prompt>   - Dispatch natural language task to AI", CLR_TEXT);
+    console_writeln("-- Sovereign Persistence (CAS) -----------------", CLR_MUTED);
+    console_writeln("  store <code>  - Store raw code or text into CAS", CLR_TEXT);
+    console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash", CLR_TEXT);
+    console_writeln("  persist <id>  - Persist actor source to CAS root", CLR_TEXT);
+    console_writeln("  spawn_cas <h> - Restore & spawn actor from CAS hash", CLR_TEXT);
 }
 
 fn cmd_status() {
-    console_writeln("* Substrate : Sovereign (Zero Defects)", 5306999);
-    console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active", 5306999);
-    console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained", 5306999);
+    console_writeln("* Substrate : Sovereign (Zero Defects)", CLR_GREEN);
+    console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active", CLR_TEXT);
+    console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained", CLR_TEXT);
 }
 
 fn state_name(st) {
@@ -177,9 +177,9 @@ fn pad_right_18(str) {
 }
 
 fn cmd_actors() {
-    console_writeln("------------------------------------------------", 57599);
-    console_writeln(" ID  Name               State", 57599);
-    console_writeln("------------------------------------------------", 57599);
+    console_writeln("------------------------------------------------", CLR_BORDER);
+    console_writeln(" ID  Name               State", CLR_MUTED);
+    console_writeln("------------------------------------------------", CLR_BORDER);
     aid = 0;
     while (aid < 8) {
         ast = sys_actor_state(aid);
@@ -187,28 +187,34 @@ fn cmd_actors() {
             id_s = int_to_str(aid);
             if (len(id_s) == 1) { id_s = " " + id_s; }
             nm = pad_right_18(sys_actor_name(aid));
-            console_writeln(" " + id_s + "  " + nm + " " + state_name(ast), 16777215);
+            console_writeln(" " + id_s + "  " + nm + " " + state_name(ast), CLR_TEXT);
         }
         aid = aid + 1;
     }
-    console_writeln("------------------------------------------------", 57599);
+    console_writeln("------------------------------------------------", CLR_BORDER);
 }
 
 fn cmd_ai(prompt) {
-    console_writeln("[ai] Querying Resident AI...", 57599);
+    console_writeln("[ai] Querying Resident AI...", CLR_ACCENT);
     resp = sys_ai_prompt(prompt);
     if (len(resp) == 0) {
-        console_writeln("[ai] No response or auth failure (check API key / AI_PROVIDER).", 16777215);
+        console_writeln("[ai] No response or auth failure (check API key / AI_PROVIDER).", CLR_WARN);
         return 0;
     }
-    console_writeln("*** AI COGNITIVE STREAM ***", 57599);
-    console_writeln(resp, 57599);
+    console_writeln("*** AI COGNITIVE STREAM ***", CLR_MUTED);
+    console_writeln(resp, CLR_TEXT);
     code = extract_code(resp);
     if (len(code) > 0) {
-        console_writeln("[ai] Executable code block detected. Spawning...", 5306999);
+        console_writeln("[ai] Executable code block detected. Spawning...", CLR_GREEN);
         actor_id = sys_actor_spawn_code("child_worker", code);
-        console_writeln("[kernel] Spawned dynamic Actor " + int_to_str(actor_id), 5306999);
-        render_inspector();
+        if (actor_id < 0) {
+            console_writeln("[kernel] Failed to compile or spawn actor from AI code.", CLR_WARN);
+        } else {
+            console_writeln("[kernel] Spawned dynamic Actor " + int_to_str(actor_id), CLR_GREEN);
+            render_inspector();
+        }
+    } else {
+        console_writeln("[ai] No executable code block found in AI response.", CLR_WARN);
     }
     return 0;
 }
@@ -216,20 +222,20 @@ fn cmd_ai(prompt) {
 fn cmd_store(code) {
     hash = sys_cas_put(code);
     if (len(hash) == 0) {
-        console_writeln("Storage error: Failed to store in CAS.", 16777215);
+        console_writeln("Storage error: Failed to store in CAS.", CLR_WARN);
         return 0;
     }
-    console_writeln("Stored in CAS. Hash: " + hash, 5306999);
+    console_writeln("Stored in CAS. Hash: " + hash, CLR_GREEN);
     return 0;
 }
 
 fn cmd_fetch(hash) {
     content = sys_cas_get(hash);
     if (len(content) == 0) {
-        console_writeln("CAS chunk not found: " + hash, 16777215);
+        console_writeln("CAS chunk not found: " + hash, CLR_WARN);
     } else {
-        console_writeln("--- CAS Payload ---", 57599);
-        console_writeln(content, 16777215);
+        console_writeln("--- CAS Payload ---", CLR_MUTED);
+        console_writeln(content, CLR_TEXT);
     }
     return 0;
 }
@@ -237,20 +243,20 @@ fn cmd_fetch(hash) {
 fn cmd_persist(target) {
     hash = sys_actor_persist(str_to_int(target));
     if (len(hash) == 0) {
-        console_writeln("Storage error: Failed to persist Actor " + target, 16777215);
+        console_writeln("Storage error: Failed to persist Actor " + target, CLR_WARN);
         return 0;
     }
-    console_writeln("Actor " + target + " persisted. Root Hash: " + hash, 5306999);
+    console_writeln("Actor " + target + " persisted. Root Hash: " + hash, CLR_GREEN);
     return 0;
 }
 
 fn cmd_spawn_cas(hash) {
     actor_id = sys_actor_spawn_cas(hash);
     if (actor_id < 0) {
-        console_writeln("Storage error: Failed to spawn from CAS hash: " + hash, 16777215);
+        console_writeln("Storage error: Failed to spawn from CAS hash: " + hash, CLR_WARN);
         return 0;
     }
-    console_writeln("Spawned Actor " + int_to_str(actor_id) + " from CAS", 5306999);
+    console_writeln("Spawned Actor " + int_to_str(actor_id) + " from CAS", CLR_GREEN);
     render_inspector();
     return 0;
 }
@@ -268,18 +274,18 @@ fn eval_command(cmd) {
     if (is_prefix(cmd, "kill ")) {
         target = substr(cmd, 5, len(cmd));
         sys_actor_terminate(str_to_int(target));
-        console_writeln("Terminated Actor " + target, 57599);
+        console_writeln("Terminated Actor " + target, CLR_WARN);
         render_inspector();
         return 0;
     }
-    console_writeln("Unknown command: " + cmd + " (type 'help')", 16777215);
+    console_writeln("Unknown command: " + cmd + " (type 'help')", CLR_WARN);
     return 0;
 }
 
 fn draw_prompt() {
-    sys_fb_draw_string(cur_x, cur_y, "macros> ", 57599, 65822);
-    cur_x = cur_x + 64;
-    sys_serial_write(ANSI_BOLD + ANSI_CYAN + "µOS " + ANSI_GREEN + "macros>" + ANSI_RESET + " ");
+    sys_fb_draw_string(cur_x, cur_y, "uOS macros> ", CLR_ACCENT, CLR_BG);
+    cur_x = cur_x + 96;
+    sys_serial_write(ANSI_BOLD + ANSI_CYAN + "µOS macros>" + ANSI_RESET + " ");
 }
 
 fn poll_char() {
@@ -292,11 +298,11 @@ fn handle_newline(buf) {
     console_newline();
     if (len(buf) > 0) {
         if (buf == "exit") {
-            console_writeln("Halting Sovereign Harness.", 57599);
+            console_writeln("Halting Sovereign Harness.", CLR_MUTED);
             return false;
         }
         if (buf == "quit") {
-            console_writeln("Halting Sovereign Harness.", 57599);
+            console_writeln("Halting Sovereign Harness.", CLR_MUTED);
             return false;
         }
         eval_command(buf);
@@ -307,7 +313,7 @@ fn handle_newline(buf) {
 fn handle_backspace(buf) {
     if (len(buf) > 0) {
         cur_x = cur_x - 8;
-        sys_fb_draw_rect(cur_x, cur_y, 8, 16, 65822);
+        sys_fb_draw_rect(cur_x, cur_y, 8, 16, CLR_BG);
         sys_serial_write(char_to_str(8) + " " + char_to_str(8));
         return substr(buf, 0, len(buf) - 1);
     }
@@ -316,7 +322,7 @@ fn handle_backspace(buf) {
 
 fn handle_printable(buf, c) {
     ch_str = char_to_str(c);
-    sys_fb_draw_string(cur_x, cur_y, ch_str, 16777215, 65822);
+    sys_fb_draw_string(cur_x, cur_y, ch_str, CLR_TEXT, CLR_BG);
     cur_x = cur_x + 8;
     sys_serial_write(ch_str);
     return buf + ch_str;
@@ -352,18 +358,15 @@ fn harness_loop() {
 }
 
 fn harness_main() {
+    init_theme();
     init_ansi();
     draw_header();
     draw_panels();
     render_inspector();
-    sys_serial_write("\n" + ANSI_GRAY + "-- " + ANSI_BOLD + ANSI_CYAN + "Sovereign Actor Harness" + ANSI_RESET + " " + ANSI_GRAY + "-----------------------------------" + ANSI_RESET + "\n");
-    sys_serial_write("[harness] Visual canvas and vector status rendered successfully.\n");
-    sys_serial_write("[harness] MicrOS (uOS) Sovereign Genesis Actor Online\n");
-    sys_serial_write(ANSI_GRAY + "  Type '" + ANSI_WHITE + "help" + ANSI_GRAY + "' for commands or '" + ANSI_WHITE + "ai <prompt>" + ANSI_GRAY + "' to synthesize actors." + ANSI_RESET + "\n\n");
-    console_writeln("[SOVEREIGN HARNESS ACTIVE]", 5306999);
-    console_writeln("Interactive construction environment online.", 16777215);
-    console_writeln("Hardware input: PS/2 Keyboard and COM1 Serial.", 16777215);
-    console_writeln("Type 'help' for command reference, or 'ai <prompt>' to create.", 16777215);
+    sys_serial_write("\n[harness] MicrOS (uOS) Sovereign Genesis Actor Online\n");
+    console_writeln("MicrOS (uOS) Sovereign Genesis Actor Online", CLR_TEXT);
+    console_writeln("Type 'help' for commands, 'ai <prompt>' to synthesize actors.", CLR_MUTED);
+    console_newline();
     harness_loop();
 }
 
