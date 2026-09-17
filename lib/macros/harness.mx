@@ -335,29 +335,36 @@ fn handle_printable(buf, c) {
 
 fn harness_loop() {
     line_buf = "";
+    last_char = 0;
     running = true;
     draw_prompt();
     while (running) {
         c = poll_char();
         if (c < 0) {
             sys_yield();
+        } else if (c == 10) {
+            if (last_char != 13) {
+                running = handle_newline(line_buf);
+                line_buf = "";
+                if (running) { draw_prompt(); }
+            }
+            last_char = 10;
         } else if (c == 13) {
             running = handle_newline(line_buf);
             line_buf = "";
             if (running) { draw_prompt(); }
-        } else if (c == 10) {
-            running = handle_newline(line_buf);
-            line_buf = "";
-            if (running) { draw_prompt(); }
+            last_char = 13;
         } else if (c == 8) {
             line_buf = handle_backspace(line_buf);
+            last_char = 8;
         } else if (c == 127) {
             line_buf = handle_backspace(line_buf);
+            last_char = 127;
         } else if (c >= 32) {
             if (c <= 126) {
                 line_buf = handle_printable(line_buf, c);
             }
-            0;
+            last_char = c;
         }
     }
 }
@@ -368,10 +375,12 @@ fn harness_main() {
     draw_header();
     draw_panels();
     render_inspector();
-    console_writeln("MicrOS Interactive Terminal", CLR_TEXT);
-    console_writeln("Type 'help' for commands.", CLR_MUTED);
+    console_writeln("MicrOS Interactive Studio (App 1)", CLR_TEXT);
+    console_writeln("Type 'help' for commands, 'exit' to return to msh.", CLR_MUTED);
     console_newline();
     harness_loop();
+    sys_fb_clear(0);
+    return 0;
 }
 
 harness_main();

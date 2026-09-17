@@ -8,6 +8,7 @@ pub const bundle = @import("kernel/bundle.zig");
 pub const events = @import("kernel/ipc/events.zig");
 pub const ps2_kbd = @import("kernel/drivers/ps2_kbd.zig");
 pub const supervisor = @import("kernel/supervisor.zig");
+pub const abi = @import("kernel/abi.zig");
 pub const harness_bindings = @import("kernel/harness_bindings.zig");
 pub const io = @import("kernel/arch/x86_64/io.zig");
 pub const pci = @import("kernel/drivers/pci.zig");
@@ -29,6 +30,7 @@ test "kernel module tests" {
     _ = @import("kernel/bundle.zig");
     _ = @import("kernel/fb.zig");
     _ = @import("kernel/supervisor.zig");
+    _ = @import("kernel/abi.zig");
     _ = @import("kernel/harness_bindings.zig");
     _ = @import("kernel/arch/x86_64/io.zig");
     _ = @import("kernel/drivers/pci.zig");
@@ -39,6 +41,46 @@ test "kernel module tests" {
     _ = @import("kernel/storage/cas.zig");
     _ = @import("kernel/net.zig");
     _ = @import("kernel/ai.zig");
+}
+
+test "Genesis Bundle contains and compiles init.mx" {
+    const std_mod = @import("std");
+    const raw_bundle = @embedFile("kernel/genesis.mcb");
+    const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
+    const init_source = reader.findData("init.mx").?;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(std_mod.testing.allocator);
+
+    var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, init_source);
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        defer stmt.deinit(std_mod.testing.allocator);
+        try compiler.compile(stmt);
+    }
+    try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
+    try std_mod.testing.expect(chunk.code.items.len > 0);
+}
+
+test "Genesis Bundle contains and compiles msh.mx" {
+    const std_mod = @import("std");
+    const raw_bundle = @embedFile("kernel/genesis.mcb");
+    const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
+    const msh_source = reader.findData("msh.mx").?;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(std_mod.testing.allocator);
+
+    var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, msh_source);
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        defer stmt.deinit(std_mod.testing.allocator);
+        try compiler.compile(stmt);
+    }
+    try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
+    try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
 test "Genesis Bundle contains and compiles harness.mx" {

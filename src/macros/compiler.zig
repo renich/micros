@@ -85,6 +85,19 @@ pub const Compiler = struct {
         try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
     }
 
+    fn decodeEscape(c: u8) u8 {
+        return switch (c) {
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '\\' => '\\',
+            '"' => '"',
+            '0' => 0,
+            'e' => 0x1B,
+            else => c,
+        };
+    }
+
     fn unescapeString(self: *Compiler, raw: []const u8) ![]const u8 {
         var buf = try self.allocator.alloc(u8, raw.len);
         errdefer self.allocator.free(buf);
@@ -92,16 +105,7 @@ pub const Compiler = struct {
         var dst_i: usize = 0;
         while (src_i < raw.len) {
             if (raw[src_i] == '\\' and src_i + 1 < raw.len) {
-                buf[dst_i] = switch (raw[src_i + 1]) {
-                    'n' => '\n',
-                    'r' => '\r',
-                    't' => '\t',
-                    '\\' => '\\',
-                    '"' => '"',
-                    '0' => 0,
-                    'e' => 0x1B,
-                    else => raw[src_i + 1],
-                };
+                buf[dst_i] = decodeEscape(raw[src_i + 1]);
                 src_i += 2;
             } else {
                 buf[dst_i] = raw[src_i];

@@ -1,0 +1,275 @@
+// MicrOS (µOS) MicroShell (msh) - App 0
+// Stream-oriented CLI for humans and AI agents.
+
+fn init_msh() {
+    CLR_TEXT = 15132390;
+    CLR_MUTED = 8226192;
+    CLR_GREEN = 4057997;
+    CLR_WARN = 15774780;
+    CLR_CYAN = 3800806;
+    CLR_BG = 0;
+}
+
+init_msh();
+
+fn console_write(str) {
+    sys_serial_write(str);
+}
+
+fn console_writeln(str) {
+    sys_serial_write(str + "\r\n");
+}
+
+fn is_prefix(str, pre) {
+    slen = len(str);
+    plen = len(pre);
+    if (plen > slen) { return false; }
+    return substr(str, 0, plen) == pre;
+}
+
+fn cmd_help() {
+    console_writeln("-- MicrOS Command Reference --------------------");
+    console_writeln("  help          - Show this command reference");
+    console_writeln("  status        - System health and telemetry");
+    console_writeln("  actors        - List registered actors and state");
+    console_writeln("  clear         - Clear the terminal screen");
+    console_writeln("  kill <id>     - Terminate actor by ID");
+    console_writeln("  spawn <code>  - Spawn new actor from Macros code");
+    console_writeln("  store <code>  - Store raw code or text into CAS");
+    console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash");
+    console_writeln("  persist <id>  - Persist actor source to CAS root");
+    console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
+    console_writeln("  ai <prompt>   - Dispatch natural language task to AI");
+    console_writeln("  harness       - Launch full-screen visual studio (App 1)");
+    console_writeln("  exit          - Terminate MicroShell session");
+}
+
+fn cmd_status() {
+    console_writeln("* Status    : Ready");
+    console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active");
+    console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained");
+}
+
+fn cmd_actors() {
+    total = sys_actor_count();
+    console_writeln("Active Actor Domains: " + int_to_str(total));
+    i = 0;
+    while (i < 32) {
+        st = sys_actor_state(i);
+        if (st >= 0) {
+            nm = sys_actor_name(i);
+            st_str = "ready";
+            if (st == 1) { st_str = "running"; }
+            if (st == 2) { st_str = "blocked"; }
+            if (st == 3) { st_str = "dead"; }
+            console_writeln("  [" + int_to_str(i) + "] " + nm + " (" + st_str + ")");
+        }
+        i = i + 1;
+    }
+}
+
+fn cmd_store(payload) {
+    hash = sys_cas_put(payload);
+    if (len(hash) == 0) {
+        console_writeln("Storage error: Failed to store payload in CAS.");
+        return 0;
+    }
+    console_writeln("Stored in CAS. Hash: " + hash);
+    return 0;
+}
+
+fn cmd_fetch(hash) {
+    content = sys_cas_get(hash);
+    if (len(content) == 0) {
+        console_writeln("Storage error: Hash not found in CAS: " + hash);
+        return 0;
+    }
+    console_writeln("CAS Payload: " + content);
+    return 0;
+}
+
+fn cmd_persist(target) {
+    actor_id = str_to_int(target);
+    hash = sys_actor_persist(actor_id);
+    if (len(hash) == 0) {
+        console_writeln("Storage error: Failed to persist Actor " + target);
+        return 0;
+    }
+    console_writeln("Actor " + target + " persisted. Root Hash: " + hash);
+    return 0;
+}
+
+fn cmd_spawn_cas(hash) {
+    actor_id = sys_actor_spawn_cas(hash);
+    if (actor_id < 0) {
+        console_writeln("Storage error: Failed to spawn from CAS hash: " + hash);
+        return 0;
+    }
+    console_writeln("Spawned Actor " + int_to_str(actor_id) + " from CAS");
+    return 0;
+}
+
+fn cmd_spawn(code) {
+    actor_id = sys_actor_spawn_code("worker", code);
+    if (actor_id < 0) {
+        console_writeln("Compilation error: Failed to spawn actor.");
+        return 0;
+    }
+    console_writeln("Spawned Actor " + int_to_str(actor_id));
+    return 0;
+}
+
+fn cmd_harness() {
+    h_src = sys_bundle_read("harness.mx");
+    if (len(h_src) == 0) {
+        console_writeln("Error: harness.mx not found in genesis bundle.");
+        return 0;
+    }
+    console_writeln("Launching App 1: Interactive Harness...");
+    h_id = sys_actor_spawn_code("harness", h_src);
+    if (h_id < 0) {
+        console_writeln("Error: Failed to spawn harness actor.");
+        return 0;
+    }
+    sys_actor_wait(h_id);
+    console_writeln("");
+    console_writeln("Harness terminated. Returned to msh.");
+    return 0;
+}
+
+fn cmd_ai(prompt) {
+    console_writeln("[ai] Querying resident AI: " + prompt + "...");
+    resp = sys_ai_prompt(prompt);
+    if (len(resp) == 0) {
+        console_writeln("[ai] Error: No response from resident AI.");
+        return 0;
+    }
+    tool_res = sys_ai_tool_call(resp);
+    if (len(tool_res) > 0) {
+        console_writeln("[ai:tool] Executed: " + tool_res);
+        return 0;
+    }
+    extracted = sys_ai_extract_code(resp);
+    if (len(extracted) > 0) {
+        console_writeln("[ai] Extracted code block (" + int_to_str(len(extracted)) + " bytes). Spawning actor...");
+        child_id = sys_actor_spawn_code("ai_actor", extracted);
+        if (child_id >= 0) {
+            console_writeln("[ai] Spawned Actor " + int_to_str(child_id) + " from synthesized code.");
+        } else {
+            console_writeln("[ai] Error: Synthesized code compilation failed.");
+        }
+    } else {
+        console_writeln(resp);
+    }
+    return 0;
+}
+
+fn eval_command(cmd) {
+    if (cmd == "help") { return cmd_help(); }
+    if (cmd == "status") { return cmd_status(); }
+    if (cmd == "actors") { return cmd_actors(); }
+    if (cmd == "clear") {
+        sys_serial_write(char_to_str(27) + "[2J" + char_to_str(27) + "[H");
+        return 0;
+    }
+    if (cmd == "harness") { return cmd_harness(); }
+    if (is_prefix(cmd, "ai ")) { return cmd_ai(substr(cmd, 3, len(cmd))); }
+    if (is_prefix(cmd, "spawn ")) { return cmd_spawn(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "store ")) { return cmd_store(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "fetch ")) { return cmd_fetch(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "persist ")) { return cmd_persist(substr(cmd, 8, len(cmd))); }
+    if (is_prefix(cmd, "spawn_cas ")) { return cmd_spawn_cas(substr(cmd, 10, len(cmd))); }
+    if (is_prefix(cmd, "kill ")) {
+        target = substr(cmd, 5, len(cmd));
+        sys_actor_terminate(str_to_int(target));
+        console_writeln("Terminated Actor " + target);
+        return 0;
+    }
+    console_writeln("Unknown command: '" + cmd + "' (type 'help')");
+    return 0;
+}
+
+fn poll_char() {
+    c = sys_serial_read();
+    if (c >= 0) { return c; }
+    return sys_kbd_read();
+}
+
+fn draw_prompt() {
+    sys_serial_write("msh> ");
+}
+
+fn handle_newline(buf) {
+    sys_serial_write("\r\n");
+    if (len(buf) > 0) {
+        if (buf == "exit") {
+            console_writeln("Exiting MicroShell.");
+            return false;
+        }
+        if (buf == "quit") {
+            console_writeln("Exiting MicroShell.");
+            return false;
+        }
+        eval_command(buf);
+    }
+    return true;
+}
+
+fn handle_backspace(buf) {
+    if (len(buf) > 0) {
+        sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+        return substr(buf, 0, len(buf) - 1);
+    }
+    return buf;
+}
+
+fn handle_printable(buf, c) {
+    ch_str = char_to_str(c);
+    sys_serial_write(ch_str);
+    return buf + ch_str;
+}
+
+fn msh_loop() {
+    line_buf = "";
+    last_char = 0;
+    running = true;
+    draw_prompt();
+    while (running) {
+        c = poll_char();
+        if (c < 0) {
+            sys_yield();
+        } else if (c == 10) {
+            if (last_char != 13) {
+                running = handle_newline(line_buf);
+                line_buf = "";
+                if (running) { draw_prompt(); }
+            }
+            last_char = 10;
+        } else if (c == 13) {
+            running = handle_newline(line_buf);
+            line_buf = "";
+            if (running) { draw_prompt(); }
+            last_char = 13;
+        } else if (c == 8) {
+            line_buf = handle_backspace(line_buf);
+            last_char = 8;
+        } else if (c == 127) {
+            line_buf = handle_backspace(line_buf);
+            last_char = 127;
+        } else if (c >= 32) {
+            if (c <= 126) {
+                line_buf = handle_printable(line_buf, c);
+            }
+            last_char = c;
+        }
+    }
+}
+
+fn msh_main() {
+    console_writeln("MicroShell (msh) v0.1.0-dev");
+    console_writeln("Type 'help' for commands, 'harness' for visual studio.");
+    console_writeln("");
+    msh_loop();
+}
+
+msh_main();

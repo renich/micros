@@ -1,4 +1,42 @@
-// MicrOS (µOS) Init Script
-// Executed by Actor 0.
+// MicrOS (µOS) System Init & Supervisor (Actor 0 / PID 1)
+// Runs as the root genesis actor under CSpace 0.
+// Initializes system environment and launches App 0 (msh.mx).
 
-print("µOS system initialized.");
+print("µOS 0.1.0-dev: System supervisor online.");
+
+fn supervisor_loop(child_id) {
+    while (true) {
+        st = sys_actor_state(child_id);
+        if (st == 5) {
+            print("[init] App 0 (msh) exited. Respawning shell...");
+            msh_src = sys_bundle_read("msh.mx");
+            child_id = sys_actor_spawn_code("msh", msh_src);
+        } else if (st == 4) {
+            print("[init] App 0 (msh) faulted! Respawning shell...");
+            msh_src = sys_bundle_read("msh.mx");
+            child_id = sys_actor_spawn_code("msh", msh_src);
+        } else if (st < 0) {
+            print("[init] App 0 (msh) missing. Respawning shell...");
+            msh_src = sys_bundle_read("msh.mx");
+            child_id = sys_actor_spawn_code("msh", msh_src);
+        }
+        sys_yield();
+    }
+}
+
+fn boot_init() {
+    msh_src = sys_bundle_read("msh.mx");
+    if (len(msh_src) == 0) {
+        print("[init] Fatal: App 0 (msh.mx) not found in genesis bundle.");
+        return 0;
+    }
+    msh_id = sys_actor_spawn_code("msh", msh_src);
+    if (msh_id < 0) {
+        print("[init] Fatal: Failed to spawn App 0.");
+        return 0;
+    }
+    supervisor_loop(msh_id);
+    return 0;
+}
+
+boot_init();

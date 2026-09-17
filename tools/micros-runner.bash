@@ -197,7 +197,7 @@ elif [[ "$MODE" == "uefi" ]]; then
     fi
 
     if [[ "$EXPECT" == "Substrate self-test verified (Macros 20+22=42)" ]]; then
-        EXPECT="MicrOS Interactive Terminal"
+        EXPECT="MicroShell (msh)"
     fi
 
     ESP_DIR="$BUILD_DIR/esp"
@@ -263,7 +263,7 @@ elif [[ "$MODE" == "uefi" ]]; then
         FIFO_IN=$(mktemp -u "${BUILD_DIR}/qemu-in-XXXXXX.fifo")
         mkfifo "$FIFO_IN"
         (
-            while ! grep -F "macros>" "$TMP_SERIAL" >/dev/null 2>&1; do
+            while ! grep -E "(msh>|macros>)" "$TMP_SERIAL" >/dev/null 2>&1; do
                 sleep 0.1
             done
             sleep 0.2

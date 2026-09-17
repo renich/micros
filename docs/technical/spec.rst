@@ -29,6 +29,7 @@ Technical Sub-Specifications
    specs/sovereign-interactive-harness
    specs/sovereign-storage-substrate
    specs/sovereign-tool-calling
+   specs/process-hierarchy
 
 Core Architecture Principles
 ============================

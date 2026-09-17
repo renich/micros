@@ -55,8 +55,7 @@ const Linter = struct {
         if (prev == .period) return true;
         if (prev == .identifier) {
             if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .period) return true;
-            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .keyword_const) return true;
-            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .keyword_var) return true;
+            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .equal) return true;
         }
         return false;
     }

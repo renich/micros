@@ -23,7 +23,7 @@ const bundle_mod = @import("bundle.zig");
 const parser_mod = @import("../macros/parser.zig");
 const compiler_mod = @import("../macros/compiler.zig");
 const supervisor_mod = @import("supervisor.zig");
-const harness_bindings_mod = @import("harness_bindings.zig");
+const abi_mod = @import("abi.zig");
 const ps2_kbd_mod = @import("drivers/ps2_kbd.zig");
 const pci_mod = @import("drivers/pci.zig");
 const virtio_net_mod = @import("drivers/virtio_net.zig");
@@ -57,7 +57,7 @@ const GENESIS_PAGE_TABLE_ROOT: u64 = 0;
 var global_registry: actor_mod.ActorRegistry = actor_mod.ActorRegistry.init();
 var global_fb: ?fb_mod.Framebuffer = null;
 var global_supervisor: ?supervisor_mod.Supervisor = null;
-var global_harness_ctx: ?harness_bindings_mod.HarnessContext = null;
+var global_abi_ctx: ?abi_mod.AbiContext = null;
 var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
 var global_net_stack: ?net_mod.stack.NetworkStack = null;
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
@@ -66,6 +66,7 @@ var global_virtio_blk: ?virtio_blk_mod.VirtioBlkDevice = null;
 var global_block_cache: ?block_cache_mod.BlockCache = null;
 var global_cas: ?cas_mod.CasEngine = null;
 var global_actor_sources: [actor_mod.MAX_ACTORS]?[]const u8 = [_]?[]const u8{null} ** actor_mod.MAX_ACTORS;
+var global_bundle_data: ?[]const u8 = null;
 
 fn kernelPanic(stage: []const u8) noreturn {
     serial.writeString("\n[KERNEL PANIC] Fatal error at stage: ");
@@ -75,7 +76,7 @@ fn kernelPanic(stage: []const u8) noreturn {
 }
 
 fn printBanner() void {
-    serial.writeString("\n\x1b[1;97mµOS (MicrOS) 0.15.0\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
+    serial.writeString("\n\x1b[1;97mµOS 0.1.0-dev\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
 }
 
 fn initHardware(boot_info: *const BootInfo) void {
@@ -346,9 +347,18 @@ fn aiInferenceBridge(prompt: []const u8, out_text: []u8) usize {
     return executeAiInference(prompt, out_text);
 }
 
+const ActorThreadContext = struct {
+    actor: *actor_mod.Actor,
+    vm: *vm_mod.VM,
+};
+
 fn actorThread(ctx: ?*anyopaque) void {
-    var vm = @as(*vm_mod.VM, @ptrCast(@alignCast(ctx.?)));
+    const act_ctx = @as(*ActorThreadContext, @ptrCast(@alignCast(ctx.?)));
+    const actor = act_ctx.actor;
+    var vm = act_ctx.vm;
+    actor.state = .running;
     vm.run(0) catch |err| {
+        actor.state = .faulted;
         serial.writeString("[kernel] Spawned Actor crashed: ");
         serial.writeString(@errorName(err));
         if (vm.last_missing_symbol) |sym| {
@@ -361,7 +371,9 @@ fn actorThread(ctx: ?*anyopaque) void {
         serial.writeString(" sp=");
         serial.writeHex(vm.sp);
         serial.writeString("\n");
+        return;
     };
+    actor.state = .terminated;
 }
 
 fn compileActorScript(allocator: std.mem.Allocator, source: []const u8) !*chunk_mod.Chunk {
@@ -377,14 +389,13 @@ fn compileActorScript(allocator: std.mem.Allocator, source: []const u8) !*chunk_
         const stmt = try p.parseStatement();
         try compiler.compile(stmt);
     }
-    try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
     return chunk;
 }
 
 fn logActorSpawn(id: u32, name: []const u8) void {
-    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mspawn\x1b[90m: \x1b[97mActor \x1b[0m");
+    serial.writeString("  [  \x1b[32mok\x1b[0m  ] spawn: Actor ");
     serial.writeDec(id);
-    serial.writeString(" \x1b[97m(\x1b[0m");
+    serial.writeString(" (");
     serial.writeString(name);
     serial.writeString("\x1b[97m) online\x1b[0m\n");
 }
@@ -407,9 +418,15 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
         child_vm.deinit();
         allocator.destroy(child_vm);
     }
-    try harness_bindings_mod.registerBindings(child_vm);
+    try abi_mod.registerSyscalls(child_vm);
+    const act_ctx = try allocator.create(ActorThreadContext);
+    act_ctx.* = .{
+        .actor = child,
+        .vm = child_vm,
+    };
+    errdefer allocator.destroy(act_ctx);
     if (global_sched) |sched| {
-        const fib = try sched.spawn(actorThread, child_vm);
+        const fib = try sched.spawn(actorThread, act_ctx);
         child.fiber_ctx = @ptrCast(fib);
     }
 }
@@ -677,18 +694,25 @@ fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {
     return chunk;
 }
 
+fn bundleReadBridge(name: []const u8) ?[]const u8 {
+    const raw = global_bundle_data orelse return null;
+    const reader = bundle_mod.BundleReader.init(raw) catch return null;
+    return reader.findData(name);
+}
+
 fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*chunk_mod.Chunk {
     const raw_bundle: []const u8 = if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0)
         @as([*]const u8, @ptrFromInt(boot_info.bundle_base))[0..boot_info.bundle_size]
     else
         EMBEDDED_GENESIS_BUNDLE;
+    global_bundle_data = raw_bundle;
 
     const reader = bundle_mod.BundleReader.init(raw_bundle) catch {
         serial.writeStatusWarn("mcb ", "BundleReader failed. Using fallback chunk");
         return try buildFallbackGenesisChunk(allocator);
     };
 
-    const maybe_source = reader.findData("harness.mx") orelse reader.findData("init.mx");
+    const maybe_source = reader.findData("init.mx") orelse reader.findData("harness.mx");
     if (maybe_source) |source| {
         global_actor_sources[actor_mod.GENESIS_ACTOR_ID] = source;
         const chunk = try allocator.create(chunk_mod.Chunk);
@@ -704,7 +728,7 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*
             try compiler.compile(stmt);
         }
         try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
-        serial.writeStatusOk("mcb ", "Genesis bundle loaded and compiled (harness.mx)");
+        serial.writeStatusOk("mcb ", "Genesis bundle loaded and compiled (init.mx)");
         return chunk;
     }
 
@@ -712,7 +736,7 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*
     return try buildFallbackGenesisChunk(allocator);
 }
 
-fn setupHarnessEnvironment(
+fn setupAbiEnvironment(
     genesis: *actor_mod.Actor,
     boot_info: *const BootInfo,
     ipc_ring: *ipc_mod.RingBuffer,
@@ -727,7 +751,7 @@ fn setupHarnessEnvironment(
         global_fb = fb_mod.Framebuffer.init(boot_info.framebuffer);
     }
 
-    global_harness_ctx = harness_bindings_mod.HarnessContext{
+    global_abi_ctx = abi_mod.AbiContext{
         .registry = &global_registry,
         .supervisor = genesis,
         .framebuffer = if (global_fb != null) &global_fb.? else null,
@@ -743,9 +767,10 @@ fn setupHarnessEnvironment(
         .grant_cap_fn = grantCapBridge,
         .draw_canvas_fn = drawCanvasBridge,
         .telemetry_fn = telemetryBridge,
+        .bundle_read_fn = bundleReadBridge,
     };
-    harness_bindings_mod.setContext(&global_harness_ctx.?);
-    harness_bindings_mod.registerBindings(vm) catch kernelPanic("harness_bindings");
+    abi_mod.setContext(&global_abi_ctx.?);
+    abi_mod.registerSyscalls(vm) catch kernelPanic("abi_syscalls");
 }
 
 fn initGenesisVm(
@@ -785,7 +810,7 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
 
     const ipc_ring = ipc_mod.RingBuffer.init(allocator, ipc_mod.DEFAULT_RING_CAPACITY) catch kernelPanic("ipc_ring_init");
     const genesis_vm = initGenesisVm(boot_info, allocator, genesis, ipc_ring);
-    setupHarnessEnvironment(genesis, boot_info, ipc_ring, genesis_vm);
+    setupAbiEnvironment(genesis, boot_info, ipc_ring, genesis_vm);
 
     serial.writeStatusOk("act ", "Genesis Actor 0 online (cooperative fiber scheduler)");
 

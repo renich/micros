@@ -1,0 +1,12 @@
+{
+  "features": {
+    "SPEC-TECH-HIERARCHY-001": {
+      "last_checked": "2026-09-17T19:59:23.608Z",
+      "name": "Process Hierarchy Decoupling (msh App 0 and harness App 1)",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/process-hierarchy.rst",
+      "verification_cmd": "make check"
+    }
+  },
+  "version": "0.3.0"
+}
