@@ -12,6 +12,13 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 
 .. rubric:: Added
 
+- **Milestone 13 (Interactive Human-AI Construction Loop)**:
+  - Authored Master Technical Specification (``docs/technical/specs/sovereign-interactive-harness.rst``, ``SPEC-TECH-HARNESS-002``) defining the transition of MicrOS from a batch-execution pipeline into an interactive, living operating system.
+  - Defined hardware input unification ABI for COM1 UART serial (``sys_serial_read_char``) and PS/2 8042 keyboard (``sys_kbd_read_char``).
+  - Specified interactive line editor, console viewport scrolling, and command evaluator grammar in ``harness.mx``.
+  - Designed native VM prompt binding (``sys_ai_prompt``) and live actor compilation/spawning primitive (``sys_actor_spawn_code``) with dynamic Actor Inspector UI updates.
+  - Published Milestone 13 execution roadmap (``docs/project/roadmaps/milestone-13-interactive-harness.rst``) detailing sub-milestones 13.1 through 13.5.
+
 - **Comprehensive Documentation Review & Sphinx Build System**:
   - Harmonized the entire ``docs/`` tree under Sphinx and Docutils, resolving all syntax warnings, title length mismatches, and forward slash formatting.
   - Added native Sphinx configuration (``docs/conf.py``) enabling strict-mode (``-W``) zero-warning HTML compilation.
