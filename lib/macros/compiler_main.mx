@@ -1,0 +1,31 @@
+fn read_file(path) {
+    fd = sys_open(path);
+    if (fd < 0) {
+        print("Error: Could not open file.");
+        print(path);
+        return "";
+    }
+    content = sys_read(fd, 65536);
+    sys_close(fd);
+    return content;
+}
+
+fn compiler_main(path) {
+    print("Macros Compiler Pipeline Booting...");
+    code = read_file(path);
+    if (len(code) == 0) {
+        return [];
+    }
+    
+    print("Lexing...");
+    tokens = lex(code);
+    
+    print("Parsing...");
+    ast = parse(tokens);
+    
+    print("Compiling...");
+    bytecode_state = compile_program(ast);
+    
+    print("Executing Native Chunk...");
+    exec_chunk(bytecode_state[0], bytecode_state[1]);
+}

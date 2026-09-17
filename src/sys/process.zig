@@ -1,14 +1,14 @@
 const std = @import("std");
-const linux = @import("linux.zig");
+const hal = @import("hal.zig");
 
 pub fn exit(status: usize) noreturn {
-    linux.exit_group(status);
+    hal.exit_group(status);
 }
 
 pub fn poweroff() noreturn {
-    linux.poweroff();
+    hal.poweroff();
 }
 
 pub fn getpid() usize {
-    return linux.getpid();
+    return hal.getpid();
 }

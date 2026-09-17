@@ -3,7 +3,7 @@ User Stories: Gemini (AI Persona)
 ====================================
 
 :Status: Approved
-:Persona: Gemini / Antigravity Agent (Autonomous AI Systems Engineer)
+:Persona: Gemini/Antigravity Agent (Autonomous AI Systems Engineer)
 :Traceability: `[US-GEM-001]` to `[US-GEM-010]`
 
 This document specifies the user stories defining how autonomous AI agents interface with, observe, develop, and self-heal the MicrOS (µOS) substrate and Macros runtime.
@@ -42,7 +42,7 @@ This document specifies the user stories defining how autonomous AI agents inter
 **Acceptance Criteria**:
 * Rejects any file exceeding 1,000 lines of code.
 * Rejects any function exceeding 40 lines of code.
-* Rejects indentation / control-flow nesting exceeding 3 levels.
+* Rejects indentation/control-flow nesting exceeding 3 levels.
 * Prohibits forbidden names (`utils.zig`, `helpers.zig`) and `catch unreachable`.
 
 [US-GEM-004] Direct QEMU Monitor Diagnostic Inspection
@@ -59,7 +59,7 @@ This document specifies the user stories defining how autonomous AI agents inter
 [US-GEM-005] Freestanding ELF Symbol Resolution
 ===============================================
 * **As a** crash analysis agent,
-* **I want** to resolve raw instruction pointer addresses (`0x002014d4`) directly against the kernel `.symtab` / `.strtab`,
+* **I want** to resolve raw instruction pointer addresses (`0x002014d4`) directly against the kernel `.symtab/.strtab`,
 * **So that** I can reconstruct callstacks and identify faulty function names without external GNU `addr2line` or `llvm-symbolizer`.
 
 **Acceptance Criteria**:

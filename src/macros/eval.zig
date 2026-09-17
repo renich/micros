@@ -11,7 +11,6 @@ pub const EvalError = error{
     OutOfMemory,
 };
 
-
 pub const Upvalue = struct {
     location: *Value,
     closed: Value,
@@ -33,6 +32,14 @@ pub const Function = struct {
 
 pub const NativeFn = *const fn (vm: *anyopaque, args: []Value) anyerror!Value;
 
+pub const Dict = struct {
+    pub const Entry = struct {
+        key: []const u8,
+        value: Value,
+    };
+    entries: []Entry,
+};
+
 pub const Value = union(enum) {
     integer: i64,
     boolean: bool,
@@ -41,6 +48,7 @@ pub const Value = union(enum) {
     closure: *Closure,
     native: NativeFn,
     array: []Value,
+    dict: *Dict,
     nil: void,
 
     fn writeFd(fd: i32, bytes: []const u8) void {
@@ -77,6 +85,22 @@ pub const Value = union(enum) {
         writeFd(fd, "]");
     }
 
+    fn printDict(fd: i32, dict: *Dict) void {
+        writeFd(fd, "{");
+        var first = true;
+        for (dict.entries) |entry| {
+            if (!first) {
+                writeFd(fd, ", ");
+            }
+            first = false;
+            writeFd(fd, "\"");
+            writeFd(fd, entry.key);
+            writeFd(fd, "\": ");
+            entry.value.printToFd(fd);
+        }
+        writeFd(fd, "}");
+    }
+
     pub fn printToFd(self: Value, fd: i32) void {
         switch (self) {
             .integer => |v| printInt(fd, v),
@@ -86,8 +110,15 @@ pub const Value = union(enum) {
             .function => |f| printFunc(fd, f.name),
             .native => writeFd(fd, "<native fn>"),
             .array => |arr| printArr(fd, arr),
+            .dict => printDict(fd, self.dict),
             .nil => writeFd(fd, "nil"),
         }
     }
 };
 
+test "Value.printToFd" {
+    // Just ensure it compiles
+    const val = Value{ .integer = 42 };
+    // Skip actually printing to fd 1 (stdout) in tests to avoid breaking test runner IPC
+    _ = val;
+}

@@ -1,0 +1,13 @@
+fn is_alpha(c) {
+    if (c >= 65) {
+        if (c <= 90) { return true; }
+    }
+    if (c >= 97) {
+        if (c <= 122) { return true; }
+    }
+    if (c == 95) { return true; }
+    return false;
+}
+println("f: ", is_alpha(102));
+println("m: ", is_alpha(109));
+println("4: ", is_alpha(52));

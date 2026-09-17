@@ -4,35 +4,64 @@ Changelog
 
 All notable changes to this project will be documented in this file.
 
-The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.0.0/>`_,
+The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
 [Unreleased]
 ============
 
-Added
------
-* Initial project structure and Zig build system (Phase 0).
-* Direct-syscall wrapper (`src/sys/`) bypassing `libc` for Linux host execution.
-* Substrate Toolchain stubs (`micros-runner`, `micros-fb-verify`, `micros-lint`, etc.).
-* Basic Lexer and AST structures for the Macros application language.
-* `micros-init` entry point for sandbox validation.
-* Foundational documentation (`docs/`), roadmaps, and architecture blueprints.
-* GNUmakefile wrapper strictly adhering to GNU Make standards (targets: all, test, clean, run, help, lint, fmt, spec-trace).
-* Initial Macros AST Parser (`src/macros/parser.zig`) supporting binary expressions and numeric/identifier literals.
-* Wire-up of the Macros language parser into the `micros-init` entry point for execution verification.
-* Implementation of `micros-lint`, a native Zig AST static analyzer enforcing codebase constraints (1000-line limits, 40-line function limits, max nesting depth 3, and prohibiting `catch unreachable`).
-* Implementation of Macros AST Evaluator and Environment (`src/macros/eval.zig`) supporting variable bindings, arithmetic evaluation, and equality checks with memory safety.
-* Implementation of **MicroShell** (`msh` / `ush`) in `src/msh/shell.zig` providing interactive REPL and streaming execution for both typed shell commands and Macros scripts.
-* Standalone `msh` executable binary in `build.zig` and integration with `micros-init` substrate bootstrap.
-* Event-driven headless QEMU/KVM test harness in `tools/micros-runner.bash` with sub-second milestone sentinel matching.
-* Native ACPI S5 sleep state poweroff syscall integration in `src/sys/process.zig` for clean virtual machine termination.
-* GNUmakefile targets `test-sandbox`, `test-qemu`, and `qemu-msh` for direct KVM guest execution.
-* Formalized Master Business Specification (`docs/business/spec.rst`) and User Personas (`docs/business/specs/user-personas.rst`) for Rénich (Human) and Gemini (AI).
-* Catalogs of 20 User Stories (`[US-REN-001]`..`[US-REN-010]` and `[US-GEM-001]`..`[US-GEM-010]`) covering typed shell automation, zero-libc determinism, binary telemetry, UKI delivery, and Immix GC.
-* Automated Unified Kernel Image (UKI) packaging target (`make uki`) and direct UEFI/OVMF QEMU test harness (`make test-uki`).
-* Complete implementation of the MicrOS Substrate Toolchain:
-  - `micros-fb-verify`: Deterministic pure Zig PPM framebuffer visual validator with bounding box auditing.
-  - `micros-sym`: Pure Zig freestanding ELF symbol table parser and callstack address resolver.
-  - `micros-telem`: Native 64-byte `TelemetryToken` binary ABI generator and decoder.
-  - `micros-spec-trace`: Automated bidirectional specification traceability auditor.
+.. rubric:: Added
+
+- **Milestone 12 (Pluggable Resident AI Subsystem & Bidirectional Sovereign Event Loop)**:
+  - **Modular Resident AI Substrate**: Completely decoupled the kernel from any specific AI provider or model via ``src/kernel/ai/``. Added polymorphic client (``AiClient`` in ``src/kernel/ai/client.zig``) and extensible provider drivers for Google Gemini (``src/kernel/ai/gemini.zig``), OpenAI/vLLM/Ollama/DeepSeek (``src/kernel/ai/openai.zig``), and offline deterministic testing (``src/kernel/ai/mock.zig``).
+  - **Bidirectional Sovereign Event Loop**: Microkernel event loop (``runSovereignEventLoop`` in ``src/kernel/main.zig``) exchanging multi-turn telemetry with the Resident AI in CSpace 0. The Resident AI evaluates machine state, declares operational policies, and dynamically compiles and executes emitted Macros (``.mx``) code on bare-metal hardware.
+  - **Network Resilience Architecture**: Dynamic TCP RX buffer expansion to 64KB, modulo 2^32 sequence number tracking, stop-and-wait reliable delivery per 1460-byte MSS chunk, exponential backoff retries, and multi-tier DNS fallbacks tolerating lossy WAN and jitter.
+  - **Zero-Copy Stack Safety**: Replaced large struct copies with pointer semantics and cached DNS resolution to eliminate stack overflows in UEFI firmware environments.
+  - **Generalized Build Options**: Added ``-Dai-provider``, ``-Dai-api-key``, ``-Dai-model``, ``-Dai-endpoint``, ``-Dai-port``, and ``-Dai-use-tls`` in ``build.zig`` and ``GNUmakefile``, with offline ``mock`` support for air-gapped systems.
+  - **Test Suite Expansion**: 106/106 green unit tests and 0 Ten Commandments violations.
+
+- **Milestone 11 (Transport Security & Gemini 3.8 Flash Inference Engine)**:
+  - **Freestanding Pure Zig TLS 1.3 Transport Stream**: In-place static memory architecture (``TcpStreamAdapter`` in ``src/kernel/net/tls_stream.zig``) eliminating stack overflow and dangling pointer hazards. Zero-libc TLS client over ``std.crypto.tls.Client`` using hardware entropy (``rdtsc``/``rdrand``). Live TLS 1.3 handshake verified against ``generativelanguage.googleapis.com:443`` over VirtIO-Net in bare-metal UEFI QEMU/KVM.
+  - **Freestanding HTTP/1.1 Engine**: Zero-allocation HTTP POST formatting with ``application/json`` payload, response status line parsing, header extraction, and candidate JSON text extraction in ``src/kernel/net/http.zig``.
+  - **Gemini 3.8 Flash Sovereign Client**: Root Sovereign Intelligence system prompt injection, escaped JSON request serialization, and candidate response parsing in ``src/kernel/net/gemini.zig``.
+  - **Secure Build-Time API Key Provisioning**: ``-Dgemini-api-key=<KEY>`` configuration option wired through ``build.zig`` to bootloader, kernel, and test modules.
+  - **Test Suite Expansion**: 95/95 green unit tests across networking, crypto stream adapters, HTTP parsing, and kernel subsystems with 0 linter violations.
+
+- **Milestone 10 (Sovereign Network Substrate: VirtIO-Net, IPv4, DHCP, DNS, TCP)**:
+  - **VirtIO-Net Modern PCI Driver**: Zero-libc driver (``src/kernel/drivers/virtio_net.zig``) with PCI configuration space scanning (``src/kernel/drivers/pci.zig``), split virtqueues (RX/TX), and PMM-backed DMA ring buffers.
+  - **Pure Zig L2/L3/L4 Network Stack**: Ethernet II framing (``src/kernel/net/ethernet.zig``), ARP resolution cache (``src/kernel/net/arp.zig``), IPv4 parsing and routing (``src/kernel/net/ipv4.zig``), ICMP diagnostics (``src/kernel/net/icmp.zig``), and RFC 2131 DHCP client (``src/kernel/net/dhcp.zig``) auto-configuring IP/subnet/gateway/DNS.
+  - **RFC 1035 UDP DNS Resolver**: Domain name resolution (``src/kernel/net/dns.zig``) resolving ``generativelanguage.googleapis.com`` via UDP port 53.
+  - **RFC 793 Client TCP State Machine**: Dedicated client TCP engine (``src/kernel/net/tcp.zig``) supporting 3-way handshake (``SYN``/``SYN-ACK``/``ACK``), sequence/acknowledgment tracking, and live connection to Google Cloud port 443.
+  - **Unified Network Stack Orchestrator**: Device dispatching, packet polling, and ARP/IP routing in ``src/kernel/net/stack.zig``.
+
+
+- **Milestone 9 (The Sovereign Actor Harness & Self-Healing Multi-Actor Substrate)**:
+  - **Hardware Input IPC**: 8-byte packed ``KeyEvent``, ``KeyAction``, and ``KeyModifiers`` serialization in ``src/kernel/ipc/events.zig``.
+  - **PS/2 8042 Keyboard Driver**: Zero-allocation controller driver in ``src/kernel/drivers/ps2_kbd.zig`` translating Scancode Set 1 make/break codes without busy-waiting.
+  - **Multi-Actor Registry & Lifecycle**: Domain isolation supporting up to 64 concurrent actors with explicit states (``uninitialized``, ``ready``, ``running``, ``paused``, ``faulted``, ``terminated``) and supervisor hierarchy in ``src/kernel/actor.zig``.
+  - **Attenuated Capability Delegation**: Mathematical rights verification in ``src/kernel/cap/cspace.zig`` rejecting privilege escalation and requiring ``Rights.REVOKE`` for revocation.
+  - **Interactive Sovereign Harness in Macros**: Real-time vector UI canvas (status header, console evaluator, actor/capability inspector, command prompt) rendering on 1280x800 GOP display and UART 16550 serial link in ``lib/macros/harness.mx``.
+  - **Microkernel VM Harness Bindings**: Direct syscall bridges (``sys_actor_spawn``, ``sys_fb_draw_rect``, ``sys_serial_write``, ``sys_serial_read_char``, ``sys_yield``) in ``src/kernel/harness_bindings.zig``.
+  - **Bare-Metal Fault Containment**: CPU exception interception (``#PF``, ``#GP``, ``#DE``, ``#UD``) in ``src/kernel/arch/x86_64/idt.zig`` for child actors (id > 0), suppressing microkernel panics, packaging 40-byte ``FaultFrame`` IPC notifications into supervisor rings, and yielding safely via naked trampolines.
+  - **Erlang-Style Actor Supervision**: Automated recovery policies (``restart_immediate``, ``quarantine``, ``terminate_and_reclaim``) in ``src/kernel/supervisor.zig``.
+  - Top-level fiber yielding primitive (``pub fn yield()``) in ``src/macros/fiber.zig``.
+  - String key persistence in VM global table (``getOrPut`` with allocator dupe) in ``src/macros/vm.zig`` preventing hash-map resize corruption.
+  - 69/69 green unit tests, 0 linter violations, live UEFI boot and 1280x800 visual canvas verification.
+
+- **Milestone 8 (The Sovereign Capability Substrate & Genesis Domain)**:
+  - Microkernel Capability System: First-class capabilities (``src/kernel/cap/capability.zig``) and per-domain Capability Space (``src/kernel/cap/cspace.zig``) eliminating ambient authority.
+  - Isolated Domain execution model (``src/kernel/domain.zig``).
+  - Lock-free Single-Producer Single-Consumer (SPSC) ring buffer (``src/kernel/ipc/ring.zig``) with cache-line alignment.
+  - MicrOS Bundle (MCB) file format and zero-copy reader (``src/kernel/bundle.zig``, ``tools/src/bundle.zig``) with BLAKE3 hash validation and 64-byte payload alignment.
+  - Bare-metal UEFI GOP framebuffer driver (``src/kernel/fb.zig``) and full 8x8 font table for ASCII 32..126 (``src/kernel/font.zig``).
+  - Dynamic Genesis bundle compilation and execution inside Actor 0 at boot.
+
+- **Phase 0 through Phase 7 Foundation**:
+  - Initial project structure, direct-syscall wrapper (``src/sys/``), and Substrate Toolchain (``micros-runner``, ``micros-fb-verify``, ``micros-lint``, ``micros-sym``, ``micros-telem``, ``micros-spec-trace``).
+  - Macros lexer, AST, parser, evaluator, and self-hosted Stage 1 compiler (``lib/macros/``).
+  - MicroShell (``msh/ush``) with streaming pipeline execution and REPL.
+  - Headless QEMU/KVM test harness with sub-second milestone sentinel matching and ACPI S5 poweroff.
+  - Immix Mark-Region Garbage Collector (``src/macros/immix.zig``) with 32KB blocks and 128-byte line marks.
+  - Cooperative Green-Thread Fiber Runtime and Scheduler (``src/macros/fiber.zig``, ``src/macros/context_switch.s``).
+  - Bare-metal x86_64 Long Mode UEFI bootloader (``boot.efi``), PMM bitmap allocator, and 4-level VMM paging.
+  - Master specifications, user personas, and 20 bidirectional user stories.

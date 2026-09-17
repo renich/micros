@@ -20,6 +20,9 @@ pub const OpCode = enum(u8) {
     build_array,
     index_get,
     index_set,
+    build_dict,
+    get_property,
+    set_property,
     equal,
     not_equal,
     less,
@@ -61,13 +64,13 @@ pub const Chunk = struct {
 test "chunk basic" {
     var chunk = Chunk.init();
     defer chunk.deinit(std.testing.allocator);
-    
+
     const idx = try chunk.addConstant(std.testing.allocator, Value{ .integer = 42 });
     try std.testing.expectEqual(0, idx);
-    
+
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
     try chunk.writeChunk(std.testing.allocator, @intCast(idx & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
-    
+
     try std.testing.expectEqual(3, chunk.code.items.len);
 }

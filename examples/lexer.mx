@@ -1,0 +1,5 @@
+import("lib/macros/lexer.mx");
+source = "fn calc(a, b) { c = a + b - 10; return c; }";
+println("lexing...");
+tokens = lex(source);
+println("lexed");

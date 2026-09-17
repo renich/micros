@@ -3,16 +3,20 @@ MicrOS (µOS) Project Documentation
 ====================================
 
 :Project: MicrOS (µOS)
-:Language: Zig (Kernel/Substrate), Macros (Application Runtime)
-:Goal: Absolute Computational Sovereignty & AI-Native Maintainability
+:Language: Zig (Microkernel/Substrate), Macros (Application Runtime)
+:Goal: Absolute Computational Sovereignty & AI-First Operating Environment
 
 Architecture & Vision
 =====================
-* `MicrOS Genesis Plan <micros_genesis_plan.rst>`_
+* `MicrOS Genesis Blueprint <micros_genesis_plan.rst>`_
 * `MicrOS Story <micros-story.rst>`_
+* `Master Business Specification <business/spec.rst>`_
 
-Project Roadmaps
-================
+Active & Sequenced Roadmaps
+===========================
+* `Milestone 10: Sovereign Network Substrate & Gemini Flash Orchestrator <project/roadmaps/milestone-10-gemini-orchestrator.rst>`_ *(Active)*
+* `Milestone 9: Sovereign Actor Harness & Self-Healing Multi-Actor Substrate <project/roadmaps/milestone-9-sovereign-harness.rst>`_ *(Completed)*
+* `Milestone 8: Sovereign Capability Substrate & Genesis Domain <project/roadmaps/milestone-8-sovereign-substrate.rst>`_ *(Completed)*
 * `Phase 0: Userspace Sandbox <project/roadmaps/phase-0-userspace-sandbox.rst>`_
 * `Phase 1: Bare-Metal Substrate <project/roadmaps/phase-1-bare-metal-substrate.rst>`_
 * `Phase 2: The Language Factory (Macros) <project/roadmaps/phase-2-language-factory.rst>`_
@@ -21,5 +25,13 @@ Project Roadmaps
 
 Technical Specifications
 ========================
-* `AI Telemetry Protocol <technical/specs/ai-telemetry-protocol.rst>`_
-* `Language Runtime (Macros) <technical/specs/language-runtime.rst>`_
+* `Master Technical Specification <technical/spec.rst>`_
+* `Sovereign Network & Gemini Orchestrator <technical/specs/sovereign-gemini-orchestrator.rst>`_
+* `Sovereign Actor Harness & Supervisor Protocol <technical/specs/sovereign-harness-protocol.rst>`_
+* `Sovereign Capability Substrate & CSpace <technical/specs/sovereign-capability-substrate.rst>`_
+* `Macros Language Specification <technical/specs/macros-lang.rst>`_
+* `Macros Runtime & Immix GC <technical/specs/macros-runtime.rst>`_
+* `Self-Hosting Macros Compiler <technical/specs/self-hosting-macros.rst>`_
+* `MicroShell (msh) Architecture <technical/specs/microshell-msh.rst>`_
+* `Substrate Direct-Syscall ABI <technical/specs/substrate-sys.rst>`_
+* `Deterministic Toolchain Standards <technical/specs/toolchain.rst>`_

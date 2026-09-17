@@ -3,10 +3,34 @@ const std = @import("std");
 pub const TokenType = enum {
     identifier,
     number,
+    string,
+    kw_fn,
+    kw_return,
+    kw_if,
+    kw_else,
+    kw_while,
+    kw_true,
+    kw_false,
     plus,
     minus,
+    star,
+    slash,
     equal,
     equal_equal,
+    bang_equal,
+    less_than,
+    less_equal,
+    greater_than,
+    greater_equal,
+    lparen,
+    rparen,
+    lbrace,
+    rbrace,
+    lbracket,
+    rbracket,
+    comma,
+    semicolon,
+    colon,
     eof,
     invalid,
 };
@@ -44,6 +68,17 @@ pub const Lexer = struct {
         return c >= '0' and c <= '9';
     }
 
+    fn matchKeyword(lex: []const u8) TokenType {
+        if (std.mem.eql(u8, lex, "fn")) return .kw_fn;
+        if (std.mem.eql(u8, lex, "return")) return .kw_return;
+        if (std.mem.eql(u8, lex, "if")) return .kw_if;
+        if (std.mem.eql(u8, lex, "else")) return .kw_else;
+        if (std.mem.eql(u8, lex, "while")) return .kw_while;
+        if (std.mem.eql(u8, lex, "true")) return .kw_true;
+        if (std.mem.eql(u8, lex, "false")) return .kw_false;
+        return .identifier;
+    }
+
     fn parseIdentifier(self: *Lexer) Token {
         const start = self.position;
         while (self.position < self.source.len) {
@@ -54,7 +89,8 @@ pub const Lexer = struct {
                 break;
             }
         }
-        return Token{ .token_type = .identifier, .lexeme = self.source[start..self.position] };
+        const lex = self.source[start..self.position];
+        return Token{ .token_type = matchKeyword(lex), .lexeme = lex };
     }
 
     fn parseNumber(self: *Lexer) Token {
@@ -69,41 +105,91 @@ pub const Lexer = struct {
         return Token{ .token_type = .number, .lexeme = self.source[start..self.position] };
     }
 
+    fn parseString(self: *Lexer) Token {
+        self.advance(); // Skip opening quote
+        const start = self.position;
+        while (self.position < self.source.len and self.peek() != '"') {
+            self.advance();
+        }
+        const str = self.source[start..self.position];
+        if (self.position < self.source.len) {
+            self.advance(); // Skip closing quote
+        }
+        return Token{ .token_type = .string, .lexeme = str };
+    }
+
     fn advanceAndReturn(self: *Lexer, t: TokenType, lex: []const u8) Token {
         self.advance();
         return Token{ .token_type = t, .lexeme = lex };
     }
 
-    fn processEqual(self: *Lexer) Token {
+    fn processSlash(self: *Lexer) ?Token {
         self.advance();
-        if (self.peek() == '=') {
-            return self.advanceAndReturn(.equal_equal, "==");
+        if (self.peek() == '/') {
+            while (self.position < self.source.len and self.peek() != '\n') {
+                self.advance();
+            }
+            return null;
         }
-        return Token{ .token_type = .equal, .lexeme = "=" };
+        return Token{ .token_type = .slash, .lexeme = "/" };
     }
 
-    fn processOther(self: *Lexer, c: u8) Token {
-        if (isAlpha(c)) {
-            return self.parseIdentifier();
-        } else if (isDigit(c)) {
-            return self.parseNumber();
-        } else {
-            const invalid_lexeme = self.source[self.position .. self.position + 1];
-            return self.advanceAndReturn(.invalid, invalid_lexeme);
+    fn processPunctuation(self: *Lexer, c: u8) ?Token {
+        return switch (c) {
+            '(' => self.advanceAndReturn(.lparen, "("),
+            ')' => self.advanceAndReturn(.rparen, ")"),
+            '{' => self.advanceAndReturn(.lbrace, "{"),
+            '}' => self.advanceAndReturn(.rbrace, "}"),
+            '[' => self.advanceAndReturn(.lbracket, "["),
+            ']' => self.advanceAndReturn(.rbracket, "]"),
+            ',' => self.advanceAndReturn(.comma, ","),
+            ';' => self.advanceAndReturn(.semicolon, ";"),
+            ':' => self.advanceAndReturn(.colon, ":"),
+            '+' => self.advanceAndReturn(.plus, "+"),
+            '-' => self.advanceAndReturn(.minus, "-"),
+            '*' => self.advanceAndReturn(.star, "*"),
+            else => null,
+        };
+    }
+
+    fn processComparison(self: *Lexer, c: u8) ?Token {
+        if (c == '=') {
+            self.advance();
+            if (self.peek() == '=') return self.advanceAndReturn(.equal_equal, "==");
+            return Token{ .token_type = .equal, .lexeme = "=" };
         }
+        if (c == '!') {
+            self.advance();
+            if (self.peek() == '=') return self.advanceAndReturn(.bang_equal, "!=");
+            return Token{ .token_type = .invalid, .lexeme = "!" };
+        }
+        if (c == '<') {
+            self.advance();
+            if (self.peek() == '=') return self.advanceAndReturn(.less_equal, "<=");
+            return Token{ .token_type = .less_than, .lexeme = "<" };
+        }
+        if (c == '>') {
+            self.advance();
+            if (self.peek() == '=') return self.advanceAndReturn(.greater_equal, ">=");
+            return Token{ .token_type = .greater_than, .lexeme = ">" };
+        }
+        return null;
     }
 
     fn processChar(self: *Lexer, c: u8) ?Token {
-        switch (c) {
-            ' ', '\t', '\r', '\n' => {
-                self.advance();
-                return null;
-            },
-            '+' => return self.advanceAndReturn(.plus, "+"),
-            '-' => return self.advanceAndReturn(.minus, "-"),
-            '=' => return self.processEqual(),
-            else => return self.processOther(c),
+        if (c == ' ' or c == '\t' or c == '\r' or c == '\n') {
+            self.advance();
+            return null;
         }
+        if (c == '/') return self.processSlash();
+        if (c == '"') return self.parseString();
+        if (self.processPunctuation(c)) |tok| return tok;
+        if (self.processComparison(c)) |tok| return tok;
+        if (isAlpha(c)) return self.parseIdentifier();
+        if (isDigit(c)) return self.parseNumber();
+
+        const invalid_lex = self.source[self.position .. self.position + 1];
+        return self.advanceAndReturn(.invalid, invalid_lex);
     }
 
     pub fn nextToken(self: *Lexer) Token {
@@ -119,46 +205,18 @@ pub const Lexer = struct {
 
 const testing = std.testing;
 
-test "Lexer basic operators" {
-    var lexer = Lexer.init("+-= ==");
+test "Lexer keywords and blocks" {
+    var lexer = Lexer.init("// A comment\nfn main() { if (x == 42) return \"done\"; }");
 
-    const t1 = lexer.nextToken();
-    try testing.expectEqual(TokenType.plus, t1.token_type);
+    const expected = [_]TokenType{
+        .kw_fn,  .identifier, .lparen,     .rparen,      .lbrace,
+        .kw_if,  .lparen,     .identifier, .equal_equal, .number,
+        .rparen, .kw_return,  .string,     .semicolon,   .rbrace,
+        .eof,
+    };
 
-    const t2 = lexer.nextToken();
-    try testing.expectEqual(TokenType.minus, t2.token_type);
-
-    const t3 = lexer.nextToken();
-    try testing.expectEqual(TokenType.equal, t3.token_type);
-
-    const t4 = lexer.nextToken();
-    try testing.expectEqual(TokenType.equal_equal, t4.token_type);
-
-    const t5 = lexer.nextToken();
-    try testing.expectEqual(TokenType.eof, t5.token_type);
-}
-
-test "Lexer identifiers and numbers" {
-    var lexer = Lexer.init("var12 123 foo");
-
-    const t1 = lexer.nextToken();
-    try testing.expectEqual(TokenType.identifier, t1.token_type);
-    try testing.expectEqualStrings("var12", t1.lexeme);
-
-    const t2 = lexer.nextToken();
-    try testing.expectEqual(TokenType.number, t2.token_type);
-    try testing.expectEqualStrings("123", t2.lexeme);
-
-    const t3 = lexer.nextToken();
-    try testing.expectEqual(TokenType.identifier, t3.token_type);
-    try testing.expectEqualStrings("foo", t3.lexeme);
-
-    const t4 = lexer.nextToken();
-    try testing.expectEqual(TokenType.eof, t4.token_type);
-}
-
-test "Lexer invalid character" {
-    var lexer = Lexer.init("!");
-    const t1 = lexer.nextToken();
-    try testing.expectEqual(TokenType.invalid, t1.token_type);
+    for (expected) |exp| {
+        const tok = lexer.nextToken();
+        try testing.expectEqual(exp, tok.token_type);
+    }
 }

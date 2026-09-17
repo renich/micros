@@ -1,9 +1,9 @@
-// The Shell Eval Shim
-// Called natively from msh to execute a user script through the Stage 1 compiler
-
 fn shell_eval(code) {
+        
     tokens = lex(code);
+        
     ast = parse(tokens);
+        
     bytecode_state = compile_program(ast);
-    exec_chunk(bytecode_state[0], bytecode_state[1]);
+        exec_chunk(bytecode_state[0], bytecode_state[1]);
 }

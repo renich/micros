@@ -121,7 +121,147 @@ if [[ "$MODE" == "sandbox" ]]; then
 
     echo "[micros-runner] FAILED: Sentinel '$EXPECT' not found in serial log."
     exit 1
-fi
+elif [[ "$MODE" == "uefi" ]]; then
+    OVMF_IMAGE=""
+    for candidate in \
+        "/usr/share/edk2/ovmf/OVMF_CODE.fd" \
+        "/usr/share/OVMF/OVMF_CODE.fd" \
+        "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd" \
+        "/usr/share/ovmf/OVMF.fd"; do
+        if [[ -f "$candidate" ]]; then
+            OVMF_IMAGE="$candidate"
+            break
+        fi
+    done
 
-echo "[micros-runner] Mode '$MODE' not yet implemented in Phase 0."
-exit 1
+    if [[ -z "$OVMF_IMAGE" ]]; then
+        echo "ERROR: OVMF UEFI firmware image not found on host."
+        exit 1
+    fi
+
+    if [[ "$EXPECT" == "Substrate self-test verified (Macros 20+22=42)" ]]; then
+        EXPECT="MicrOS (uOS) Sovereign Genesis Actor Online"
+    fi
+
+    ESP_DIR="$BUILD_DIR/esp"
+    mkdir -p "$ESP_DIR/EFI/BOOT"
+    cp "$ROOT_DIR/zig-out/bin/boot.efi" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
+
+    QEMU_ARGS=(
+        -m 512M
+        -drive "if=pflash,format=raw,readonly=on,file=$OVMF_IMAGE"
+        -drive "format=raw,file=fat:rw:$ESP_DIR"
+        -netdev user,id=net0
+        -device virtio-net-pci,netdev=net0
+        -serial "file:$TMP_SERIAL"
+        -display none
+        -no-reboot
+    )
+
+    if [[ "$NO_KVM" -eq 0 && -w /dev/kvm ]]; then
+        QEMU_ARGS+=(-enable-kvm)
+    else
+        QEMU_ARGS+=(-cpu max)
+    fi
+
+    if [[ -n "$SCREENDUMP" || -n "$SCREENSHOT" ]]; then
+        rm -f "$MON_SOCK"
+        QEMU_ARGS+=(-monitor "unix:$MON_SOCK,server,nowait")
+    fi
+
+    echo "[micros-runner] Launching QEMU UEFI harness (timeout: ${TIMEOUT_SEC}s)..."
+    qemu-system-x86_64 "${QEMU_ARGS[@]}" &
+    QEMU_PID=$!
+
+    START_TIME=$(date +%s)
+    DUMP_CAPTURED=0
+    while kill -0 "$QEMU_PID" 2>/dev/null; do
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - START_TIME))
+
+        if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 && -S "$MON_SOCK" ]]; then
+            if grep -F "Visual canvas and vector status rendered successfully" "$TMP_SERIAL" >/dev/null 2>&1 || grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
+                python3 -c "
+import socket, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect('$MON_SOCK')
+    time.sleep(0.1)
+    s.sendall(b'screendump $SCREENDUMP\n')
+    time.sleep(0.3)
+    s.close()
+except Exception:
+    pass
+" || true
+                if [[ -f "$SCREENDUMP" && -s "$SCREENDUMP" ]]; then
+                    DUMP_CAPTURED=1
+                    echo "[micros-runner] Captured framebuffer screendump: $SCREENDUMP"
+                fi
+            fi
+        fi
+
+        if grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
+            if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 && -S "$MON_SOCK" ]]; then
+                python3 -c "
+import socket, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect('$MON_SOCK')
+    time.sleep(0.1)
+    s.sendall(b'screendump $SCREENDUMP\n')
+    time.sleep(0.3)
+    s.close()
+except Exception:
+    pass
+" || true
+                if [[ -f "$SCREENDUMP" && -s "$SCREENDUMP" ]]; then
+                    DUMP_CAPTURED=1
+                    echo "[micros-runner] Captured framebuffer screendump: $SCREENDUMP"
+                fi
+            fi
+            break
+        fi
+
+        if [[ "$ELAPSED" -ge "$TIMEOUT_SEC" ]]; then
+            echo "[micros-runner] Timeout reached (${TIMEOUT_SEC}s)."
+            break
+        fi
+        sleep 0.2
+    done
+
+    if kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+
+    if [[ -n "$SCREENSHOT" && -n "$SCREENDUMP" && -f "$SCREENDUMP" ]]; then
+        if command -v magick >/dev/null 2>&1; then
+            magick "$SCREENDUMP" "$SCREENSHOT"
+        elif command -v convert >/dev/null 2>&1; then
+            convert "$SCREENDUMP" "$SCREENSHOT"
+        elif command -v pnmtopng >/dev/null 2>&1; then
+            pnmtopng "$SCREENDUMP" > "$SCREENSHOT"
+        fi
+        echo "[micros-runner] Framebuffer screenshot saved: $SCREENSHOT"
+    fi
+
+    echo "--- QEMU UEFI Serial Console Output ---"
+    cat "$TMP_SERIAL"
+    echo "---------------------------------------"
+
+    if grep -E "$FAIL_PATTERN" "$TMP_SERIAL" >/dev/null 2>&1; then
+        echo "[micros-runner] FAILED: Matched fatal panic pattern."
+        exit 1
+    fi
+
+    if grep -F "$EXPECT" "$TMP_SERIAL" >/dev/null 2>&1; then
+        echo "[micros-runner] SUCCESS: Milestone sentinel '$EXPECT' verified."
+        exit 0
+    fi
+
+    echo "[micros-runner] FAILED: Sentinel '$EXPECT' not found in serial log."
+    exit 1
+else
+    echo "[micros-runner] Mode '$MODE' not supported."
+    exit 1
+fi

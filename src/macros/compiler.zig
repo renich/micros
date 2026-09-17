@@ -52,7 +52,7 @@ pub const Compiler = struct {
         try self.chunk.writeChunk(self.allocator, @intCast(offset & 0xff));
     }
 
-        pub fn compile(self: *Compiler, node: *const ast.Node) anyerror!void {
+    pub fn compile(self: *Compiler, node: *const ast.Node) anyerror!void {
         switch (node.*) {
             .number_literal => |num| try self.compileNumberLiteral(num),
             .string_literal => |str| try self.compileStringLiteral(str),
@@ -71,7 +71,7 @@ pub const Compiler = struct {
             .index_assignment => |ia| try self.compileIndexAssignment(ia),
         }
     }
-        fn compileBooleanLiteral(self: *Compiler, lit: ast.BooleanLiteral) anyerror!void {
+    fn compileBooleanLiteral(self: *Compiler, lit: ast.BooleanLiteral) anyerror!void {
         const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .boolean = lit.value });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
         try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
@@ -171,6 +171,11 @@ pub const Compiler = struct {
         if ((std.mem.eql(u8, call.callee, "print") or std.mem.eql(u8, call.callee, "println")) and call.args.len == 1) {
             try self.compile(call.args[0]);
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.print));
+            // Push nil so expr_statement's pop doesn't underflow!
+            try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
+            const nil_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .nil = {} });
+            try self.chunk.writeChunk(self.allocator, @intCast((nil_idx >> 8) & 0xFF));
+            try self.chunk.writeChunk(self.allocator, @intCast(nil_idx & 0xFF));
         } else {
             if (self.resolveLocal(call.callee)) |slot| {
                 try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.get_local));
@@ -268,7 +273,7 @@ pub const Compiler = struct {
 
         try self.patchJump(jump_over);
 
-        const vm_func = eval.Function{ .name = func.name, .arity = func.params.len, .local_count = fn_local_count, .ip_start = fn_start };
+        const vm_func = eval.Function{ .name = func.name, .arity = func.params.len, .local_count = fn_local_count, .upvalue_count = 0, .ip_start = fn_start };
         const fn_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .function = vm_func });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
         try self.chunk.writeChunk(self.allocator, @intCast((fn_idx >> 8) & 0xFF));
@@ -305,8 +310,6 @@ pub const Compiler = struct {
         try self.compile(ia.index);
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.index_set));
     }
-
-
 };
 
 test "compiler basic" {

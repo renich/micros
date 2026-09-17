@@ -5,15 +5,18 @@ const macros = @import("../macros.zig");
 pub const Shell = struct {
     allocator: std.mem.Allocator,
     vm: macros.vm.VM,
+    stage0_chunk: *macros.chunk.Chunk,
     in_fd: i32,
     out_fd: i32,
     running: bool,
 
     pub fn init(allocator: std.mem.Allocator, in_fd: i32, out_fd: i32) !Shell {
-        const dummy_chunk: *macros.chunk.Chunk = undefined;
+        const chunk_ptr = try allocator.create(macros.chunk.Chunk);
+        chunk_ptr.* = macros.chunk.Chunk.init();
         return Shell{
             .allocator = allocator,
-            .vm = try macros.vm.VM.init(allocator, dummy_chunk),
+            .stage0_chunk = chunk_ptr,
+            .vm = try macros.vm.VM.init(allocator, chunk_ptr),
             .in_fd = in_fd,
             .out_fd = out_fd,
             .running = true,
@@ -21,6 +24,8 @@ pub const Shell = struct {
     }
 
     pub fn deinit(self: *Shell) void {
+        self.stage0_chunk.deinit(self.allocator);
+        self.allocator.destroy(self.stage0_chunk);
         self.vm.deinit();
     }
 
@@ -135,7 +140,7 @@ pub const Shell = struct {
             self.writeOut("\x1b[90m=> nil\x1b[0m\n");
             return;
         }
-        
+
         var color_prefix: []const u8 = "\x1b[37m=> ";
         switch (val) {
             .integer => color_prefix = "\x1b[36m=> ",
@@ -146,19 +151,16 @@ pub const Shell = struct {
             .array => color_prefix = "\x1b[34m=> ",
             else => {},
         }
-        
+
         self.writeOut(color_prefix);
         val.printToFd(self.out_fd);
         self.writeOut("\x1b[0m\n");
     }
 
-
     fn evalStage0(self: *Shell, code: []const u8) void {
         var parser = macros.parser.Parser.init(self.allocator, code);
-        
-        var chunk = macros.chunk.Chunk.init();
-        defer chunk.deinit(self.allocator);
-        var compiler = macros.compiler.Compiler.init(self.allocator, &chunk);
+        const start_ip = self.stage0_chunk.code.items.len;
+        var compiler = macros.compiler.Compiler.init(self.allocator, self.stage0_chunk);
 
         while (parser.current_token.token_type != .eof) {
             const stmt = parser.parseStatement() catch {
@@ -170,21 +172,32 @@ pub const Shell = struct {
                 self.writeOut("msh: stage0 compile error\n");
                 return;
             };
+            stmt.deinit(self.allocator);
         }
 
-        self.vm.chunk = &chunk;
-        self.vm.ip = 0;
+        self.vm.chunk = self.stage0_chunk;
+        self.vm.ip = start_ip;
         self.vm.sp = 0;
-        self.vm.run() catch |err| {
+        self.vm.run(self.vm.frame_count) catch |err| {
             self.writeEvalError(err);
         };
-        
+
         if (self.vm.sp > 0) {
             const val = self.vm.pop() catch return;
-            if (val != .nil) {
-                self.writeEvalResult(val);
-            }
+            self.registerTopValue(val);
         }
+    }
+
+    fn registerTopValue(self: *Shell, val: macros.eval.Value) void {
+        if (val == .nil) return;
+        if (val == .function) {
+            const name_dupe = self.allocator.dupe(u8, val.function.name) catch return;
+            self.vm.globals.put(name_dupe, val) catch return;
+        } else if (val == .closure) {
+            const name_dupe = self.allocator.dupe(u8, val.closure.function.name) catch return;
+            self.vm.globals.put(name_dupe, val) catch return;
+        }
+        self.writeEvalResult(val);
     }
 
     pub fn loadStage1(self: *Shell) void {
@@ -194,6 +207,7 @@ pub const Shell = struct {
             "lib/macros/parser.mx",
             "lib/macros/compiler.mx",
             "lib/macros/eval_shim.mx",
+            "lib/macros/compiler_main.mx",
         };
         for (files) |path| {
             const fd = sys.io.open(path, sys.io.OpenFlags.rdonly, 0) catch {
@@ -202,8 +216,9 @@ pub const Shell = struct {
             };
             defer sys.io.close(fd) catch {};
 
-            var buf: [64 * 1024]u8 = undefined;
-            const bytes = sys.io.read(fd, &buf) catch {
+            const buf = self.allocator.alloc(u8, 64 * 1024) catch return;
+            defer self.allocator.free(buf);
+            const bytes = sys.io.read(fd, buf) catch {
                 self.writeOut("msh: unable to read bootstrap file\n");
                 return;
             };
@@ -215,37 +230,36 @@ pub const Shell = struct {
 
     fn evalMacrosStream(self: *Shell, code: []const u8) void {
         const eval_val = self.vm.globals.get("shell_eval");
-        if (eval_val == null or eval_val.? != .function) {
+        if (eval_val == null) {
             self.writeOut("msh: Stage 1 compiler not loaded. Run 'bootstrap' first.\n");
             return;
         }
-        
+
         const func = eval_val.?.function;
         self.vm.push(eval_val.?) catch return;
-        
+
         // Push the code string. We need to allocate a duplicate in the arena or GC heap.
         // For simplicity in shell, we can just point to it.
         const code_dupe = self.allocator.dupe(u8, code) catch return;
         self.vm.push(.{ .string = code_dupe }) catch return;
-        
-        
+
         // Create an empty top-level closure wrapper for eval so pushFrame works
         var wrapper = self.allocator.create(macros.eval.Closure) catch return;
         const wrapper_func = self.allocator.create(macros.eval.Function) catch return;
         wrapper_func.* = func;
         wrapper.function = wrapper_func;
         wrapper.upvalues = &[_]*macros.eval.Upvalue{};
-        self.vm.pushFrame(wrapper, 2) catch return;
+        self.vm.pushFrame(.{ .closure = wrapper }, 2) catch return;
 
         const old_ip = self.vm.ip;
         self.vm.ip = func.ip_start;
-        
-        self.vm.run() catch |err| {
+
+        self.vm.run(self.vm.frame_count) catch |err| {
             self.writeEvalError(err);
         };
-        
+
         self.vm.ip = old_ip;
-        
+
         if (self.vm.sp > 0) {
             const val = self.vm.pop() catch return;
             if (val != .nil) {
@@ -279,20 +293,9 @@ pub const Shell = struct {
     }
 
     pub fn executeFile(self: *Shell, path: [:0]const u8) void {
-        const fd = sys.io.open(path, sys.io.OpenFlags.rdonly, 0) catch {
-            self.writeOut("msh: unable to open source file\n");
-            return;
-        };
-        defer sys.io.close(fd) catch {};
-
-        var buf: [64 * 1024]u8 = undefined;
-        const bytes = sys.io.read(fd, &buf) catch {
-            self.writeOut("msh: unable to read source file\n");
-            return;
-        };
-        if (bytes == 0) return;
-
-        self.evalMacrosStream(buf[0..bytes]);
+        var buf: [256]u8 = undefined;
+        const call = std.fmt.bufPrint(&buf, "compiler_main(\"{s}\");", .{path}) catch return;
+        self.evalStage0(call);
     }
 
     pub fn run(self: *Shell) void {
@@ -309,7 +312,7 @@ pub const Shell = struct {
 const testing = std.testing;
 
 test "MicroShell builtin execution" {
-        const fds = try sys.io.pipe();
+    const fds = try sys.io.pipe();
     const read_fd = fds[0];
     const write_fd = fds[1];
     defer {
@@ -323,17 +326,17 @@ test "MicroShell builtin execution" {
     var sh = try Shell.init(arena.allocator(), read_fd, write_fd);
     defer sh.deinit();
 
-        sh.executeLine("echo MicroShell Test");
+    sh.executeLine("echo MicroShell Test");
     try testing.expect(sh.running);
 
-        sh.evalStage0("val = 10 + 32");
+    sh.evalStage0("val = 10 + 32");
     const val = sh.vm.globals.get("val");
     try testing.expect(val != null);
     try testing.expectEqual(@as(i64, 42), val.?.integer);
 
-        sh.executeLine("exit");
+    sh.executeLine("exit");
     try testing.expect(!sh.running);
-    }
+}
 
 test "MicroShell version and clear builtins" {
     const fds = try sys.io.pipe();

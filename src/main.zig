@@ -29,7 +29,7 @@ fn runSelfTest(allocator: std.mem.Allocator) !bool {
     var vm = try macros.vm.VM.init(allocator, &chunk);
     defer vm.deinit();
 
-    vm.run() catch return false;
+    vm.run(vm.frame_count) catch return false;
 
     const val = vm.globals.get("boot_check") orelse return false;
     if (val != .integer or val.integer != 42) return false;

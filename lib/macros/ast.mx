@@ -1,0 +1,18 @@
+// Macros Stage 1 Self-Hosting AST Nodes (ast.mx)
+
+fn node_number(val) {
+    return val;
+}
+
+fn node_binary(op, left, right) {
+    if (op == 1) {
+        return left + right;
+    }
+    if (op == 2) {
+        return left - right;
+    }
+    if (op == 3) {
+        return left == right;
+    }
+    return 0;
+}

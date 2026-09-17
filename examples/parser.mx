@@ -1,0 +1,9 @@
+import("lib/macros/lexer.mx");
+import("lib/macros/parser.mx");
+
+source = "fn main(a, b) { c = a + b - 10; return c; }";
+tokens = lex(source);
+ast = parse(tokens);
+
+println("Successfully parsed AST.");
+println("AST: ", ast);

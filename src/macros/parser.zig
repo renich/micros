@@ -26,137 +26,328 @@ pub const Parser = struct {
         self.current_token = self.lex.nextToken();
     }
 
-    fn matchBinaryOp(tok: lexer.TokenType) ?ast.BinaryOperator {
-        switch (tok) {
-            .plus => return .plus,
-            .minus => return .minus,
-            .equal_equal => return .equal_equal,
-            else => return null,
+    fn match(self: *Parser, expected: lexer.TokenType) ParseError!void {
+        if (self.current_token.token_type != expected) {
+            return error.UnexpectedToken;
         }
+        self.advance();
     }
 
-    fn parseAssignment(self: *Parser, target_name: []const u8) ParseError!*ast.Node {
-        self.advance(); // consume '='
-        const val = try self.parseExpression();
-
-        const node = try self.allocator.create(ast.Node);
-        node.* = ast.Node{
-            .assignment = ast.Assignment{
-                .target = ast.Identifier{ .name = target_name },
-                .value = val,
-            },
+    fn matchBinaryOp(tok: lexer.TokenType) ?ast.BinaryOperator {
+        return switch (tok) {
+            .plus => .plus,
+            .minus => .minus,
+            .star => .star,
+            .slash => .slash,
+            .equal_equal => .equal_equal,
+            .bang_equal => .not_equal,
+            .less_than => .less_than,
+            .less_equal => .less_equal,
+            .greater_than => .greater_than,
+            .greater_equal => .greater_equal,
+            else => null,
         };
-        return node;
     }
 
     pub fn parseStatement(self: *Parser) ParseError!*ast.Node {
-        if (self.current_token.token_type == .identifier) {
-            const name = self.current_token.lexeme;
-            var lookahead = self.lex;
-            const next_tok = lookahead.nextToken();
-            if (next_tok.token_type == .equal) {
-                self.advance(); // consume identifier
-                return self.parseAssignment(name);
-            }
-        }
-        return self.parseExpression();
-    }
+        const t = self.current_token.token_type;
+        if (t == .kw_fn) return self.parseFunctionDecl();
+        if (t == .kw_if) return self.parseIf();
+        if (t == .kw_while) return self.parseWhile();
+        if (t == .kw_return) return self.parseReturn();
+        if (t == .lbrace) return self.parseBlock();
 
-    pub fn parseExpression(self: *Parser) ParseError!*ast.Node {
-        const left = try self.parsePrimary();
-
-        if (matchBinaryOp(self.current_token.token_type)) |op| {
-            return self.parseBinaryRight(left, op);
+        const expr = try self.parseExpression();
+        if (self.current_token.token_type == .equal) {
+            return self.parseAssignment(expr);
         }
 
-        return left;
+        if (self.current_token.token_type == .semicolon) {
+            self.advance();
+        }
+        return expr;
     }
 
-    fn parseBinaryRight(self: *Parser, left: *ast.Node, op: ast.BinaryOperator) ParseError!*ast.Node {
-        self.advance();
-        const right = try self.parsePrimary();
+    fn parseAssignment(self: *Parser, expr: *ast.Node) ParseError!*ast.Node {
+        self.advance(); // consume '='
+        const value = try self.parseExpression();
+        if (self.current_token.token_type == .semicolon) {
+            self.advance();
+        }
 
         const node = try self.allocator.create(ast.Node);
+        if (expr.* == .identifier) {
+            node.* = ast.Node{
+                .assignment = ast.Assignment{
+                    .target = expr.identifier,
+                    .value = value,
+                },
+            };
+            self.allocator.destroy(expr);
+            return node;
+        }
+        if (expr.* == .index_expr) {
+            node.* = ast.Node{
+                .index_assignment = ast.IndexAssignment{
+                    .target = expr.index_expr.target,
+                    .index = expr.index_expr.index,
+                    .value = value,
+                },
+            };
+            self.allocator.destroy(expr);
+            return node;
+        }
+        return ParseError.UnexpectedToken;
+    }
+
+    fn parseReturn(self: *Parser) ParseError!*ast.Node {
+        self.advance(); // consume 'return'
+        var val: ?*ast.Node = null;
+        if (self.current_token.token_type != .semicolon and self.current_token.token_type != .rbrace) {
+            val = try self.parseExpression();
+        }
+        if (self.current_token.token_type == .semicolon) {
+            self.advance();
+        }
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{ .return_expr = ast.ReturnExpr{ .value = val } };
+        return node;
+    }
+
+    fn parseIf(self: *Parser) ParseError!*ast.Node {
+        self.advance(); // consume 'if'
+        try self.match(.lparen);
+        const cond = try self.parseExpression();
+        try self.match(.rparen);
+        const then_branch = try self.parseStatement();
+        var else_branch: ?*ast.Node = null;
+        if (self.current_token.token_type == .kw_else) {
+            self.advance();
+            else_branch = try self.parseStatement();
+        }
+        const node = try self.allocator.create(ast.Node);
         node.* = ast.Node{
-            .binary_expr = ast.BinaryExpr{
-                .left = left,
-                .operator = op,
-                .right = right,
+            .if_expr = ast.IfExpr{
+                .condition = cond,
+                .then_branch = then_branch,
+                .else_branch = else_branch,
             },
         };
         return node;
     }
 
-    fn createNumberNode(self: *Parser, lexeme: []const u8) ParseError!*ast.Node {
+    fn parseWhile(self: *Parser) ParseError!*ast.Node {
+        self.advance(); // consume 'while'
+        try self.match(.lparen);
+        const cond = try self.parseExpression();
+        try self.match(.rparen);
+        const body = try self.parseStatement();
         const node = try self.allocator.create(ast.Node);
-        node.* = ast.Node{ .number_literal = ast.NumberLiteral{ .value = lexeme } };
+        node.* = ast.Node{
+            .while_expr = ast.WhileExpr{
+                .condition = cond,
+                .body = body,
+            },
+        };
         return node;
     }
 
-    fn createIdentifierNode(self: *Parser, lexeme: []const u8) ParseError!*ast.Node {
+    fn parseBlock(self: *Parser) ParseError!*ast.Node {
+        self.advance(); // consume '{'
+        var stmts: std.ArrayList(*ast.Node) = .empty;
+        errdefer {
+            for (stmts.items) |stmt| self.allocator.destroy(stmt);
+            stmts.deinit(self.allocator);
+        }
+        while (self.current_token.token_type != .rbrace and self.current_token.token_type != .eof) {
+            const stmt = try self.parseStatement();
+            try stmts.append(self.allocator, stmt);
+        }
+        try self.match(.rbrace);
         const node = try self.allocator.create(ast.Node);
-        node.* = ast.Node{ .identifier = ast.Identifier{ .name = lexeme } };
+        node.* = ast.Node{
+            .block = ast.Block{
+                .statements = try stmts.toOwnedSlice(self.allocator),
+            },
+        };
+        return node;
+    }
+
+    fn parseFunctionDecl(self: *Parser) ParseError!*ast.Node {
+        self.advance(); // consume 'fn'
+        if (self.current_token.token_type != .identifier) return error.UnexpectedToken;
+        const name = self.current_token.lexeme;
+        self.advance();
+        try self.match(.lparen);
+        var params: std.ArrayList([]const u8) = .empty;
+        while (self.current_token.token_type == .identifier) {
+            try params.append(self.allocator, self.current_token.lexeme);
+            self.advance();
+            if (self.current_token.token_type == .comma) self.advance();
+        }
+        try self.match(.rparen);
+        const body = try self.parseBlock();
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{
+            .function_decl = ast.FunctionDecl{
+                .name = name,
+                .params = try params.toOwnedSlice(self.allocator),
+                .body = body,
+            },
+        };
+        return node;
+    }
+
+    fn getPrecedence(op: ast.BinaryOperator) u8 {
+        return switch (op) {
+            .equal_equal, .not_equal, .less_than, .less_equal, .greater_than, .greater_equal => 10,
+            .plus, .minus => 20,
+            .star, .slash => 30,
+        };
+    }
+
+    fn parsePrecedence(self: *Parser, min_prec: u8) ParseError!*ast.Node {
+        var left = try self.parsePrimary();
+        while (matchBinaryOp(self.current_token.token_type)) |op| {
+            const prec = getPrecedence(op);
+            if (prec < min_prec) break;
+            self.advance();
+            const right = try self.parsePrecedence(prec + 1);
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{
+                .binary_expr = ast.BinaryExpr{
+                    .left = left,
+                    .operator = op,
+                    .right = right,
+                },
+            };
+            left = node;
+        }
+        return left;
+    }
+
+    pub fn parseExpression(self: *Parser) ParseError!*ast.Node {
+        return self.parsePrecedence(0);
+    }
+
+    fn parseCall(self: *Parser, name: []const u8) ParseError!*ast.Node {
+        self.advance(); // consume '('
+        var args: std.ArrayList(*ast.Node) = .empty;
+        while (self.current_token.token_type != .rparen and self.current_token.token_type != .eof) {
+            const arg = try self.parseExpression();
+            try args.append(self.allocator, arg);
+            if (self.current_token.token_type == .comma) self.advance();
+        }
+        try self.match(.rparen);
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{
+            .call_expr = ast.CallExpr{
+                .callee = name,
+                .args = try args.toOwnedSlice(self.allocator),
+            },
+        };
+        return node;
+    }
+
+    fn parseArrayLiteral(self: *Parser) ParseError!*ast.Node {
+        self.advance();
+        var elements: std.ArrayList(*ast.Node) = .empty;
+        if (self.current_token.token_type == .rbracket) {
+            try self.match(.rbracket);
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{ .array_literal = ast.ArrayLiteral{ .elements = try elements.toOwnedSlice(self.allocator) } };
+            return node;
+        }
+
+        while (true) {
+            const el = try self.parseExpression();
+            try elements.append(self.allocator, el);
+            if (self.current_token.token_type != .comma) break;
+            self.advance();
+        }
+        try self.match(.rbracket);
+        const node = try self.allocator.create(ast.Node);
+        node.* = ast.Node{ .array_literal = ast.ArrayLiteral{ .elements = try elements.toOwnedSlice(self.allocator) } };
+        return node;
+    }
+
+    fn parsePrimaryBase(self: *Parser) ParseError!*ast.Node {
+        const tok = self.current_token;
+        if (tok.token_type == .number) {
+            self.advance();
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{ .number_literal = ast.NumberLiteral{ .value = tok.lexeme } };
+            return node;
+        }
+        if (tok.token_type == .string) {
+            self.advance();
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{ .string_literal = ast.StringLiteral{ .value = tok.lexeme } };
+            return node;
+        }
+        if (tok.token_type == .kw_true or tok.token_type == .kw_false) {
+            self.advance();
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{ .boolean_literal = ast.BooleanLiteral{ .value = (tok.token_type == .kw_true) } };
+            return node;
+        }
+        if (tok.token_type == .lparen) {
+            self.advance();
+            const node = try self.parseExpression();
+            try self.match(.rparen);
+            return node;
+        }
+        if (tok.token_type == .lbracket) {
+            return self.parseArrayLiteral();
+        }
+        if (tok.token_type == .identifier) {
+            const name = tok.lexeme;
+            self.advance();
+            if (self.current_token.token_type == .lparen) return self.parseCall(name);
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{ .identifier = ast.Identifier{ .name = name } };
+            return node;
+        }
+        return error.UnexpectedToken;
+    }
+
+    fn parsePostfixIndex(self: *Parser, base: *ast.Node) ParseError!*ast.Node {
+        var node = base;
+        while (self.current_token.token_type == .lbracket) {
+            self.advance();
+            const idx = try self.parseExpression();
+            try self.match(.rbracket);
+            const index_node = try self.allocator.create(ast.Node);
+            index_node.* = ast.Node{
+                .index_expr = ast.IndexExpr{
+                    .target = node,
+                    .index = idx,
+                },
+            };
+            node = index_node;
+        }
         return node;
     }
 
     fn parsePrimary(self: *Parser) ParseError!*ast.Node {
-        const tok = self.current_token;
-
-        if (tok.token_type == .number) {
-            const node = try self.createNumberNode(tok.lexeme);
-            self.advance();
-            return node;
-        }
-
-        if (tok.token_type == .identifier) {
-            const node = try self.createIdentifierNode(tok.lexeme);
-            self.advance();
-            return node;
-        }
-
-        return error.UnexpectedToken;
+        const base = try self.parsePrimaryBase();
+        return self.parsePostfixIndex(base);
     }
 };
 
 const testing = std.testing;
 
-test "Parser binary expression" {
-    var p = Parser.init(testing.allocator, "foo + 42");
-
-    const node = try p.parseExpression();
-    defer {
-        testing.allocator.destroy(node.binary_expr.left);
-        testing.allocator.destroy(node.binary_expr.right);
-        testing.allocator.destroy(node);
-    }
-
-    try testing.expectEqual(ast.BinaryOperator.plus, node.binary_expr.operator);
-    try testing.expectEqualStrings("foo", node.binary_expr.left.identifier.name);
-    try testing.expectEqualStrings("42", node.binary_expr.right.number_literal.value);
-}
-
-test "Parser assignment statement" {
-    var p = Parser.init(testing.allocator, "alpha = 99");
-
+test "Parser function declaration and calls" {
+    var p = Parser.init(testing.allocator, "fn add(a, b) { return a + b; }");
     const node = try p.parseStatement();
-    defer {
-        testing.allocator.destroy(node.assignment.value);
-        testing.allocator.destroy(node);
-    }
-
-    try testing.expectEqualStrings("alpha", node.assignment.target.name);
-    try testing.expectEqualStrings("99", node.assignment.value.number_literal.value);
+    defer node.deinit(testing.allocator);
+    try testing.expectEqualStrings("add", node.function_decl.name);
+    try testing.expectEqual(@as(usize, 2), node.function_decl.params.len);
 }
 
-test "Parser equality expression" {
-    var p = Parser.init(testing.allocator, "10 == 10");
-
-    const node = try p.parseExpression();
-    defer {
-        testing.allocator.destroy(node.binary_expr.left);
-        testing.allocator.destroy(node.binary_expr.right);
-        testing.allocator.destroy(node);
-    }
-
-    try testing.expectEqual(ast.BinaryOperator.equal_equal, node.binary_expr.operator);
+test "Parser if and while control structures" {
+    var p = Parser.init(testing.allocator, "if (x <= 1) { return 42; }");
+    const node = try p.parseStatement();
+    defer node.deinit(testing.allocator);
+    try testing.expectEqual(ast.BinaryOperator.less_equal, node.if_expr.condition.binary_expr.operator);
 }

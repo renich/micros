@@ -1,0 +1,317 @@
+//Macros Stage 1 Self-Hosting Tokenizer (lexer.mx)
+//Part of the MicrOS computational sovereignty pipeline.
+
+fn is_digit(c) {
+    if (c >= 48) {
+        if (c <= 57) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn is_alpha(c) {
+    if (c >= 65) {
+        if (c <= 90) { return true; }
+    }
+    if (c >= 97) {
+        if (c <= 122) { return true; }
+    }
+    if (c == 95) { return true; }
+    return false;
+}
+
+fn process_whitespace(c) {
+    if (c == 32) { return true; }
+    if (c == 9) { return true; }
+    if (c == 10) { return true; }
+    if (c == 13) { return true; }
+    return false;
+}
+
+fn process_punct(c) {
+    if (c == 40) { return 21; }
+    if (c == 41) { return 22; }
+    if (c == 123) { return 23; }
+    if (c == 125) { return 24; }
+    if (c == 91) { return 25; }
+    if (c == 93) { return 26; }
+    if (c == 44) { return 27; }
+    if (c == 59) { return 28; }
+    if (c == 58) { return 29; }
+    if (c == 43) { return 10; }
+    if (c == 45) { return 11; }
+    if (c == 42) { return 12; }
+    return 99;
+}
+
+fn get_punct_str(c) {
+    if (c == 40) { return "("; }
+    if (c == 41) { return ")"; }
+    if (c == 123) { return "{"; }
+    if (c == 125) { return "}"; }
+    if (c == 91) { return "["; }
+    if (c == 93) { return "]"; }
+    if (c == 44) { return ","; }
+    if (c == 59) { return ";"; }
+    if (c == 58) { return ":"; }
+    if (c == 43) { return "+"; }
+    if (c == 45) { return "-"; }
+    if (c == 42) { return "*"; }
+    return "";
+}
+
+fn match_len_2(lexeme) {
+    if (lexeme[0] == 102) {
+        if (lexeme[1] == 110) { return 3; }
+    }
+    if (lexeme[0] == 105) {
+        if (lexeme[1] == 102) { return 5; }
+    }
+    return 0;
+}
+
+fn match_len_4(lexeme) {
+    if (lexeme[0] == 101) {
+        if (lexeme[1] == 108) {
+            if (lexeme[2] == 115) {
+                if (lexeme[3] == 101) { return 6; }
+            }
+        }
+    }
+    if (lexeme[0] == 116) {
+        if (lexeme[1] == 114) {
+            if (lexeme[2] == 117) {
+                if (lexeme[3] == 101) { return 8; }
+            }
+        }
+    }
+    return 0;
+}
+
+fn match_len_5(lexeme) {
+    if (lexeme[0] == 119) {
+        if (lexeme[1] == 104) {
+            if (lexeme[2] == 105) {
+                if (lexeme[3] == 108) {
+                    if (lexeme[4] == 101) { return 7; }
+                }
+            }
+        }
+    }
+    if (lexeme[0] == 102) {
+        if (lexeme[1] == 97) {
+            if (lexeme[2] == 108) {
+                if (lexeme[3] == 115) {
+                    if (lexeme[4] == 101) { return 9; }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+fn match_len_6(lexeme) {
+    if (lexeme[0] == 114) {
+        if (lexeme[1] == 101) {
+            if (lexeme[2] == 116) {
+                if (lexeme[3] == 117) {
+                    if (lexeme[4] == 114) {
+                        if (lexeme[5] == 110) { return 4; }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+fn match_keyword(lexeme) {
+    len_lex = len(lexeme);
+    if (len_lex == 2) { return match_len_2(lexeme); }
+    if (len_lex == 4) { return match_len_4(lexeme); }
+    if (len_lex == 5) { return match_len_5(lexeme); }
+    if (len_lex == 6) { return match_len_6(lexeme); }
+    return 0;
+}
+
+fn process_slash(source, pos, src_len) {
+    if (pos + 1 < src_len) {
+        if (source[pos + 1] == 47) {
+            cond = true;
+            new_pos = pos + 2;
+            while (cond) {
+                if (new_pos < src_len) {
+                    if (source[new_pos] == 10) {
+                        cond = false;
+                    } else {
+                        new_pos = new_pos + 1;
+                    }
+                } else {
+                    cond = false;
+                }
+            }
+            return [new_pos, [99, ""]];
+        }
+    }
+    return [pos + 1, [13, "/"]];
+}
+
+fn process_eq(source, pos, src_len) {
+    if (pos + 1 < src_len) {
+        if (source[pos + 1] == 61) {
+            return [pos + 2, [15, "=="]];
+        }
+    }
+    return [pos + 1, [14, "="]];
+}
+
+fn process_bang(source, pos, src_len) {
+    if (pos + 1 < src_len) {
+        if (source[pos + 1] == 61) {
+            return [pos + 2, [16, "!="]];
+        }
+    }
+    return [pos + 1, [31, "!"]];
+}
+
+fn process_less(source, pos, src_len) {
+    if (pos + 1 < src_len) {
+        if (source[pos + 1] == 61) {
+            return [pos + 2, [18, "<="]];
+        }
+    }
+    return [pos + 1, [17, "<"]];
+}
+
+fn process_greater(source, pos, src_len) {
+    if (pos + 1 < src_len) {
+        if (source[pos + 1] == 61) {
+            return [pos + 2, [20, ">="]];
+        }
+    }
+    return [pos + 1, [19, ">"]];
+}
+
+fn process_string(source, pos, src_len) {
+    new_pos = pos + 1;
+    cond = true;
+    while (cond) {
+        if (new_pos < src_len) {
+            c2 = source[new_pos];
+            if (c2 != 34) {
+                new_pos = new_pos + 1;
+            } else {
+                cond = false;
+            }
+        } else {
+            cond = false;
+        }
+    }
+    lexeme = substr(source, pos + 1, new_pos);
+    new_pos = new_pos + 1;
+    return [new_pos, [2, lexeme]];
+}
+
+fn process_identifier(source, pos, src_len) {
+    new_pos = pos;
+    cond = true;
+    while (cond) {
+        if (new_pos < src_len) {
+            c2 = source[new_pos];
+            if (is_alpha(c2)) {
+                new_pos = new_pos + 1;
+            } else if (is_digit(c2)) {
+                new_pos = new_pos + 1;
+            } else {
+                cond = false;
+            }
+        } else {
+            cond = false;
+        }
+    }
+    lexeme = substr(source, pos, new_pos);
+    tok_type = match_keyword(lexeme);
+    return [new_pos, [tok_type, lexeme]];
+}
+
+fn process_number(source, pos, src_len) {
+    new_pos = pos;
+    cond = true;
+    while (cond) {
+        if (new_pos < src_len) {
+            c2 = source[new_pos];
+            if (is_digit(c2)) {
+                new_pos = new_pos + 1;
+            } else {
+                cond = false;
+            }
+        } else {
+            cond = false;
+        }
+    }
+    lexeme = substr(source, pos, new_pos);
+    return [new_pos, [1, lexeme]];
+}
+
+fn lex(source) {
+        tokens = [];
+    pos = 0;
+    src_len = len(source);
+
+    while (pos < src_len) {
+        c = source[pos];
+        
+        if (process_whitespace(c)) {
+            pos = pos + 1;
+        } else if (c == 47) {
+            res = process_slash(source, pos, src_len);
+            pos = res[0];
+            if (res[1][0] != 99) {
+                tokens = push(tokens, res[1]);
+            }
+        } else if (c == 61) {
+            res = process_eq(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else if (c == 33) {
+            res = process_bang(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else if (c == 60) {
+            res = process_less(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else if (c == 62) {
+            res = process_greater(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else if (c == 34) {
+            res = process_string(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else if (is_alpha(c)) {
+            res = process_identifier(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else if (is_digit(c)) {
+            res = process_number(source, pos, src_len);
+            pos = res[0];
+            tokens = push(tokens, res[1]);
+        } else {
+            ptype = process_punct(c);
+            if (ptype != 99) {
+                tokens = push(tokens, [ptype, get_punct_str(c)]);
+                pos = pos + 1;
+            } else {
+                invalid_char = [];
+                invalid_char = push(invalid_char, c);
+                tokens = push(tokens, [31, invalid_char]);
+                pos = pos + 1;
+            }
+        }
+    }
+
+    tokens = push(tokens, [30, ""]);
+    return tokens;
+}

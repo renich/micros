@@ -1,3 +1,30 @@
+fn parse_primary_ident(tokens, pos, tokens_len, ident) {
+    if (pos < tokens_len) {
+        if (tokens[pos][0] == 21) {
+            pos = pos + 1;
+            call_args = [];
+            cond_ident = true;
+            while (cond_ident) {
+                if (pos >= tokens_len) { cond_ident = false; }
+                if (cond_ident) {
+                    if (tokens[pos][0] == 22) {
+                        pos = pos + 1;
+                        cond_ident = false;
+                    } else if (tokens[pos][0] == 27) {
+                        pos = pos + 1;
+                    } else {
+                        res = parse_expr(tokens, pos, tokens_len);
+                        pos = res[0];
+                        call_args = push(call_args, res[1]);
+                    }
+                }
+            }
+            return [pos, ["call", ["identifier", ident], call_args]];
+        }
+    }
+    return [pos, ["identifier", ident]];
+}
+
 
 fn parse_function_expr(tokens, pos, tokens_len) {
     pos = pos + 1;
@@ -29,17 +56,19 @@ fn parse_function_expr(tokens, pos, tokens_len) {
 
 fn parse_primary(tokens, pos, tokens_len) {
     if (pos >= tokens_len) { return [pos, []]; }
-    tok = tokens[pos];
-    tok_type = tok[0];
-    tok_lexeme = tok[1];
     
-    if (tok_type == 1) {
-        return [pos + 1, ["number", tok_lexeme]];
+    // We must read directly from tokens to avoid global variable clobbering
+    // since MicrOS currently treats all assigned variables as globals!
+    if (tokens[pos][0] == 1) {
+        return [pos + 1, ["number", tokens[pos][1]]];
     }
-    if (tok_type == 0) {
-        return [pos + 1, ["identifier", tok_lexeme]];
+    if (tokens[pos][0] == 2) {
+        return [pos + 1, ["string", tokens[pos][1]]];
     }
-    if (tok_type == 3) {
+    if (tokens[pos][0] == 0) {
+        return parse_primary_ident(tokens, pos + 1, tokens_len, tokens[pos][1]);
+    }
+    if (tokens[pos][0] == 3) {
         return parse_function_expr(tokens, pos, tokens_len);
     }
     return [pos, []];
@@ -150,14 +179,14 @@ fn parse_block(tokens, pos, tokens_len) {
     pos = pos + 1;
     
     stmts = [];
-    cond = true;
+    block_cond = true;
     closed = false;
-    while (cond) {
+    while (block_cond) {
         if (pos < tokens_len) {
             tok = tokens[pos];
             if (tok[0] == 24) {
                 pos = pos + 1;
-                cond = false;
+                block_cond = false;
                 closed = true;
             } else {
                 res = parse_statement(tokens, pos, tokens_len);
@@ -166,7 +195,7 @@ fn parse_block(tokens, pos, tokens_len) {
                 stmts = push(stmts, stmt);
             }
         } else {
-            cond = false;
+            block_cond = false;
         }
     }
     
@@ -226,22 +255,25 @@ fn parse(tokens) {
     tokens_len = len(tokens);
     decls = [];
     
-    cond = true;
-    while (cond) {
+    parse_loop_cond = true;
+    while (parse_loop_cond) {
         if (pos < tokens_len) {
             tok = tokens[pos];
             if (tok[0] == 30) {
-                cond = false;
+                parse_loop_cond = false;
             } else if (tok[0] == 3) {
                 res = parse_function_decl(tokens, pos, tokens_len);
                 pos = res[0];
                 decl = res[1];
                 decls = push(decls, decl);
             } else {
-                pos = pos + 1;
+                res = parse_statement(tokens, pos, tokens_len);
+                pos = res[0];
+                decl = res[1];
+                decls = push(decls, decl);
             }
         } else {
-            cond = false;
+            parse_loop_cond = false;
         }
     }
     

@@ -11,7 +11,7 @@ pub const Block = struct {
 
     pub fn init(allocator: Allocator) !*Block {
         const b = try allocator.create(Block);
-        b.memory = try allocator.alignedAlloc(u8, 4096, BLOCK_SIZE);
+        b.memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), BLOCK_SIZE);
         @memset(&b.line_marks, 0);
         return b;
     }
@@ -25,7 +25,7 @@ pub const Block = struct {
 pub const Heap = struct {
     base_allocator: Allocator,
     blocks: std.ArrayList(*Block),
-    los: std.ArrayList([]u8),
+    los: std.ArrayList(struct { mem: []u8, marked: bool }),
     active_block: ?*Block,
     cursor: usize,
     limit: usize,
@@ -47,7 +47,7 @@ pub const Heap = struct {
         }
         self.blocks.deinit(self.base_allocator);
         for (self.los.items) |large| {
-            self.base_allocator.free(large);
+            self.base_allocator.free(large.mem);
         }
         self.los.deinit(self.base_allocator);
     }
@@ -73,24 +73,35 @@ pub const Heap = struct {
     }
 
     fn resizeFn(ptr: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-        _ = ptr; _ = buf; _ = buf_align; _ = new_len; _ = ret_addr;
+        _ = ptr;
+        _ = buf;
+        _ = buf_align;
+        _ = new_len;
+        _ = ret_addr;
         return false;
     }
 
     fn remapFn(ptr: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ptr; _ = buf; _ = buf_align; _ = new_len; _ = ret_addr;
+        _ = ptr;
+        _ = buf;
+        _ = buf_align;
+        _ = new_len;
+        _ = ret_addr;
         return null;
     }
 
     fn freeFn(ptr: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
-        _ = ptr; _ = buf; _ = buf_align; _ = ret_addr;
+        _ = ptr;
+        _ = buf;
+        _ = buf_align;
+        _ = ret_addr;
     }
 
     pub fn alloc(self: *Heap, size: usize) ![]u8 {
         const alloc_size = std.mem.alignForward(usize, size, 8);
         if (alloc_size >= BLOCK_SIZE) {
             const ptr = try self.base_allocator.alloc(u8, alloc_size);
-            try self.los.append(self.base_allocator, ptr);
+            try self.los.append(self.base_allocator, .{ .mem = ptr, .marked = false });
             return ptr[0..size];
         }
 
@@ -105,7 +116,6 @@ pub const Heap = struct {
             if (block == self.active_block) continue;
             if (self.findHoleAndAlloc(block, alloc_size)) |ptr| {
                 self.active_block = block;
-                self.cursor = 0; // The hole allocator manages limits
                 return ptr[0..size];
             }
         }
@@ -174,7 +184,7 @@ pub const Heap = struct {
         // avoid subtraction underflow if size is 0
         if (size == 0) return;
         const end_l = (start_addr + size - 1) / LINE_SIZE;
-        
+
         var l = start_l;
         while (l <= end_l) : (l += 1) {
             block.line_marks[l] = 1;
@@ -198,6 +208,14 @@ pub const Heap = struct {
                 return;
             }
         }
+        for (self.los.items) |*lo| {
+            const lo_start = @intFromPtr(lo.mem.ptr);
+            const lo_end = lo_start + lo.mem.len;
+            if (ptr_int >= lo_start and ptr_int < lo_end) {
+                lo.marked = true;
+                return;
+            }
+        }
     }
 
     pub fn sweep(self: *Heap) void {
@@ -208,8 +226,20 @@ pub const Heap = struct {
             }
             i += 1;
         }
+
+        var j: usize = 0;
+        while (j < self.los.items.len) {
+            var lo = &self.los.items[j];
+            if (!lo.marked) {
+                self.base_allocator.free(lo.mem);
+                _ = self.los.orderedRemove(j);
+                continue;
+            }
+            lo.marked = false;
+            j += 1;
+        }
     }
-    
+
     fn sweepBlock(self: *Heap, block: *Block, index: usize) bool {
         for (block.line_marks) |m| {
             if (m != 0) return false;

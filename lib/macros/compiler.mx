@@ -15,6 +15,7 @@ fn op_jump() { return 11; }
 fn op_jump_if_false() { return 12; }
 fn op_loop() { return 13; }
 fn op_build_array() { return 14; }
+fn op_closure() { return 26; }
 
 fn init_compiler() {
     // state: [chunk_code, chunk_constants, locals, scope_depth]
@@ -53,12 +54,74 @@ fn compile_number(state, num_str) {
     return state;
 }
 
+fn resolve_local(state, name) {
+    locals = state[2];
+    idx = len(locals) - 1;
+    while (idx >= 0) {
+        local = locals[idx];
+        if (local[0] == name) {
+            return idx;
+        }
+        idx = idx - 1;
+    }
+    return 0 - 1;
+}
+
 fn compile_expr(state, node) {
     if (len(node) == 0) { return state; }
     type = node[0];
     
     if (type == "number") {
         return compile_number(state, node[1]);
+    }
+    if (type == "string") {
+        res = add_constant(state, node[1]);
+        state = res[0];
+        idx = res[1];
+        res = write_byte(state, op_constant());
+        state = res[0];
+        res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+        state = res[0];
+        res = write_byte(state, bit_and(idx, 255));
+        state = res[0];
+        return state;
+    }
+    if (type == "identifier") {
+        name = node[1];
+        local_idx = resolve_local(state, name);
+        if (local_idx >= 0) {
+            res = write_byte(state, op_get_local());
+            state = res[0];
+            res = write_byte(state, local_idx);
+            state = res[0];
+            return state;
+        } else {
+            res = add_constant(state, name);
+            state = res[0];
+            idx = res[1];
+            res = write_byte(state, op_get_global());
+            state = res[0];
+            res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+            state = res[0];
+            res = write_byte(state, bit_and(idx, 255));
+            state = res[0];
+            return state;
+        }
+    }
+    if (type == "call") {
+        state = compile_expr(state, node[1]); // callee
+        args = node[2];
+        args_len = len(args);
+        expr_i = 0;
+        while (expr_i < args_len) {
+            state = compile_expr(state, args[expr_i]);
+            expr_i = expr_i + 1;
+        }
+        res = write_byte(state, op_call());
+        state = res[0];
+        res = write_byte(state, args_len);
+        state = res[0];
+        return state;
     }
     
     if (type == "binary_expr") {
@@ -82,6 +145,36 @@ fn compile_expr(state, node) {
 fn compile_statement(state, node) {
     type = node[0];
     
+
+    if (type == "assign_statement") {
+        ident_name_assign = node[1];
+        state = compile_expr(state, node[2]);
+        
+        local_idx_assign = resolve_local(state, ident_name_assign);
+        if (local_idx_assign >= 0) {
+            res = write_byte(state, op_set_local());
+            state = res[0];
+            res = write_byte(state, local_idx_assign);
+            state = res[0];
+        } else {
+            // Because Macros doesn't have `push` natively mapped to array, wait... does it?
+            // The compiler uses `locals = state[2]`. We can just use `push`.
+            // Wait, does the compiler environment have `push`? 
+            // In vm.zig, we mapped `push` as a global native function!
+            locals_arr = state[2];
+            locals_arr = push(locals_arr, [ident_name_assign, state[3]]);
+            state[2] = locals_arr;
+            
+            // It's the last local
+            new_idx = len(locals_arr) - 1;
+            res = write_byte(state, op_set_local());
+            state = res[0];
+            res = write_byte(state, new_idx);
+            state = res[0];
+        }
+        return state;
+    }
+
     if (type == "return_statement") {
         state = compile_expr(state, node[1]);
         res = write_byte(state, op_return());
@@ -90,8 +183,29 @@ fn compile_statement(state, node) {
     }
     
     if (type == "expr_statement") {
+        inner = node[1];
+        if (inner[0] == "call") {
+            callee = inner[1];
+            if (callee[0] == "identifier") {
+                if (callee[1] == "print") {
+                    call_args = inner[2];
+                    state = compile_expr(state, call_args[0]);
+                    res = write_byte(state, op_print());
+                    state = res[0];
+                    return state;
+                }
+            }
+        }
+        
         state = compile_expr(state, node[1]);
         res = write_byte(state, op_pop());
+        state = res[0];
+        return state;
+    }
+    
+    if (type == "print") {
+        state = compile_expr(state, node[1]);
+        res = write_byte(state, op_print());
         state = res[0];
         return state;
     }
@@ -101,29 +215,22 @@ fn compile_statement(state, node) {
 
 fn compile_block(state, stmts) {
     stmts_len = len(stmts);
-    i = 0;
-    while (i < stmts_len) {
-        state = compile_statement(state, stmts[i]);
-        i = i + 1;
+    block_i = 0;
+    while (block_i < stmts_len) {
+        state = compile_statement(state, stmts[block_i]);
+        block_i = block_i + 1;
     }
     return state;
 }
 
 fn compile_function(state, name, args, body) {
-    // For now, we compile it directly into the chunk
-    // Real implementation requires emitting a Function object
-    // with its own code chunk or managing jumps.
-    // To match our VM, the function object stores `ip_start`.
-    // We emit OP_JUMP over the function body, then emit the body.
-    
-    res = write_byte(state, op_jump());
+    res = emit_jump(state, op_jump());
     state = res[0];
-    // Write dummy jump offset
-    res = write_byte(state, 0);
-    state = res[0];
-    res = write_byte(state, 0);
-    state = res[0];
-    
+    jump_idx = res[1];
+
+    code_arr = state[0];
+    ip_start = len(code_arr);
+
     // Compile body
     stmts = body[1];
     state = compile_block(state, stmts);
@@ -141,7 +248,61 @@ fn compile_function(state, name, args, body) {
     res = write_byte(state, op_return());
     state = res[0];
     
-    // TODO: patch jump and emit OP_CONSTANT with function object
+    state = patch_jump(state, jump_idx);
+    
+    // Call build_function
+    res = add_constant(state, "build_function");
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_get_global()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(idx, 255)); state = res[0];
+    
+    res = add_constant(state, name);
+    state = res[0];
+    name_idx = res[1];
+    res = write_byte(state, op_constant()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
+    
+    res = add_constant(state, len(args));
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_constant()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(idx, 255)); state = res[0];
+    
+    res = add_constant(state, 0);
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_constant()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(idx, 255)); state = res[0];
+    
+    res = add_constant(state, 0); // upvalue_count
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_constant()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(idx, 255)); state = res[0];
+    
+    res = add_constant(state, ip_start);
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_constant()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(idx, 255)); state = res[0];
+    
+    res = write_byte(state, op_call()); state = res[0];
+    res = write_byte(state, 5); state = res[0];
+    
+    res = write_byte(state, op_closure()); state = res[0];
+    
+    res = write_byte(state, op_set_global()); state = res[0];
+    res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
+    res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
+    
+    res = write_byte(state, op_pop()); state = res[0];
     
     return state;
 }
@@ -151,15 +312,33 @@ fn compile_program(ast) {
     if (ast[0] == "program") {
         decls = ast[1];
         decls_len = len(decls);
-        i = 0;
-        while (i < decls_len) {
-            decl = decls[i];
+        prog_i = 0;
+        while (prog_i < decls_len) {
+            decl = decls[prog_i];
             if (decl[0] == "function_decl") {
                 state = compile_function(state, decl[1], decl[2], decl[3]);
+            } else if (decl[0] == "expr_statement") {
+                state = compile_statement(state, decl);
+            } else if (decl[0] == "print") {
+                state = compile_statement(state, decl);
             }
-            i = i + 1;
+            prog_i = prog_i + 1;
         }
     }
+    
+    // Add return nil for the main chunk
+    res = add_constant(state, []);
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_constant());
+    state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+    state = res[0];
+    res = write_byte(state, bit_and(idx, 255));
+    state = res[0];
+    res = write_byte(state, op_return());
+    state = res[0];
+    
     return state;
 }
 
@@ -231,20 +410,3 @@ fn compile_if_expr(state, node) {
     return state;
 }
 
-// Just append this test logic
-fn test_compiler() {
-    print("Testing Macros Compiler Phase 5");
-    ast = ["program", [
-        ["function_decl", "main", [], [
-            "block", [
-                ["expr_statement", ["binary_expr", "plus", ["number", "10"], ["number", "20"]]]
-            ]
-        ]]
-    ]];
-    state = compile_program(ast);
-    print("Compilation finished. Code size:");
-    print(len(state[0]));
-    print("Constants size:");
-    print(len(state[1]));
-}
-test_compiler();

@@ -1,0 +1,13 @@
+// test_lexer.mx
+import("lib/macros/lexer.mx");
+
+source = "fn main() { return 42; }";
+tokens = lex(source);
+
+println("Tokens generated:");
+i = 0;
+while (i < len(tokens)) {
+    tok = tokens[i];
+    println(tok);
+    i = i + 1;
+}

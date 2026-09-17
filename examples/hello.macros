@@ -1,0 +1,10 @@
+// Hello world compute demonstration in Macros (.macross)
+
+fn add(a, b) {
+    return a + b;
+}
+
+fn main() {
+    val = add(40, 2);
+    return val;
+}

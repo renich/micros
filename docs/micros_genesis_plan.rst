@@ -106,14 +106,14 @@ The system initializes without linking to host dynamic libraries:
 
 * Entry point defined directly at ``_start`` in Zig.
 * System calls dispatched via ``std.os.linux`` (avoiding ``libc`` wrappers).
-* Custom process bootstrap: parsing ELF auxiliary vectors (``AT_PHDR``, ``AT_PAGESZ``), setting up thread-local storage (TLS), and initializing initial memory arenas via direct ``mmap`` / ``munmap``.
+* Custom process bootstrap: parsing ELF auxiliary vectors (``AT_PHDR``, ``AT_PAGESZ``), setting up thread-local storage (TLS), and initializing initial memory arenas via direct ``mmap/munmap``.
 
 Core Systems Primitives
 -----------------------
 Phase 0 delivers three foundational userspace binaries:
 
 #. **MicrOS Init (PID 1)**: Minimal process supervisor handling signal disposition (``SIGCHLD``), reaping orphaned child processes, and mounting ``/dev``, ``/proc``, and ``/sys``.
-#. **MicroShell (msh / ush)**: Composable typed command interpreter and Macros scripting frontend supporting pipeline execution over memory rings, file descriptor/capability redirection, and job control with zero external library linkages.
+#. **MicroShell (msh/ush)**: Composable typed command interpreter and Macros scripting frontend supporting pipeline execution over memory rings, file descriptor/capability redirection, and job control with zero external library linkages.
 #. **MicrOS Coreutils**: Essential POSIX-compliant binary primitives (``ls``, ``cat``, ``cp``, ``mv``, ``mkdir``, ``ps``, ``kill``) built strictly on direct syscall abstractions and explicit memory allocators.
 
 Verification Milestone
@@ -158,7 +158,7 @@ The execution engine implements preemptive multiprocessing:
 * **GDT & TSS**: Global Descriptor Table configuring 64-bit kernel and user code/data segments, alongside a Task State Segment (TSS) defining the Interrupt Stack Table (IST) for double-fault isolation.
 * **IDT & Exceptions**: Complete Interrupt Descriptor Table mapping CPU traps (``#PF``, ``#GP``, ``#DF``, ``#UD``) to diagnostic register dumps.
 * **APIC & HPET**: Local APIC and High Precision Event Timer initialization, calibrating APIC timer ticks via CPU TSC (Time Stamp Counter).
-* **Preemptive Scheduler**: Round-robin scheduler with priority queues. Context switching implemented in minimal x86_64 inline assembly, saving and restoring caller/callee-saved registers, CR3 page directory bases, and SSE/AVX registers via ``FXSAVE64`` / ``XSAVE``.
+* **Preemptive Scheduler**: Round-robin scheduler with priority queues. Context switching implemented in minimal x86_64 inline assembly, saving and restoring caller/callee-saved registers, CR3 page directory bases, and SSE/AVX registers via ``FXSAVE64/XSAVE``.
 
 VirtIO Device Abstractions
 --------------------------
@@ -243,7 +243,7 @@ The verified system image is written directly to physical block storage:
    systemd-repart --dry-run=no --definitions=repart.d/ micros.raw
    dd if=micros.raw of=/dev/sdX bs=4M status=progress conv=fsync
 
-The machine boots on physical bare-metal hardware (x86_64 UEFI PC / workstation). The system updates, recompiles, and expands its own operating environment from within itself.
+The machine boots on physical bare-metal hardware (x86_64 UEFI PC/workstation). The system updates, recompiles, and expands its own operating environment from within itself.
 
 Human-AI Symbiosis: Division of Operational Labor
 =================================================
@@ -253,7 +253,7 @@ MicrOS (µOS) is deliberately structured around the complementary strengths of h
    :widths: auto
 
    +--------------------------+----------------------------------------------------+---------------------------------------------------+
-   | Dimension                | Human Role (Architect / Operator)                  | AI Role (Maintainer / Engineer)                   |
+   | Dimension                | Human Role (Architect/Operator)                    | AI Role (Maintainer/Engineer)                     |
    +==========================+====================================================+===================================================+
    | Architectural Policy     | Defines domain invariants, goals, and interfaces   | Enforces structural contracts and modular bounds  |
    +--------------------------+----------------------------------------------------+---------------------------------------------------+

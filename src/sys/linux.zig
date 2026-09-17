@@ -9,6 +9,11 @@ pub const Error = error{
     InvalidArgument,
     NoMemory,
     SystemResources,
+    FileNotFound,
+    PermissionDenied,
+    FileExists,
+    BrokenPipe,
+    WouldBlock,
     Unexpected,
 };
 
@@ -21,6 +26,11 @@ pub fn errnoToError(err: isize) Error {
         22 => error.InvalidArgument, // EINVAL
         12 => error.NoMemory, // ENOMEM
         23, 24 => error.SystemResources, // ENFILE, EMFILE
+        2 => error.FileNotFound, // ENOENT
+        1 => error.PermissionDenied, // EPERM
+        17 => error.FileExists, // EEXIST
+        32 => error.BrokenPipe, // EPIPE
+        11 => error.WouldBlock, // EAGAIN
         else => error.Unexpected,
     };
 }
@@ -48,6 +58,7 @@ pub fn poweroff() noreturn {
 }
 
 pub fn mmap(addr: ?*anyopaque, length: usize, prot: usize, flags: usize, fd: i32, offset: usize) !*anyopaque {
+    if (length % 4096 != 0 or offset % 4096 != 0) return error.InvalidArgument;
     const fd_arg: usize = @bitCast(@as(isize, fd));
     const rc = linux.syscall6(.mmap, @intFromPtr(addr), length, prot, flags, fd_arg, offset);
     return @ptrFromInt(try check(rc));
