@@ -42,6 +42,14 @@ Every line of code committed to MicrOS must comply with the Ten Commandments def
 9. **Page Alignment**: All ``mmap`` regions, page tables, and hardware buffers must mathematically enforce 4096-byte alignment.
 10. **Test Colocation**: Tests must reside alongside the production code they test within the same module using native Zig ``test`` blocks.
 
+Engineering & Code Guides
+=========================
+
+For comprehensive architecture rules, domain boundaries, language idioms, memory safety invariants, and pre-commit checklists, refer to the authoritative technical code guides:
+
+* **English**: `docs/technical/code-guide.rst <docs/technical/code-guide.rst>`_
+* **Español**: `docs/technical/code-guide-es.rst <docs/technical/code-guide-es.rst>`_
+
 Getting Started
 ===============
 

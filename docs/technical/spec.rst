@@ -32,6 +32,16 @@ Technical Sub-Specifications
    specs/process-hierarchy
    specs/reactive-compositor
 
+Engineering & Coding Guides
+===========================
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Engineering Guides
+
+   code-guide
+   code-guide-es
+
 Core Architecture Principles
 ============================
 1. **Zero-Libc Substrate Isolation**: The substrate layer (`src/sys/`) invokes Linux x86_64 kernel syscalls directly without C runtime or glibc dependencies.
