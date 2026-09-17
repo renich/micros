@@ -38,7 +38,7 @@ The decoupled process hierarchy enforces four strict layers:
                                   | Spawns
    +------------------------------v------------------------------+
    | Layer 2: App 0 MicroShell (lib/macros/msh.mx, Stream CLI)   |
-   | Line Editor, Builtin Dispatcher, AI Agent Pipeline, TTY     |
+   | Line Editor, Builtin Dispatcher, Actor Manager, TTY         |
    +------------------------------+------------------------------+
                                   | Launches on Demand
    +------------------------------v------------------------------+

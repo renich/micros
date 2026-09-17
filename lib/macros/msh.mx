@@ -39,9 +39,8 @@ fn cmd_help() {
     console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash");
     console_writeln("  persist <id>  - Persist actor source to CAS root");
     console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
-    console_writeln("  ai <prompt>   - Dispatch natural language task to AI");
     console_writeln("  harness       - Launch full-screen visual studio (App 1)");
-    console_writeln("  install       - Launch sovereign silicon installer");
+    console_writeln("  install       - Launch standalone silicon installer");
     console_writeln("  exit          - Terminate MicroShell session");
 }
 
@@ -144,7 +143,7 @@ fn cmd_install() {
         console_writeln("Error: installer.mx not found in genesis bundle.");
         return 0;
     }
-    console_writeln("Launching Sovereign Installer...");
+    console_writeln("Launching Standalone Installer...");
     inst_id = sys_actor_spawn_code("installer", inst_src);
     if (inst_id < 0) {
         console_writeln("Error: Failed to spawn installer actor.");
@@ -152,33 +151,6 @@ fn cmd_install() {
     }
     sys_actor_wait(inst_id);
     console_writeln("Installer terminated. Returned to msh.");
-    return 0;
-}
-
-fn cmd_ai(prompt) {
-    console_writeln("[ai] Querying resident AI: " + prompt + "...");
-    resp = sys_ai_prompt(prompt);
-    if (len(resp) == 0) {
-        console_writeln("[ai] Error: No response from resident AI.");
-        return 0;
-    }
-    tool_res = sys_ai_tool_call(resp);
-    if (len(tool_res) > 0) {
-        console_writeln("[ai:tool] Executed: " + tool_res);
-        return 0;
-    }
-    extracted = sys_ai_extract_code(resp);
-    if (len(extracted) > 0) {
-        console_writeln("[ai] Extracted code block (" + int_to_str(len(extracted)) + " bytes). Spawning actor...");
-        child_id = sys_actor_spawn_code("ai_actor", extracted);
-        if (child_id >= 0) {
-            console_writeln("[ai] Spawned Actor " + int_to_str(child_id) + " from synthesized code.");
-        } else {
-            console_writeln("[ai] Error: Synthesized code compilation failed.");
-        }
-    } else {
-        console_writeln(resp);
-    }
     return 0;
 }
 
@@ -192,7 +164,6 @@ fn eval_command(cmd) {
     }
     if (cmd == "harness") { return cmd_harness(); }
     if (cmd == "install") { return cmd_install(); }
-    if (is_prefix(cmd, "ai ")) { return cmd_ai(substr(cmd, 3, len(cmd))); }
     if (is_prefix(cmd, "spawn ")) { return cmd_spawn(substr(cmd, 6, len(cmd))); }
     if (is_prefix(cmd, "store ")) { return cmd_store(substr(cmd, 6, len(cmd))); }
     if (is_prefix(cmd, "fetch ")) { return cmd_fetch(substr(cmd, 6, len(cmd))); }

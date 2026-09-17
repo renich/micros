@@ -10,6 +10,10 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Resident AI Transport Security & Process Decoupling**:
+  - **Freestanding TLS 1.3 Unlocked on UEFI**: Enabled ``std.crypto.tls.Client`` unconditionally across freestanding ``x86_64-uefi`` targets in ``src/kernel/net/tls_stream.zig``, removing legacy compile-time stubbing and enabling live HTTPS inference with Gemini and OpenAI directly on bare-metal UEFI.
+  - **MicroShell Decoupling & Centralized AI Harness**: Stripped the ``ai`` command from App 0 MicroShell (``lib/macros/msh.mx``) to enforce strict separation of responsibilities, preserving ``msh`` as a lean systems administration CLI and centralizing synthetic intelligence orchestration within App 1 (``lib/macros/harness.mx``). Updated installer messaging to neutral technical phrasing.
+
 - **Milestone 18 Foundation (Memory Lifecycle, Preemption & Semantic CAS Manifests)**:
   - **Dynamic Chunk Lifecycle & Use-After-Free Elimination**: Refactored ``src/macros/vm.zig`` (``nativeExecChunk`` and ``executeChunk``) to manage bytecode chunks dynamically within ``dynamic_chunks``, unwinding call frames on error and eliminating local stack reference escapes and memory leaks.
   - **Adaptive GC Threshold & Bounded Hole Allocation**: Hardened Immix GC in ``src/macros/gc.zig`` with adaptive allocation thresholds (``DEFAULT_GC_THRESHOLD = 64 KiB``, ``GC_GROWTH_FACTOR = 2``, ``MAX_HEAP_BLOCKS = 512``), mathematical hole-extent bounding in ``Block.resetHoles``, and explicit memory zeroing (``@memset(0)``) during line recycling to eliminate stale pointer revival.

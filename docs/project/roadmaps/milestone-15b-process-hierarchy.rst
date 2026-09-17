@@ -22,7 +22,7 @@ Milestones & Deliverables
 
 * **M15b.3: App 0 MicroShell (lib/macros/msh.mx)**
    - Implement stream-first interactive CLI for human and AI interaction.
-   - Provide standard command suite: ``help``, ``status``, ``actors``, ``clear``, ``kill``, ``spawn``, ``store``, ``fetch``, ``persist``, ``spawn_cas``, ``ai``, ``harness``, and ``exit``.
+   - Provide standard command suite: ``help``, ``status``, ``actors``, ``clear``, ``kill``, ``spawn``, ``store``, ``fetch``, ``persist``, ``spawn_cas``, ``install``, ``harness``, and ``exit``.
    - Implement character echo, backspace handling, and robust CRLF sequence filtering over COM1 serial.
 
 * **M15b.4: App 1 Interactive Studio & Clean Focus Arbitration (lib/macros/harness.mx)**
