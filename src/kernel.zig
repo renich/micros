@@ -20,6 +20,7 @@ pub const nvme = @import("kernel/drivers/nvme.zig");
 pub const block_cache = @import("kernel/storage/block_cache.zig");
 pub const cas_chunk = @import("kernel/storage/chunk.zig");
 pub const cas = @import("kernel/storage/cas.zig");
+pub const fat32 = @import("kernel/storage/fat32.zig");
 pub const net = @import("kernel/net.zig");
 pub const ai = @import("kernel/ai.zig");
 pub const compositor = @import("kernel/compositor.zig");
@@ -46,6 +47,7 @@ test "kernel module tests" {
     _ = @import("kernel/storage/block_cache.zig");
     _ = @import("kernel/storage/chunk.zig");
     _ = @import("kernel/storage/cas.zig");
+    _ = @import("kernel/storage/fat32.zig");
     _ = @import("kernel/net.zig");
     _ = @import("kernel/ai.zig");
     _ = @import("kernel/compositor.zig");
