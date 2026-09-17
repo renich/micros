@@ -36,9 +36,9 @@ all: tools src/kernel/genesis.mcb
 	@echo "=> Building MicrOS..."
 	$(ZIG) build $(ZIG_BUILD_FLAGS)
 
-src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/msh.mx lib/macros/harness.mx | tools
+src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/msh.mx lib/macros/harness.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx | tools
 	@echo "=> Packaging Genesis MCB bundle..."
-	./tools/micros-bundle $@ init.mx=lib/macros/init.mx msh.mx=lib/macros/msh.mx harness.mx=lib/macros/harness.mx
+	./tools/micros-bundle $@ init.mx=lib/macros/init.mx msh.mx=lib/macros/msh.mx harness.mx=lib/macros/harness.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx
 
 ## test: Execute the unit and integration test suite
 test:

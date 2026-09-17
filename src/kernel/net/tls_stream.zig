@@ -7,13 +7,18 @@ const stack_mod = @import("stack.zig");
 const serial = @import("../serial.zig");
 const io = @import("../arch/x86_64/io.zig");
 
+const builtin = @import("builtin");
+const is_uefi = builtin.os.tag == .uefi;
+
 pub const BUFFER_SIZE_READER: usize = 65536;
 pub const BUFFER_SIZE_WRITER: usize = 32768;
 pub const BUFFER_SIZE_TLS_READ: usize = 65536;
 pub const BUFFER_SIZE_TLS_WRITE: usize = 32768;
-pub const ENTROPY_LEN: usize = std.crypto.tls.Client.Options.entropy_len;
+pub const ENTROPY_LEN: usize = if (is_uefi) 32 else std.crypto.tls.Client.Options.entropy_len;
 pub const DEFAULT_TIMESTAMP_SEC: i64 = 1789624912;
 const DRAIN_TIMEOUT_ITERS: usize = 20_000_000;
+
+pub const TlsClientType = if (is_uefi) struct {} else std.crypto.tls.Client;
 
 const writer_vtable: std.Io.Writer.VTable = .{
     .drain = drainFn,
@@ -31,7 +36,7 @@ pub const TcpStreamAdapter = struct {
     tls_write_buf: [BUFFER_SIZE_TLS_WRITE]u8 = undefined,
     reader_interface: std.Io.Reader = undefined,
     writer_interface: std.Io.Writer = undefined,
-    tls_client: ?std.crypto.tls.Client = null,
+    tls_client: ?TlsClientType = null,
     entropy: [ENTROPY_LEN]u8 = undefined,
     connected: bool = false,
 
@@ -52,26 +57,19 @@ pub const TcpStreamAdapter = struct {
         };
     }
 
-    pub fn fillEntropy(self: *TcpStreamAdapter) void {
+    fn fillEntropy(self: *TcpStreamAdapter) void {
         var i: usize = 0;
         while (i < ENTROPY_LEN) {
-            var rax_val: u64 = undefined;
-            var rdx_val: u64 = undefined;
-            asm volatile (
-                \\rdtsc
-                : [rax_val] "={rax}" (rax_val),
-                  [rdx_val] "={rdx}" (rdx_val),
-            );
-            var val: u64 = (rdx_val << 32) | rax_val;
-
+            var val: u64 = io.rdtsc();
             var rdrand_val: u64 = 0;
             var success: u8 = 0;
             asm volatile (
-                \\rdrand %[rdrand_val]
+                \\rdrand %[val]
                 \\setc %[success]
-                : [rdrand_val] "=r" (rdrand_val),
+                : [val] "=r" (rdrand_val),
                   [success] "=r" (success),
             );
+
             if (success != 0 and rdrand_val != 0) {
                 val ^= rdrand_val;
             }
@@ -85,37 +83,49 @@ pub const TcpStreamAdapter = struct {
     }
 
     pub fn handshake(self: *TcpStreamAdapter, hostname: []const u8) !void {
-        self.fillEntropy();
-        const now_ts = std.Io.Timestamp{
-            .nanoseconds = DEFAULT_TIMESTAMP_SEC * std.time.ns_per_s,
-        };
+        if (comptime is_uefi) {
+            return error.NotSupported;
+        } else {
+            self.fillEntropy();
+            const now_ts = std.Io.Timestamp{
+                .nanoseconds = DEFAULT_TIMESTAMP_SEC * std.time.ns_per_s,
+            };
 
-        self.tls_client = try std.crypto.tls.Client.init(
-            &self.reader_interface,
-            &self.writer_interface,
-            .{
-                .host = .{ .explicit = hostname },
-                .ca = .no_verification,
-                .read_buffer = &self.tls_read_buf,
-                .write_buffer = &self.tls_write_buf,
-                .entropy = &self.entropy,
-                .realtime_now = now_ts,
-                .allow_truncation_attacks = true,
-            },
-        );
-        self.connected = true;
+            self.tls_client = try std.crypto.tls.Client.init(
+                &self.reader_interface,
+                &self.writer_interface,
+                .{
+                    .host = .{ .explicit = hostname },
+                    .ca = .no_verification,
+                    .read_buffer = &self.tls_read_buf,
+                    .write_buffer = &self.tls_write_buf,
+                    .entropy = &self.entropy,
+                    .realtime_now = now_ts,
+                    .allow_truncation_attacks = true,
+                },
+            );
+            self.connected = true;
+        }
     }
 
     pub fn writeAll(self: *TcpStreamAdapter, data: []const u8) !void {
-        const client = &(self.tls_client orelse return error.NotConnected);
-        try client.writer.writeAll(data);
-        try client.writer.flush();
-        try self.writer_interface.flush();
+        if (comptime is_uefi) {
+            return error.NotSupported;
+        } else {
+            const client = &(self.tls_client orelse return error.NotConnected);
+            try client.writer.writeAll(data);
+            try client.writer.flush();
+            try self.writer_interface.flush();
+        }
     }
 
     pub fn readSlice(self: *TcpStreamAdapter, dest: []u8) !usize {
-        const client = &(self.tls_client orelse return error.NotConnected);
-        return try client.reader.readSliceShort(dest);
+        if (comptime is_uefi) {
+            return error.NotSupported;
+        } else {
+            const client = &(self.tls_client orelse return error.NotConnected);
+            return try client.reader.readSliceShort(dest);
+        }
     }
 
     pub fn close(self: *TcpStreamAdapter) void {
@@ -182,6 +192,7 @@ fn streamFn(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Re
 }
 
 test "tls stream adapter type verification" {
+    if (is_uefi) return;
     try std.testing.expect(BUFFER_SIZE_READER >= std.crypto.tls.Client.min_buffer_len);
     try std.testing.expect(BUFFER_SIZE_WRITER >= std.crypto.tls.Client.min_buffer_len);
     try std.testing.expectEqual(@as(usize, 240), ENTROPY_LEN);
