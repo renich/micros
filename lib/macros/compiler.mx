@@ -1,5 +1,5 @@
 // Macros Stage 1 Self-Hosted Bytecode Compiler (compiler.mx)
-// Part of the MicrOS sovereign language self-hosting pipeline.
+// Part of the MicrOS freestanding language self-hosting pipeline.
 
 fn op_constant() { return 0; }
 fn op_add() { return 1; }
@@ -28,6 +28,16 @@ fn op_closure() { return 26; }
 fn op_get_upvalue() { return 27; }
 fn op_set_upvalue() { return 28; }
 fn op_close_upvalue() { return 29; }
+fn op_multiply() { return 30; }
+fn op_divide() { return 31; }
+fn op_modulo() { return 32; }
+fn op_bitwise_and() { return 33; }
+fn op_bitwise_or() { return 34; }
+fn op_bitwise_xor() { return 35; }
+fn op_shift_left() { return 36; }
+fn op_shift_right() { return 37; }
+fn op_negate() { return 38; }
+fn op_not() { return 39; }
 
 fn init_compiler() {
     return [[], [], [], 0, [], []];
@@ -187,6 +197,14 @@ fn resolve_upvalue(state, name) {
 fn emit_binary_op(state, op) {
     if (op == "plus") { return write_byte(state, op_add())[0]; }
     if (op == "minus") { return write_byte(state, op_sub())[0]; }
+    if (op == "mul") { return write_byte(state, op_multiply())[0]; }
+    if (op == "div") { return write_byte(state, op_divide())[0]; }
+    if (op == "modulo") { return write_byte(state, op_modulo())[0]; }
+    if (op == "bitwise_and") { return write_byte(state, op_bitwise_and())[0]; }
+    if (op == "bitwise_or") { return write_byte(state, op_bitwise_or())[0]; }
+    if (op == "bitwise_xor") { return write_byte(state, op_bitwise_xor())[0]; }
+    if (op == "shift_left") { return write_byte(state, op_shift_left())[0]; }
+    if (op == "shift_right") { return write_byte(state, op_shift_right())[0]; }
     if (op == "equal") { return write_byte(state, op_equal())[0]; }
     if (op == "not_equal") { return write_byte(state, op_not_equal())[0]; }
     if (op == "less") { return write_byte(state, op_less())[0]; }
@@ -281,6 +299,16 @@ fn compile_expr(state, node) {
         state = compile_expr(state, node[2]);
         state = compile_expr(state, node[3]);
         return emit_binary_op(state, node[1]);
+    }
+    if (type == "unary_expr") {
+        state = compile_expr(state, node[2]);
+        if (node[1] == "negate") {
+            return write_byte(state, op_negate())[0];
+        }
+        if (node[1] == "not") {
+            return write_byte(state, op_not())[0];
+        }
+        return state;
     }
     return state;
 }

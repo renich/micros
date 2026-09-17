@@ -156,6 +156,56 @@ pub const X86Codegen = struct {
         try self.buffer.emitBytes(&[_]u8{ 0x59, 0x48, 0x29, 0x0C, 0x24 });
     }
 
+    fn emitMultiply(self: *X86Codegen) !void {
+        // pop rcx (0x59), pop rax (0x58), imul rax, rcx (0x48, 0x0F, 0xAF, 0xC1), push rax (0x50)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x58, 0x48, 0x0F, 0xAF, 0xC1, 0x50 });
+    }
+
+    fn emitDivide(self: *X86Codegen) !void {
+        // pop rcx (0x59), pop rax (0x58), cqo (0x48, 0x99), idiv rcx (0x48, 0xF7, 0xF9), push rax (0x50)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x58, 0x48, 0x99, 0x48, 0xF7, 0xF9, 0x50 });
+    }
+
+    fn emitModulo(self: *X86Codegen) !void {
+        // pop rcx (0x59), pop rax (0x58), cqo (0x48, 0x99), idiv rcx (0x48, 0xF7, 0xF9), push rdx (0x52)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x58, 0x48, 0x99, 0x48, 0xF7, 0xF9, 0x52 });
+    }
+
+    fn emitBitwiseAnd(self: *X86Codegen) !void {
+        // pop rcx (0x59), and [rsp], rcx (0x48, 0x21, 0x0C, 0x24)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x48, 0x21, 0x0C, 0x24 });
+    }
+
+    fn emitBitwiseOr(self: *X86Codegen) !void {
+        // pop rcx (0x59), or [rsp], rcx (0x48, 0x09, 0x0C, 0x24)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x48, 0x09, 0x0C, 0x24 });
+    }
+
+    fn emitBitwiseXor(self: *X86Codegen) !void {
+        // pop rcx (0x59), xor [rsp], rcx (0x48, 0x31, 0x0C, 0x24)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x48, 0x31, 0x0C, 0x24 });
+    }
+
+    fn emitShiftLeft(self: *X86Codegen) !void {
+        // pop rcx (0x59), shl qword [rsp], cl (0x48, 0xD3, 0x24, 0x24)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x48, 0xD3, 0x24, 0x24 });
+    }
+
+    fn emitShiftRight(self: *X86Codegen) !void {
+        // pop rcx (0x59), sar qword [rsp], cl (0x48, 0xD3, 0x3C, 0x24)
+        try self.buffer.emitBytes(&[_]u8{ 0x59, 0x48, 0xD3, 0x3C, 0x24 });
+    }
+
+    fn emitNegate(self: *X86Codegen) !void {
+        // neg qword [rsp] (0x48, 0xF7, 0x1C, 0x24)
+        try self.buffer.emitBytes(&[_]u8{ 0x48, 0xF7, 0x1C, 0x24 });
+    }
+
+    fn emitNot(self: *X86Codegen) !void {
+        // pop rax (0x58), test rax, rax (0x48, 0x85, 0xC0), setz al (0x0F, 0x94, 0xC0), movzx rax, al (0x48, 0x0F, 0xB6, 0xC0), push rax (0x50)
+        try self.buffer.emitBytes(&[_]u8{ 0x58, 0x48, 0x85, 0xC0, 0x0F, 0x94, 0xC0, 0x48, 0x0F, 0xB6, 0xC0, 0x50 });
+    }
+
     fn emitGetLocal(self: *X86Codegen, slot: u8) !void {
         const offset: i8 = -@as(i8, @intCast((@as(usize, slot) + 1) * 8));
         // mov rax, [rbp + disp8] (0x48, 0x8B, 0x45, <disp8>)
@@ -227,6 +277,12 @@ pub const X86Codegen = struct {
         }
     }
 
+    fn compileLocalOp(self: *X86Codegen, chunk: *const Chunk, ip: *usize, is_set: bool) !void {
+        const slot = chunk.code.items[ip.*];
+        ip.* += 1;
+        if (is_set) try self.emitSetLocal(slot) else try self.emitGetLocal(slot);
+    }
+
     fn compileInstruction(self: *X86Codegen, chunk: *const Chunk, ip: *usize) !bool {
         const op_byte = chunk.code.items[ip.*];
         ip.* += 1;
@@ -235,16 +291,18 @@ pub const X86Codegen = struct {
             .constant => try self.compileConstant(chunk, ip),
             .add => try self.emitAdd(),
             .sub => try self.emitSub(),
-            .get_local => {
-                const slot = chunk.code.items[ip.*];
-                ip.* += 1;
-                try self.emitGetLocal(slot);
-            },
-            .set_local => {
-                const slot = chunk.code.items[ip.*];
-                ip.* += 1;
-                try self.emitSetLocal(slot);
-            },
+            .multiply => try self.emitMultiply(),
+            .divide => try self.emitDivide(),
+            .modulo => try self.emitModulo(),
+            .bitwise_and => try self.emitBitwiseAnd(),
+            .bitwise_or => try self.emitBitwiseOr(),
+            .bitwise_xor => try self.emitBitwiseXor(),
+            .shift_left => try self.emitShiftLeft(),
+            .shift_right => try self.emitShiftRight(),
+            .negate => try self.emitNegate(),
+            .not => try self.emitNot(),
+            .get_local => try self.compileLocalOp(chunk, ip, false),
+            .set_local => try self.compileLocalOp(chunk, ip, true),
             .pop => try self.emitPop(),
             .jump => try self.compileJumpOp(chunk, ip, false),
             .jump_if_false => try self.compileJumpOp(chunk, ip, true),
@@ -333,4 +391,55 @@ test "x86_64 JIT local variables and subtraction" {
     const native_fn = try codegen.compile(&ch, 1);
     const result = native_fn();
     try testing.expectEqual(@as(i64, 58), result);
+}
+
+test "x86_64 JIT math, bitwise, and unary completeness" {
+    const testing = std.testing;
+    var ch = Chunk.init();
+    defer ch.deinit(testing.allocator);
+
+    // Compute: (((6 * 7) / 2) % 10) ^ 3
+    // 6 * 7 = 42
+    // 42 / 2 = 21
+    // 21 % 10 = 1
+    // 1 ^ 3 = 2
+    const c6 = try ch.addConstant(testing.allocator, eval.Value{ .integer = 6 });
+    const c7 = try ch.addConstant(testing.allocator, eval.Value{ .integer = 7 });
+    const c2 = try ch.addConstant(testing.allocator, eval.Value{ .integer = 2 });
+    const c10 = try ch.addConstant(testing.allocator, eval.Value{ .integer = 10 });
+    const c3 = try ch.addConstant(testing.allocator, eval.Value{ .integer = 3 });
+
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.constant));
+    try ch.writeChunk(testing.allocator, @intCast((c6 >> 8) & 0xFF));
+    try ch.writeChunk(testing.allocator, @intCast(c6 & 0xFF));
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.constant));
+    try ch.writeChunk(testing.allocator, @intCast((c7 >> 8) & 0xFF));
+    try ch.writeChunk(testing.allocator, @intCast(c7 & 0xFF));
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.multiply));
+
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.constant));
+    try ch.writeChunk(testing.allocator, @intCast((c2 >> 8) & 0xFF));
+    try ch.writeChunk(testing.allocator, @intCast(c2 & 0xFF));
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.divide));
+
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.constant));
+    try ch.writeChunk(testing.allocator, @intCast((c10 >> 8) & 0xFF));
+    try ch.writeChunk(testing.allocator, @intCast(c10 & 0xFF));
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.modulo));
+
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.constant));
+    try ch.writeChunk(testing.allocator, @intCast((c3 >> 8) & 0xFF));
+    try ch.writeChunk(testing.allocator, @intCast(c3 & 0xFF));
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.bitwise_xor));
+
+    // Negate: -(2) = -2
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.negate));
+    try ch.writeChunk(testing.allocator, @intFromEnum(OpCode.return_op));
+
+    var codegen = try X86Codegen.init(testing.allocator, 4096);
+    defer codegen.deinit();
+
+    const native_fn = try codegen.compile(&ch, 0);
+    const result = native_fn();
+    try testing.expectEqual(@as(i64, -2), result);
 }

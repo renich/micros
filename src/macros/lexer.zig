@@ -15,6 +15,13 @@ pub const TokenType = enum {
     minus,
     star,
     slash,
+    percent,
+    ampersand,
+    pipe,
+    caret,
+    less_less,
+    greater_greater,
+    bang,
     equal,
     equal_equal,
     bang_equal,
@@ -161,6 +168,10 @@ pub const Lexer = struct {
             '+' => self.advanceAndReturn(.plus, "+"),
             '-' => self.advanceAndReturn(.minus, "-"),
             '*' => self.advanceAndReturn(.star, "*"),
+            '%' => self.advanceAndReturn(.percent, "%"),
+            '&' => self.advanceAndReturn(.ampersand, "&"),
+            '|' => self.advanceAndReturn(.pipe, "|"),
+            '^' => self.advanceAndReturn(.caret, "^"),
             else => null,
         };
     }
@@ -174,16 +185,18 @@ pub const Lexer = struct {
         if (c == '!') {
             self.advance();
             if (self.peek() == '=') return self.advanceAndReturn(.bang_equal, "!=");
-            return Token{ .token_type = .invalid, .lexeme = "!" };
+            return Token{ .token_type = .bang, .lexeme = "!" };
         }
         if (c == '<') {
             self.advance();
             if (self.peek() == '=') return self.advanceAndReturn(.less_equal, "<=");
+            if (self.peek() == '<') return self.advanceAndReturn(.less_less, "<<");
             return Token{ .token_type = .less_than, .lexeme = "<" };
         }
         if (c == '>') {
             self.advance();
             if (self.peek() == '=') return self.advanceAndReturn(.greater_equal, ">=");
+            if (self.peek() == '>') return self.advanceAndReturn(.greater_greater, ">>");
             return Token{ .token_type = .greater_than, .lexeme = ">" };
         }
         return null;
@@ -228,6 +241,24 @@ test "Lexer keywords and blocks" {
         .eof,
     };
 
+    for (expected) |exp| {
+        const tok = lexer.nextToken();
+        try testing.expectEqual(exp, tok.token_type);
+    }
+}
+
+test "Lexer mathematical, bitwise, and unary operators" {
+    var lexer = Lexer.init("% & | ^ << >> !");
+    const expected = [_]TokenType{
+        .percent,
+        .ampersand,
+        .pipe,
+        .caret,
+        .less_less,
+        .greater_greater,
+        .bang,
+        .eof,
+    };
     for (expected) |exp| {
         const tok = lexer.nextToken();
         try testing.expectEqual(exp, tok.token_type);

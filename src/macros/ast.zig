@@ -16,6 +16,7 @@ pub const Node = union(enum) {
     call_expr: CallExpr,
     index_expr: IndexExpr,
     array_literal: ArrayLiteral,
+    unary_expr: UnaryExpr,
 
     pub fn deinit(self: *Node, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -23,6 +24,7 @@ pub const Node = union(enum) {
                 bin.left.deinit(allocator);
                 bin.right.deinit(allocator);
             },
+            .unary_expr => |un| un.operand.deinit(allocator),
             .assignment => |assign| assign.value.deinit(allocator),
             .index_assignment => |*ia| ia.deinit(allocator),
             .if_expr => |*ife| ife.deinit(allocator),
@@ -76,11 +78,27 @@ pub const BooleanLiteral = struct {
     value: bool,
 };
 
+pub const UnaryOperator = enum {
+    minus,
+    not,
+};
+
+pub const UnaryExpr = struct {
+    operator: UnaryOperator,
+    operand: *Node,
+};
+
 pub const BinaryOperator = enum {
     plus,
     minus,
     star,
     slash,
+    percent,
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
+    shift_left,
+    shift_right,
     equal_equal,
     not_equal,
     less_than,

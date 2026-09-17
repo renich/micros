@@ -69,6 +69,7 @@ pub const Compiler = struct {
             .index_expr => |index| try self.compileIndexExpr(index),
             .array_literal => |array| try self.compileArrayLiteral(array),
             .index_assignment => |ia| try self.compileIndexAssignment(ia),
+            .unary_expr => |unary| try self.compileUnaryExpr(unary),
         }
     }
     fn compileBooleanLiteral(self: *Compiler, lit: ast.BooleanLiteral) anyerror!void {
@@ -140,25 +141,34 @@ pub const Compiler = struct {
     fn compileBinaryExpr(self: *Compiler, bin: ast.BinaryExpr) anyerror!void {
         try self.compile(bin.left);
         try self.compile(bin.right);
-        switch (bin.operator) {
-            .plus => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.add)),
-            .minus => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.sub)),
-            .equal_equal => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.equal)),
-            .not_equal => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.not_equal)),
-            .greater_than => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.greater)),
-            .less_than => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.less)),
-            .greater_equal => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.greater_equal)),
-            .less_equal => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.less_equal)),
-            else => {},
-        }
+        const op: OpCode = switch (bin.operator) {
+            .plus => .add,
+            .minus => .sub,
+            .star => .multiply,
+            .slash => .divide,
+            .percent => .modulo,
+            .bitwise_and => .bitwise_and,
+            .bitwise_or => .bitwise_or,
+            .bitwise_xor => .bitwise_xor,
+            .shift_left => .shift_left,
+            .shift_right => .shift_right,
+            .equal_equal => .equal,
+            .not_equal => .not_equal,
+            .greater_than => .greater,
+            .less_than => .less,
+            .greater_equal => .greater_equal,
+            .less_equal => .less_equal,
+        };
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(op));
     }
 
     fn compileUnaryExpr(self: *Compiler, unary: ast.UnaryExpr) anyerror!void {
         try self.compile(unary.operand);
-        switch (unary.operator) {
-            .minus => try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.negate)),
-            else => {},
-        }
+        const op: OpCode = switch (unary.operator) {
+            .minus => .negate,
+            .not => .not,
+        };
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(op));
     }
 
     fn compileVariableDecl(self: *Compiler, decl: ast.VariableDecl) anyerror!void {
@@ -415,4 +425,25 @@ test "compiler unescapes string literals" {
     const val = ch.constants.items[0];
     try std.testing.expect(val == .string);
     try std.testing.expectEqualStrings("hello\nworld\t\"quotes\"", val.string);
+}
+
+test "compiler compiles unary and multiplication expressions" {
+    const allocator = std.testing.allocator;
+    var ch = chunk.Chunk.init();
+    defer ch.deinit(allocator);
+
+    var comp = Compiler.init(allocator, &ch);
+
+    const int1 = try allocator.create(ast.Node);
+    defer allocator.destroy(int1);
+    int1.* = .{ .number_literal = .{ .value = "5" } };
+
+    const un = try allocator.create(ast.Node);
+    defer allocator.destroy(un);
+    un.* = .{ .unary_expr = .{ .operator = .minus, .operand = int1 } };
+
+    try comp.compile(un);
+    // constant (3 bytes) + negate (1 byte) = 4 bytes
+    try std.testing.expectEqual(@as(usize, 4), ch.code.items.len);
+    try std.testing.expectEqual(@as(u8, @intFromEnum(OpCode.negate)), ch.code.items[3]);
 }

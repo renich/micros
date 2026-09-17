@@ -33,6 +33,16 @@ pub const OpCode = enum(u8) {
     get_upvalue,
     set_upvalue,
     close_upvalue,
+    multiply,
+    divide,
+    modulo,
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
+    shift_left,
+    shift_right,
+    negate,
+    not,
 };
 
 pub const Chunk = struct {

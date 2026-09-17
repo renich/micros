@@ -14,5 +14,24 @@ fn node_binary(op, left, right) {
     if (op == 3) {
         return left == right;
     }
+    if (op == 4) {
+        return left * right;
+    }
+    if (op == 5) {
+        return left / right;
+    }
+    if (op == 6) {
+        return left % right;
+    }
     return 0;
+}
+
+fn node_unary(op, operand) {
+    if (op == 1) {
+        return -operand;
+    }
+    if (op == 2) {
+        return !operand;
+    }
+    return operand;
 }

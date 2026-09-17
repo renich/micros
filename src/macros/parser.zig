@@ -39,6 +39,12 @@ pub const Parser = struct {
             .minus => .minus,
             .star => .star,
             .slash => .slash,
+            .percent => .percent,
+            .ampersand => .bitwise_and,
+            .pipe => .bitwise_or,
+            .caret => .bitwise_xor,
+            .less_less => .shift_left,
+            .greater_greater => .shift_right,
             .equal_equal => .equal_equal,
             .bang_equal => .not_equal,
             .less_than => .less_than,
@@ -200,14 +206,35 @@ pub const Parser = struct {
 
     fn getPrecedence(op: ast.BinaryOperator) u8 {
         return switch (op) {
-            .equal_equal, .not_equal, .less_than, .less_equal, .greater_than, .greater_equal => 10,
+            .bitwise_or => 11,
+            .bitwise_xor => 12,
+            .bitwise_and => 13,
+            .equal_equal, .not_equal, .less_than, .less_equal, .greater_than, .greater_equal => 15,
+            .shift_left, .shift_right => 18,
             .plus, .minus => 20,
-            .star, .slash => 30,
+            .star, .slash, .percent => 30,
         };
     }
 
+    fn parseUnary(self: *Parser) ParseError!*ast.Node {
+        if (self.current_token.token_type == .minus or self.current_token.token_type == .bang) {
+            const op: ast.UnaryOperator = if (self.current_token.token_type == .minus) .minus else .not;
+            self.advance();
+            const operand = try self.parseUnary();
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{
+                .unary_expr = ast.UnaryExpr{
+                    .operator = op,
+                    .operand = operand,
+                },
+            };
+            return node;
+        }
+        return self.parsePrimary();
+    }
+
     fn parsePrecedence(self: *Parser, min_prec: u8) ParseError!*ast.Node {
-        var left = try self.parsePrimary();
+        var left = try self.parseUnary();
         while (matchBinaryOp(self.current_token.token_type)) |op| {
             const prec = getPrecedence(op);
             if (prec < min_prec) break;
@@ -350,4 +377,20 @@ test "Parser if and while control structures" {
     const node = try p.parseStatement();
     defer node.deinit(testing.allocator);
     try testing.expectEqual(ast.BinaryOperator.less_equal, node.if_expr.condition.binary_expr.operator);
+}
+
+test "Parser unary and mathematical operators" {
+    var p = Parser.init(testing.allocator, "-(x % 5) + !flag");
+    const node = try p.parseStatement();
+    defer node.deinit(testing.allocator);
+    try testing.expectEqual(ast.BinaryOperator.plus, node.binary_expr.operator);
+    try testing.expectEqual(ast.UnaryOperator.minus, node.binary_expr.left.unary_expr.operator);
+    try testing.expectEqual(ast.UnaryOperator.not, node.binary_expr.right.unary_expr.operator);
+}
+
+test "Parser bitwise and shift operators" {
+    var p = Parser.init(testing.allocator, "a << 2 | b & 3 ^ c >> 1");
+    const node = try p.parseStatement();
+    defer node.deinit(testing.allocator);
+    try testing.expectEqual(ast.BinaryOperator.bitwise_or, node.binary_expr.operator);
 }

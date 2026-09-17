@@ -9,7 +9,7 @@ Macros Language Formal Specification
 
 1. Executive Summary & Design Principles
 ========================================
-Macros (``macros``) is the high-level, computationally sovereign programming language of MicrOS (µOS). It is designed to serve as both an interactive orchestration environment for human architects and AI agents, and a standalone systems application language capable of self-hosting and direct kernel interaction.
+Macros (``macros``) is the high-level, freestanding systems programming language of MicrOS (µOS). It is designed to serve as both an interactive orchestration environment for human architects and AI agents, and a standalone systems application language capable of self-hosting and direct kernel interaction.
 
 Core Design Directives:
 -----------------------
@@ -31,7 +31,9 @@ Token Classes:
 - **String Literals**: Double-quoted UTF-8 sequences ``"..."``.
 - **Single-Line Comments**: ``// ... \n`` (skipped during tokenization without mutating adjacent punctuation).
 - **Operators**:
-  - Arithmetic: ``+``, ``-``, ``*``, ``/``
+  - Arithmetic: ``+``, ``-``, ``*``, ``/``, ``%``
+  - Bitwise: ``&``, ``|``, ``^``, ``<<``, ``>>``
+  - Unary: ``-``, ``!``
   - Equality: ``==``, ``!=``
   - Relational: ``<``, ``<=``, ``>``, ``>=``
   - Assignment: ``=``
@@ -52,8 +54,17 @@ Token Classes:
    Block          ::= "{" Statement* "}"
    AssignStmt     ::= Identifier "=" Expression ";"
    ExprStmt       ::= Expression ";"?
-   Expression     ::= Primary (BinaryOp Primary)*
-   BinaryOp       ::= "+" | "-" | "*" | "/" | "==" | "!=" | "<" | "<=" | ">" | ">="
+   Expression     ::= LogicalOr
+   LogicalOr      ::= BitwiseOr
+   BitwiseOr      ::= BitwiseXor ("|" BitwiseXor)*
+   BitwiseXor     ::= BitwiseAnd ("^" BitwiseAnd)*
+   BitwiseAnd     ::= Equality ("&" Equality)*
+   Equality       ::= Relational (("==" | "!=") Relational)*
+   Relational     ::= Shift (("<" | "<=" | ">" | ">=") Shift)*
+   Shift          ::= Additive (("<<" | ">>") Additive)*
+   Additive       ::= Multiplicative (("+" | "-") Multiplicative)*
+   Multiplicative ::= Unary (("*" | "/" | "%") Unary)*
+   Unary          ::= ("-" | "!") Unary | Primary
    Primary        ::= Number | String | Boolean | Identifier | CallExpr | "(" Expression ")"
    CallExpr       ::= Identifier "(" ArgumentList? ")"
    ArgumentList   ::= Expression ("," Expression)*

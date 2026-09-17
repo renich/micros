@@ -23,6 +23,7 @@ pub const tracer = @import("macros/tracer.zig");
 pub const serializer = @import("macros/serializer.zig");
 pub const codegen_x86_64 = @import("macros/codegen_x86_64.zig");
 pub const module = @import("macros/module.zig");
+pub const builtins = @import("macros/builtins.zig");
 
 test "macros module tests 2" {
     _ = @import("macros/gc.zig");
@@ -31,4 +32,40 @@ test "macros module tests 2" {
     _ = @import("macros/serializer.zig");
     _ = @import("macros/codegen_x86_64.zig");
     _ = @import("macros/module.zig");
+    _ = @import("macros/builtins.zig");
+}
+
+test "macros full mathematical pipeline end-to-end" {
+    const testing = @import("std").testing;
+    const source =
+        \\fn compute() {
+        \\    x = 10;
+        \\    y = 3;
+        \\    mult = x * y;
+        \\    div = mult / 5;
+        \\    mod = div % 4;
+        \\    shl = mod << 3;
+        \\    masked = (shl | 1) & 15;
+        \\    neg = -masked;
+        \\    return neg;
+        \\}
+        \\return compute();
+    ;
+    var p = parser.Parser.init(testing.allocator, source);
+    var ch = chunk.Chunk.init();
+    defer ch.deinit(testing.allocator);
+    var comp = compiler.Compiler.init(testing.allocator, &ch);
+
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        defer stmt.deinit(testing.allocator);
+        try comp.compile(stmt);
+    }
+
+    var v = try vm.VM.init(testing.allocator, &ch);
+    defer v.deinit();
+    try v.run(0);
+
+    const res = try v.pop();
+    try testing.expectEqual(eval.Value{ .integer = -1 }, res);
 }
