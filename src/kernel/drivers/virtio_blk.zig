@@ -3,6 +3,7 @@
 // Zero libc, direct port I/O and page-aligned DMA ring buffers.
 
 const std = @import("std");
+const block = @import("block.zig");
 const io = @import("../arch/x86_64/io.zig");
 const pci = @import("pci.zig");
 const serial = @import("../serial.zig");
@@ -256,6 +257,48 @@ pub const VirtioBlkDevice = struct {
         }
         self.queue.last_used_idx = used_ptr.idx;
     }
+
+    pub fn blockDevice(self: *VirtioBlkDevice) block.BlockDevice {
+        var dev = block.BlockDevice{
+            .ptr = @ptrCast(self),
+            .vtable = &virtio_blk_vtable,
+            .total_sectors = self.capacity_sectors,
+            .sector_size = SECTOR_SIZE,
+        };
+        const dev_name = "virtio-blk";
+        @memcpy(dev.name[0..dev_name.len], dev_name);
+        return dev;
+    }
+
+    const virtio_blk_vtable = block.BlockDevice.VTable{
+        .readSector = vtableReadSector,
+        .writeSector = vtableWriteSector,
+        .readSectors = vtableReadSectors,
+        .writeSectors = vtableWriteSectors,
+        .flush = vtableFlush,
+    };
+
+    fn vtableReadSector(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
+        const self: *VirtioBlkDevice = @ptrCast(@alignCast(ctx));
+        return self.readSector(lba, buf);
+    }
+
+    fn vtableWriteSector(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
+        const self: *VirtioBlkDevice = @ptrCast(@alignCast(ctx));
+        return self.writeSector(lba, buf);
+    }
+
+    fn vtableReadSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
+        const self: *VirtioBlkDevice = @ptrCast(@alignCast(ctx));
+        return self.readSectors(lba, count, buf);
+    }
+
+    fn vtableWriteSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
+        const self: *VirtioBlkDevice = @ptrCast(@alignCast(ctx));
+        return self.writeSectors(lba, count, buf);
+    }
+
+    fn vtableFlush(_: *anyopaque) anyerror!void {}
 };
 
 fn readCapacity(io_port: u16) u64 {
@@ -299,4 +342,22 @@ test "virtio blk batch sector validation" {
     var small_buf: [511]u8 = undefined;
     try std.testing.expectError(error.BufferTooSmall, dev.readSectors(0, 1, &small_buf));
     try std.testing.expectError(error.SectorOutOfBounds, dev.readSectors(98, 4, &buf));
+}
+
+test "virtio blk polymorphic block device interface" {
+    var dev = VirtioBlkDevice{
+        .io_base = 0xC100,
+        .capacity_sectors = 500,
+        .queue = undefined,
+        .dma_buffer_virt = undefined,
+        .dma_buffer_phys = 0,
+        .initialized = true,
+    };
+    var bdev = dev.blockDevice();
+    try std.testing.expectEqual(@as(u64, 500), bdev.total_sectors);
+    try std.testing.expectEqual(@as(u32, 512), bdev.sector_size);
+    try std.testing.expect(std.mem.startsWith(u8, &bdev.name, "virtio-blk"));
+
+    var buf: [512]u8 = undefined;
+    try std.testing.expectError(error.SectorOutOfBounds, bdev.readSector(500, &buf));
 }

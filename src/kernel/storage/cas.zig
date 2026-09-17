@@ -5,7 +5,7 @@
 const std = @import("std");
 const block_cache = @import("block_cache.zig");
 const chunk_mod = @import("chunk.zig");
-const virtio_blk = @import("../drivers/virtio_blk.zig");
+const block = @import("../drivers/block.zig");
 
 pub const CAS_SUPERBLOCK_MAGIC: u32 = 0x4D494352; // "MICR"
 pub const CAS_SUPERBLOCK_VERSION: u32 = 1;
@@ -30,7 +30,7 @@ pub const CasEngine = struct {
     cache: *block_cache.BlockCache,
     superblock: CasSuperblock,
 
-    pub fn init(cache: *block_cache.BlockCache, dev: ?*virtio_blk.VirtioBlkDevice, total_sectors: u64) !CasEngine {
+    pub fn init(cache: *block_cache.BlockCache, dev: ?*block.BlockDevice, total_sectors: u64) !CasEngine {
         var sec_buf: [SECTOR_SIZE]u8 align(@alignOf(CasSuperblock)) = undefined;
         try cache.readSector(SECTOR_SUPERBLOCK, &sec_buf, dev);
 
@@ -53,7 +53,7 @@ pub const CasEngine = struct {
         self: *CasEngine,
         chunk_type: chunk_mod.ChunkType,
         payload: []const u8,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) ![chunk_mod.HASH_SIZE]u8 {
         if (payload.len > MAX_CHUNK_PAYLOAD_SIZE) return error.PayloadTooLarge;
         const hash = chunk_mod.computeBlake3Hash(payload);
@@ -77,7 +77,7 @@ pub const CasEngine = struct {
         self: *CasEngine,
         hash: *const [chunk_mod.HASH_SIZE]u8,
         out_buf: []u8,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) !usize {
         var curr_sec = SECTOR_FIRST_CHUNK;
         while (curr_sec < self.superblock.next_free_sector) {
@@ -100,7 +100,7 @@ pub const CasEngine = struct {
     pub fn putManifest(
         self: *CasEngine,
         manifest: *const chunk_mod.SystemManifest,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) ![chunk_mod.HASH_SIZE]u8 {
         try manifest.validate();
         const raw_bytes: [*]const u8 = @ptrCast(manifest);
@@ -110,7 +110,7 @@ pub const CasEngine = struct {
     pub fn getManifest(
         self: *CasEngine,
         hash: *const [chunk_mod.HASH_SIZE]u8,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) !chunk_mod.SystemManifest {
         var buf align(@alignOf(chunk_mod.SystemManifest)) = [_]u8{0} ** chunk_mod.SYSTEM_MANIFEST_SIZE;
         const read_len = try self.getChunk(hash, &buf, dev);
@@ -123,7 +123,7 @@ pub const CasEngine = struct {
     pub fn setRootHash(
         self: *CasEngine,
         root: *const [chunk_mod.HASH_SIZE]u8,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) !void {
         self.superblock.root_hash = root.*;
         self.superblock.generation += 1;
@@ -156,7 +156,7 @@ fn computeSbChecksum(sb: *const CasSuperblock) [chunk_mod.HASH_SIZE]u8 {
     return chunk_mod.computeBlake3Hash(raw[0..checksum_offset]);
 }
 
-fn writeSuperblock(cache: *block_cache.BlockCache, sb: *const CasSuperblock, dev: ?*virtio_blk.VirtioBlkDevice) !void {
+fn writeSuperblock(cache: *block_cache.BlockCache, sb: *const CasSuperblock, dev: ?*block.BlockDevice) !void {
     const raw: *const [SECTOR_SIZE]u8 = @ptrCast(@alignCast(sb));
     try cache.writeSector(SECTOR_SUPERBLOCK, raw, dev);
     try cache.flush(dev);
@@ -168,7 +168,7 @@ fn writeChunkData(
     hash: [chunk_mod.HASH_SIZE]u8,
     chunk_type: chunk_mod.ChunkType,
     payload: []const u8,
-    dev: ?*virtio_blk.VirtioBlkDevice,
+    dev: ?*block.BlockDevice,
 ) !void {
     var first_sec align(@alignOf(chunk_mod.CasChunkHeader)) = [_]u8{0} ** SECTOR_SIZE;
     const hdr: *chunk_mod.CasChunkHeader = @ptrCast(@alignCast(&first_sec));
@@ -200,7 +200,7 @@ fn readAndVerifyChunk(
     hdr: *const chunk_mod.CasChunkHeader,
     first_sec: *const [SECTOR_SIZE]u8,
     out_buf: []u8,
-    dev: ?*virtio_blk.VirtioBlkDevice,
+    dev: ?*block.BlockDevice,
 ) !usize {
     const payload_len = @as(usize, hdr.length);
     if (out_buf.len < payload_len) return error.BufferTooSmall;
@@ -271,4 +271,76 @@ test "cas engine put and get manifest round trip" {
     try std.testing.expectEqualSlices(u8, &manifest.source_hash, &retrieved.source_hash);
     try std.testing.expectEqual(manifest.dependency_count, retrieved.dependency_count);
     try std.testing.expectEqualSlices(u8, &manifest.dependencies[0], &retrieved.dependencies[0]);
+}
+
+test "cas engine operating over partition slice" {
+    const MockDisk = struct {
+        sectors: [200][SECTOR_SIZE]u8 = [_][SECTOR_SIZE]u8{[_]u8{0} ** SECTOR_SIZE} ** 200,
+        device: block.BlockDevice = undefined,
+
+        pub fn init(self: *@This()) *block.BlockDevice {
+            self.device = block.BlockDevice{
+                .ptr = @ptrCast(self),
+                .vtable = &vtable,
+                .total_sectors = 200,
+            };
+            return &self.device;
+        }
+
+        const vtable = block.BlockDevice.VTable{
+            .readSector = mockRead,
+            .writeSector = mockWrite,
+            .readSectors = mockReads,
+            .writeSectors = mockWrites,
+            .flush = mockFlush,
+        };
+
+        fn mockRead(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            @memcpy(buf, &self.sectors[lba]);
+        }
+
+        fn mockWrite(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            @memcpy(&self.sectors[lba], buf);
+        }
+
+        fn mockReads(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            for (0..count) |i| {
+                @memcpy(buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE], &self.sectors[lba + i]);
+            }
+        }
+
+        fn mockWrites(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            for (0..count) |i| {
+                @memcpy(&self.sectors[lba + i], buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
+            }
+        }
+
+        fn mockFlush(_: *anyopaque) anyerror!void {}
+    };
+
+    var raw_disk = MockDisk{};
+    const disk_dev = raw_disk.init();
+
+    @memset(&raw_disk.sectors[0], 0xEE);
+
+    var part = try block.PartitionBlockDevice.init(disk_dev, 50, 100, "cas_part");
+    const part_dev = part.blockDevice();
+
+    var cache = try block_cache.BlockCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    var cas = try CasEngine.init(&cache, part_dev, 100);
+    const hash = try cas.putChunk(.raw_blob, "Sovereign Partition Slice Test", part_dev);
+
+    var read_buf: [512]u8 = undefined;
+    const len = try cas.getChunk(&hash, &read_buf, part_dev);
+    try std.testing.expectEqualStrings("Sovereign Partition Slice Test", read_buf[0..len]);
+
+    try std.testing.expectEqual(@as(u8, 0xEE), raw_disk.sectors[0][0]);
+    const sb_magic = std.mem.readInt(u32, raw_disk.sectors[50][0..4], .little);
+    try std.testing.expectEqual(CAS_SUPERBLOCK_MAGIC, sb_magic);
 }

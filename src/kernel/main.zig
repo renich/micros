@@ -28,6 +28,7 @@ const ps2_kbd_mod = @import("drivers/ps2_kbd.zig");
 const pci_mod = @import("drivers/pci.zig");
 const virtio_net_mod = @import("drivers/virtio_net.zig");
 const virtio_blk_mod = @import("drivers/virtio_blk.zig");
+const block_mod = @import("drivers/block.zig");
 const block_cache_mod = @import("storage/block_cache.zig");
 const cas_mod = @import("storage/cas.zig");
 const cas_chunk_mod = @import("storage/chunk.zig");
@@ -67,6 +68,7 @@ var global_net_stack: ?net_mod.stack.NetworkStack = null;
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
 var global_sched: ?*fiber_mod.Scheduler = null;
 var global_virtio_blk: ?virtio_blk_mod.VirtioBlkDevice = null;
+var global_block_device: ?block_mod.BlockDevice = null;
 var global_block_cache: ?block_cache_mod.BlockCache = null;
 var global_cas: ?cas_mod.CasEngine = null;
 var global_actor_sources: [actor_mod.MAX_ACTORS]?[]const u8 = [_]?[]const u8{null} ** actor_mod.MAX_ACTORS;
@@ -469,14 +471,14 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
 
 fn casPutBridge(data: []const u8, out_hex: *[64]u8) anyerror!void {
     if (global_cas == null) return error.NoStorage;
-    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.raw_blob, data, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
 }
 
 fn casGetBridge(hex_hash: []const u8, out_buf: []u8) anyerror!usize {
     if (global_cas == null) return error.NoStorage;
-    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    const dev = if (global_block_device != null) &global_block_device.? else null;
     var raw_hash: [cas_chunk_mod.HASH_SIZE]u8 = undefined;
     try cas_chunk_mod.parseHexHash(hex_hash, &raw_hash);
     return try global_cas.?.getChunk(&raw_hash, out_buf, dev);
@@ -486,7 +488,7 @@ fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     if (global_cas == null) return error.NoStorage;
     if (actor_id >= actor_mod.MAX_ACTORS) return error.ActorNotFound;
     const src = global_actor_sources[actor_id] orelse return error.NoSourceRecorded;
-    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.actor_source, src, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
     try global_cas.?.setRootHash(&hash, dev);
@@ -499,7 +501,7 @@ fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
 
 fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u32 {
     if (global_cas == null) return error.NoStorage;
-    const dev = if (global_virtio_blk != null) &global_virtio_blk.? else null;
+    const dev = if (global_block_device != null) &global_block_device.? else null;
     var raw_hash: [cas_chunk_mod.HASH_SIZE]u8 = undefined;
     try cas_chunk_mod.parseHexHash(hex_hash, &raw_hash);
     var code_buf: [4096]u8 = undefined;
@@ -546,6 +548,7 @@ fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
         serial.writeString("\n");
         return false;
     };
+    global_block_device = global_virtio_blk.?.blockDevice();
 
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mblk \x1b[90m: \x1b[97mVirtIO-Blk persistent drive (capacity: \x1b[0m");
     serial.writeDec(global_virtio_blk.?.capacity_sectors);
@@ -561,10 +564,12 @@ fn initStorageEngines(allocator: std.mem.Allocator) void {
         return;
     };
 
+    const dev = if (global_block_device != null) &global_block_device.? else null;
+    const total_secs = if (dev != null) dev.?.total_sectors else 0;
     global_cas = cas_mod.CasEngine.init(
         &global_block_cache.?,
-        &global_virtio_blk.?,
-        global_virtio_blk.?.capacity_sectors,
+        dev,
+        total_secs,
     ) catch |err| {
         serial.writeString("[kernel] CAS engine init failed: ");
         serial.writeString(@errorName(err));

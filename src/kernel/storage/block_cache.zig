@@ -3,7 +3,7 @@
 // Zero libc, explicit allocator, and mathematically enforced 4096-byte page alignment.
 
 const std = @import("std");
-const virtio_blk = @import("../drivers/virtio_blk.zig");
+const block = @import("../drivers/block.zig");
 
 pub const PAGE_SIZE: usize = 4096;
 pub const SECTOR_SIZE: usize = 512;
@@ -52,7 +52,7 @@ pub const BlockCache = struct {
         self: *BlockCache,
         sector: u64,
         out_buf: *[SECTOR_SIZE]u8,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) !void {
         const page_base = sector & ~@as(u64, SECTORS_PER_PAGE - 1);
         const sec_idx = @as(usize, @intCast(sector % SECTORS_PER_PAGE));
@@ -69,7 +69,7 @@ pub const BlockCache = struct {
         self: *BlockCache,
         sector: u64,
         in_buf: *const [SECTOR_SIZE]u8,
-        dev: ?*virtio_blk.VirtioBlkDevice,
+        dev: ?*block.BlockDevice,
     ) !void {
         const page_base = sector & ~@as(u64, SECTORS_PER_PAGE - 1);
         const sec_idx = @as(usize, @intCast(sector % SECTORS_PER_PAGE));
@@ -83,7 +83,7 @@ pub const BlockCache = struct {
         entry.dirty = true;
     }
 
-    pub fn flush(self: *BlockCache, dev: ?*virtio_blk.VirtioBlkDevice) !void {
+    pub fn flush(self: *BlockCache, dev: ?*block.BlockDevice) !void {
         const d = dev orelse return;
         for (&self.entries) |*entry| {
             if (entry.valid and entry.dirty) {
@@ -99,7 +99,7 @@ pub const BlockCache = struct {
         return t;
     }
 
-    fn lookupOrLoad(self: *BlockCache, page_base: u64, dev: ?*virtio_blk.VirtioBlkDevice) !usize {
+    fn lookupOrLoad(self: *BlockCache, page_base: u64, dev: ?*block.BlockDevice) !usize {
         for (0..MAX_CACHE_PAGES) |i| {
             if (self.entries[i].valid and self.entries[i].page_sector == page_base) {
                 return i;
@@ -108,7 +108,7 @@ pub const BlockCache = struct {
         return try self.evictAndLoad(page_base, dev);
     }
 
-    fn evictAndLoad(self: *BlockCache, page_base: u64, dev: ?*virtio_blk.VirtioBlkDevice) !usize {
+    fn evictAndLoad(self: *BlockCache, page_base: u64, dev: ?*block.BlockDevice) !usize {
         const victim_idx = self.findVictim();
         const victim = &self.entries[victim_idx];
 
@@ -142,18 +142,18 @@ pub const BlockCache = struct {
     }
 };
 
-fn flushVictim(victim: *CacheEntry, dev: ?*virtio_blk.VirtioBlkDevice) !void {
+fn flushVictim(victim: *CacheEntry, dev: ?*block.BlockDevice) !void {
     if (!victim.valid or !victim.dirty) return;
     const d = dev orelse return;
     try flushEntry(victim, d);
     victim.dirty = false;
 }
 
-fn flushEntry(entry: *CacheEntry, dev: *virtio_blk.VirtioBlkDevice) !void {
+fn flushEntry(entry: *CacheEntry, dev: *block.BlockDevice) !void {
     try dev.writeSectors(entry.page_sector, SECTORS_PER_PAGE, entry.data);
 }
 
-fn loadEntry(entry: *CacheEntry, page_base: u64, dev: *virtio_blk.VirtioBlkDevice) !void {
+fn loadEntry(entry: *CacheEntry, page_base: u64, dev: *block.BlockDevice) !void {
     try dev.readSectors(page_base, SECTORS_PER_PAGE, entry.data);
 }
 
