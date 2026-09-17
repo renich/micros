@@ -21,6 +21,8 @@ pub const block_cache = @import("kernel/storage/block_cache.zig");
 pub const cas_chunk = @import("kernel/storage/chunk.zig");
 pub const cas = @import("kernel/storage/cas.zig");
 pub const fat32 = @import("kernel/storage/fat32.zig");
+pub const rebuild = @import("kernel/storage/rebuild.zig");
+pub const storage_abi = @import("kernel/storage/storage_abi.zig");
 pub const pe_emitter = @import("boot/pe_emitter.zig");
 pub const net = @import("kernel/net.zig");
 pub const ai = @import("kernel/ai.zig");
@@ -49,6 +51,8 @@ test "kernel module tests" {
     _ = @import("kernel/storage/chunk.zig");
     _ = @import("kernel/storage/cas.zig");
     _ = @import("kernel/storage/fat32.zig");
+    _ = @import("kernel/storage/rebuild.zig");
+    _ = @import("kernel/storage/storage_abi.zig");
     _ = @import("boot/pe_emitter.zig");
     _ = @import("kernel/net.zig");
     _ = @import("kernel/ai.zig");

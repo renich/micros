@@ -13,6 +13,7 @@ pub const BlockDevice = struct {
     total_sectors: u64,
     sector_size: u32 = SECTOR_SIZE,
     name: [32]u8 = [_]u8{0} ** 32,
+    is_boot_media: bool = false,
 
     pub const VTable = struct {
         readSector: *const fn (ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void,

@@ -25,6 +25,9 @@ const WindowManager = compositor_mod.WindowManager;
 const WindowMode = compositor_mod.WindowMode;
 const Canvas = compositor_mod.Canvas;
 const PointerState = compositor_mod.PointerState;
+pub const storage_abi = @import("storage/storage_abi.zig");
+pub const registerBlockDevice = storage_abi.registerBlockDevice;
+pub const setRebuildEngine = storage_abi.setRebuildEngine;
 
 pub const AbiContext = struct {
     registry: *ActorRegistry,
@@ -527,6 +530,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_window_draw_string", Value{ .native = nativeSysWindowDrawString });
     try vm.globals.put("sys_compositor_flush", Value{ .native = nativeSysCompositorFlush });
     try vm.globals.put("sys_pointer_read", Value{ .native = nativeSysPointerRead });
+    try storage_abi.registerStorageSyscalls(vm);
 }
 
 pub const registerBindings = registerSyscalls;
