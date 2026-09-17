@@ -119,6 +119,8 @@ Detailed architectural specifications and roadmaps are located in `docs/ <docs/R
 * `MicrOS Genesis Blueprint <docs/micros_genesis_plan.rst>`_: The complete manifesto and master plan.
 * `MicrOS Story: 38 Milliseconds to Light <docs/micros-story.rst>`_: Narrative walkthrough of a day on sovereign silicon.
 * `Master Technical Specification <docs/technical/spec.rst>`_: Substrate, CSpace capability tokens, and syscall ABI.
+* `Sovereign Storage Substrate <docs/technical/specs/sovereign-storage-substrate.rst>`_: VirtIO-Blk driver, LRU block cache, and BLAKE3 CAS engine.
+* `Sovereign Interactive Harness <docs/technical/specs/sovereign-interactive-harness.rst>`_: Unified input, REPL dispatcher, and live actor spawning.
 * `Sovereign Gemini Orchestrator <docs/technical/specs/sovereign-gemini-orchestrator.rst>`_: Freestanding TLS 1.3 and AI loop.
 * `Macros Language Specification <docs/technical/specs/macros-lang.rst>`_: Syntax, bytecode VM, and Immix GC mechanics.
 

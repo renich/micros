@@ -26,3 +26,8 @@ Agents must never hallucinate project state. Before modifying files, an agent mu
 - `macros_lang_dev`: AST generation, Lexer, Parser, and Immix GC for the Macros language.
 - `measured_architect`: Long-term evolutionary design, Phase 0->4 alignment, and SOLID principles.
 - `extreme_adversary`: Zero-trust security auditor hunting for memory leaks, syscall hazards, and undefined behavior.
+
+## 4. Storage & Persistence Invariants
+- **Content-Addressed Objects**: All persistent entities (actor source, bytecode, state manifests) must be addressed via 256-bit BLAKE3 hashes. No hierarchical POSIX filesystem abstractions or mutable inodes in the kernel.
+- **Sector Alignment**: All disk transfer buffers and cache frames must mathematically enforce 512-byte sector and 4096-byte page alignment.
+- **Atomic Superblock Updates**: The storage superblock must only advance monotonically via generation counter upon verified flush.

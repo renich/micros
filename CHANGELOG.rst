@@ -10,7 +10,10 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
-.. rubric:: Added
+- **Milestone 14 (Persistent Sovereign Storage Substrate)**:
+  - Authored Master Technical Specification (``docs/technical/specs/sovereign-storage-substrate.rst``, ``SPEC-TECH-STORAGE-001``) and project roadmap (``docs/project/roadmaps/milestone-14-sovereign-storage.rst``) defining the VirtIO-Blk driver, 64-page LRU block cache, and BLAKE3 Content-Addressed Storage (CAS) engine.
+  - Linked storage specification into master documentation index (``docs/technical/spec.rst``, ``docs/index.rst``, ``README.rst``) and verified 100% bidirectional traceability (``make -C tools test``).
+  - Updated ``AGENTS.md`` with storage and persistence invariants (sector boundary alignment, 4096-byte DMA alignment, BLAKE3 content addressing, zero POSIX filesystems).
 
 - **Milestone 13 (Interactive Human-AI Construction Loop)**:
   - Implemented interactive line editor and command loop in ``lib/macros/harness.mx`` supporting ``status``, ``actors``, ``clear``, ``kill <id>``, ``ai <prompt>``, and ``exit``.

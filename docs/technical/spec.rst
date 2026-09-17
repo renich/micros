@@ -27,6 +27,7 @@ Technical Sub-Specifications
    specs/sovereign-harness-protocol
    specs/sovereign-gemini-orchestrator
    specs/sovereign-interactive-harness
+   specs/sovereign-storage-substrate
 
 Core Architecture Principles
 ============================
