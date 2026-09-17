@@ -6,6 +6,16 @@ test_*.zig
 !src/sys/*_test.zig
 !src/macros/*_test.zig
 tools/bin/
+tools/micros-fb-verify
+tools/micros-lint
+tools/micros-sym
+tools/micros-addr2line
+tools/micros-telem
 tools/.zig-cache/
 esp/
 docs/_build/
+*.lock
+*.log
+*.bak
+*.swp
+*~

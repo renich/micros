@@ -151,8 +151,8 @@ elif [[ "$MODE" == "uefi" ]]; then
         -m 512M
         -drive "if=pflash,format=raw,readonly=on,file=$OVMF_IMAGE"
         -drive "format=raw,file=fat:rw:$ESP_DIR"
-        -netdev user,id=net0
-        -device virtio-net-pci,netdev=net0
+        -netdev "user,id=net0"
+        -device "virtio-net-pci,netdev=net0"
         -serial "file:$TMP_SERIAL"
         -display none
         -no-reboot

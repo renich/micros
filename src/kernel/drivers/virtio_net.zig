@@ -177,7 +177,6 @@ pub const VirtioNetDevice = struct {
         }
     }
 
-
     pub fn pollReceive(self: *VirtioNetDevice, out_buffer: []u8) ?usize {
         if (self.rx_queue.last_used_idx == self.rx_queue.used.idx) return null;
 

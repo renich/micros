@@ -85,7 +85,7 @@ pub const AiClient = struct {
 
 fn checkRstDirective(src: []const u8, dir: []const u8, out_buf: []u8) ?usize {
     const pos = std.mem.indexOf(u8, src, dir) orelse return null;
-    return parseRstBlockBody(src[pos + dir.len..], out_buf);
+    return parseRstBlockBody(src[pos + dir.len ..], out_buf);
 }
 
 fn extractRstCodeBlock(src: []const u8, out_buf: []u8) ?usize {

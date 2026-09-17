@@ -371,7 +371,6 @@ pub const NetworkStack = struct {
         return to_read;
     }
 
-
     pub fn closeTcp(self: *NetworkStack) !void {
         const client = &(self.tcp_client orelse return);
         if (client.state == .established) {

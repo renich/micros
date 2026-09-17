@@ -49,11 +49,11 @@ test-sandbox: all
 ## test-qemu: Alias for test-sandbox
 test-qemu: test-sandbox
 
-## clean: Remove build artifacts and Zig caches
+## clean: Remove build artifacts, Zig caches, and ephemeral outputs
 clean:
 	@echo "=> Cleaning workspace..."
 	$(MAKE) -C tools clean
-	rm -rf $(OUT_DIR) $(CACHE_DIR)
+	rm -rf $(OUT_DIR) $(CACHE_DIR) build docs/_build esp
 	@echo "=> Clean complete."
 
 ## run: Execute the sandbox (micros-init)

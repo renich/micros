@@ -48,15 +48,9 @@ pub fn build(b: *std.Build) void {
     const ai_api_key = b.option([]const u8, "ai-api-key", "Resident AI API Key") orelse
         (b.option([]const u8, "gemini-api-key", "Legacy Gemini API Key alias") orelse "");
     const ai_model = b.option([]const u8, "ai-model", "Resident AI Model name") orelse
-        (if (std.mem.eql(u8, ai_provider_str, "openai")) "gpt-4o"
-        else if (std.mem.eql(u8, ai_provider_str, "anthropic")) "claude-3-7-sonnet"
-        else if (std.mem.eql(u8, ai_provider_str, "local_http")) "llama3.3:70b"
-        else "gemini-3.8-flash");
+        (if (std.mem.eql(u8, ai_provider_str, "openai")) "gpt-4o" else if (std.mem.eql(u8, ai_provider_str, "anthropic")) "claude-3-7-sonnet" else if (std.mem.eql(u8, ai_provider_str, "local_http")) "llama3.3:70b" else "gemini-3.8-flash");
     const ai_endpoint = b.option([]const u8, "ai-endpoint", "Resident AI endpoint host") orelse
-        (if (std.mem.eql(u8, ai_provider_str, "openai")) "api.openai.com"
-        else if (std.mem.eql(u8, ai_provider_str, "anthropic")) "api.anthropic.com"
-        else if (std.mem.eql(u8, ai_provider_str, "local_http")) "10.0.2.2"
-        else "generativelanguage.googleapis.com");
+        (if (std.mem.eql(u8, ai_provider_str, "openai")) "api.openai.com" else if (std.mem.eql(u8, ai_provider_str, "anthropic")) "api.anthropic.com" else if (std.mem.eql(u8, ai_provider_str, "local_http")) "10.0.2.2" else "generativelanguage.googleapis.com");
     const ai_port = b.option(u16, "ai-port", "Resident AI port (default: 443)") orelse
         (if (std.mem.eql(u8, ai_provider_str, "local_http")) @as(u16, 11434) else @as(u16, 443));
     const ai_use_tls = b.option(bool, "ai-use-tls", "Enable TLS 1.3 encryption (default: true)") orelse
