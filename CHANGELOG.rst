@@ -10,6 +10,13 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 18 Foundation (Memory Lifecycle, Preemption & Semantic CAS Manifests)**:
+  - **Dynamic Chunk Lifecycle & Use-After-Free Elimination**: Refactored ``src/macros/vm.zig`` (``nativeExecChunk`` and ``executeChunk``) to manage bytecode chunks dynamically within ``dynamic_chunks``, unwinding call frames on error and eliminating local stack reference escapes and memory leaks.
+  - **Adaptive GC Threshold & Bounded Hole Allocation**: Hardened Immix GC in ``src/macros/gc.zig`` with adaptive allocation thresholds (``DEFAULT_GC_THRESHOLD = 64 KiB``, ``GC_GROWTH_FACTOR = 2``, ``MAX_HEAP_BLOCKS = 512``), mathematical hole-extent bounding in ``Block.resetHoles``, and explicit memory zeroing (``@memset(0)``) during line recycling to eliminate stale pointer revival.
+  - **Cooperative Instruction Preemption**: Implemented opcode dispatch preemption quantum (``PREEMPTION_QUANTUM = 1024``) and configurable yield hooks in ``src/macros/vm.zig``, cooperatively yielding CPU control via ``fiber.yield()`` during long-running compute loops.
+  - **Stage 1 Multi-Level Lexical Closures**: Expanded self-hosting compiler in ``lib/macros/compiler.mx`` and ``lib/macros/parser.mx`` with ``op_closure``, ``op_get_upvalue``, ``op_set_upvalue``, and ``op_close_upvalue``, supporting multi-level lexical variable capture across arbitrary parent scopes (``outer -> middle -> inner``) and forward-progress error guards.
+  - **Sector-Aligned Semantic CAS Manifests**: Implemented structured 448-byte ``SystemManifest`` (``SYSTEM_MANIFEST_MAGIC = 0x4D49434D``) in ``src/kernel/storage/chunk.zig`` and ``cas.zig``, enforcing exact 512-byte single-sector alignment (64-byte header + 448-byte body) with BLAKE3 cryptographic verification.
+
 - **Milestone 17 (Sovereign Language Self-Hosting & Native Codegen)**:
   - **Deterministic Binary Serialization & Hashing**: Implemented ``src/macros/serializer.zig`` defining a canonical, packed binary specification (``MCR1`` magic, 64-byte zero-padded header, explicit constant tags, little-endian integers) with zero uninitialized padding leaks and zero memory pointer dependence, enabling mathematical fixed-point reproducibility (``BLAKE3(Chunk 1) == BLAKE3(Chunk 2)``).
   - **Stage 1 Self-Hosting Compiler**: Implemented pure Macros compiler pipeline in ``lib/macros/`` (``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) featuring recursive descent parsing, AST construction, lexical scoping, forward-jump backpatching, and deterministic constant pool allocation.
