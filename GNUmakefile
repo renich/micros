@@ -7,8 +7,9 @@ SHELL := /bin/bash
 
 # Configurable tools
 ZIG ?= zig
+-include .env
 AI_PROVIDER ?= gemini
-AI_API_KEY ?= $(GEMINI_API_KEY)
+AI_API_KEY ?= $(or $(GEMINI_API_KEY),$(AI_KEY))
 AI_MODEL ?=
 AI_ENDPOINT ?=
 AI_PORT ?=

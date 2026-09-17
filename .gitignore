@@ -1,6 +1,8 @@
 .zig-cache/
 zig-out/
 build/
+.env
+.env.*
 *.patch
 test_*.zig
 !src/sys/*_test.zig
