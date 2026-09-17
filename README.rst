@@ -11,7 +11,7 @@ MicrOS (µOS)
 :Project: MicrOS (µOS)
 :Substrate: Zig 0.16.0 (Zero-Libc Microkernel)
 :Applications: Macros (Statically Typed, Immix Mark-Region GC, Green Fibers)
-:Status: Reactive Vector Compositor & Multi-Actor Windowing (Milestone 16)
+:Status: Sovereign Language Self-Hosting & Native Codegen (Milestone 17)
 :License: GPLv3 or later
 
 |

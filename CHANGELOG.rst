@@ -10,6 +10,15 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 17 (Sovereign Language Self-Hosting & Native Codegen)**:
+  - **Deterministic Binary Serialization & Hashing**: Implemented ``src/macros/serializer.zig`` defining a canonical, packed binary specification (``MCR1`` magic, 64-byte zero-padded header, explicit constant tags, little-endian integers) with zero uninitialized padding leaks and zero memory pointer dependence, enabling mathematical fixed-point reproducibility (``BLAKE3(Chunk 1) == BLAKE3(Chunk 2)``).
+  - **Stage 1 Self-Hosting Compiler**: Implemented pure Macros compiler pipeline in ``lib/macros/`` (``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) featuring recursive descent parsing, AST construction, lexical scoping, forward-jump backpatching, and deterministic constant pool allocation.
+  - **Consolidated Immix Mark-Region GC**: Unified runtime memory management in ``src/macros/gc.zig`` with 32 KiB page-aligned blocks (``align(4096)``), 256-byte line granularity, 3-state line lifecycle (``free``, ``allocated``, ``marked``), zeroed hole memory recycling, and multi-root scanning across VM stack, globals, and chunk constants.
+  - **Direct x86_64 Machine Code Emitter & W^X Protection**: Implemented ``src/macros/codegen_x86_64.zig`` translating bytecode opcodes directly to native x86_64 machine instructions (integer arithmetic, local variables, relative control flow jumps) with strict Write XOR Execute (W^X) hardware page protection enforced via ``sys.mem.protect``.
+  - **Content-Addressed Module Protocol**: Implemented ``src/macros/module.zig`` supporting cryptographic imports (``import cas("b3:<hash>")`` and ``import bundle("<path>")``) with zero-trust BLAKE3 payload verification, isolated compilation domains, and in-memory caching.
+  - **Genesis Bundle Embedding & Verification**: Packed complete self-hosting compiler sources (7 entries) into ``src/kernel/genesis.mcb``, verified 100% test passage across 186 unit tests with zero Ten Commandments violations, 100% specification traceability, and successful headless QEMU boot validation.
+  - **Master Specification & Roadmap**: Authored Master Technical Specification ``docs/technical/specs/self-hosting-macros.rst`` (``SPEC-TECH-LANG-002``) and updated roadmap ``docs/project/roadmaps/milestone-17-language-self-hosting.rst`` to Completed.
+
 - **Milestone 16 (Reactive Vector Compositor & Multi-Actor Windowing)**:
   - **Double-Buffered Backbuffer & Page Alignment**: Implemented ``src/kernel/compositor/canvas.zig`` managing a 1280x800x32bpp backbuffer in kernel RAM with mathematically enforced 4096-byte page alignment (``align(4096)``) to eliminate tearing, bus saturation, and scanline flicker.
   - **Bounded AABB Damage Pipeline**: Implemented Axis-Aligned Bounding Box (AABB) dirty rectangle tracking (``DamageRect``) with ``unionWith``, ``intersectWith``, and point/rect accumulation, transferring only dirty scanline extents to physical VRAM during vertical refresh cycles.
