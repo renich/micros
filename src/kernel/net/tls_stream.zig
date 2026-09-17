@@ -127,11 +127,6 @@ pub const TcpStreamAdapter = struct {
 
 fn drainFn(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
     const adapter: *TcpStreamAdapter = @alignCast(@fieldParentPtr("writer_interface", w));
-    serial.writeString("[tls] drainFn: buffered=");
-    serial.writeHex(@intCast(w.buffered().len));
-    serial.writeString(" data.len=");
-    serial.writeHex(@intCast(data.len));
-    serial.writeString("\n");
     if (w.buffered().len > 0) {
         adapter.stack.sendTcpData(w.buffered()) catch return error.WriteFailed;
         w.end = 0;
@@ -165,35 +160,10 @@ fn waitForRx(adapter: *TcpStreamAdapter) std.Io.Reader.StreamError!void {
     }
     if (adapter.stack.tcp_rx_len == 0) {
         if (isTcpEof(adapter)) {
-            serial.writeString("[tls] streamFn: EOF (remote closed connection)\n");
             return error.EndOfStream;
         }
         serial.writeString("[tls] streamFn: TIMEOUT waiting for RX!\n");
         return error.ReadFailed;
-    }
-}
-
-fn logTlsRecords(dest: []const u8, read_len: usize) void {
-    var off: usize = 0;
-    while (off + 5 <= read_len) {
-        const ct = dest[off];
-        const v = (@as(u16, dest[off + 1]) << 8) | dest[off + 2];
-        const rlen = (@as(u16, dest[off + 3]) << 8) | dest[off + 4];
-        serial.writeString("[tls] Record @");
-        serial.writeHex(@intCast(off));
-        serial.writeString(" ct=0x");
-        serial.writeHex(ct);
-        serial.writeString(" ver=0x");
-        serial.writeHex(v);
-        serial.writeString(" len=0x");
-        serial.writeHex(rlen);
-        serial.writeString("\n");
-        off += 5 + rlen;
-    }
-    if (off < read_len) {
-        serial.writeString("[tls] Incomplete trailing record bytes=");
-        serial.writeHex(@intCast(read_len - off));
-        serial.writeString("\n");
     }
 }
 
@@ -202,19 +172,12 @@ fn streamFn(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Re
     const max_to_write = @intFromEnum(limit);
     if (max_to_write == 0) return 0;
 
-    serial.writeString("[tls] streamFn: waiting for RX...\n");
     try waitForRx(adapter);
-
-    serial.writeString("[tls] streamFn: got RX data! len=");
-    serial.writeHex(@intCast(adapter.stack.tcp_rx_len));
-    serial.writeString("\n");
 
     const dest = limit.slice(w.writableSliceGreedy(1) catch return error.WriteFailed);
     const read_len = adapter.stack.readTcpData(dest);
     if (read_len == 0) return error.EndOfStream;
     w.advance(read_len);
-
-    logTlsRecords(dest, read_len);
     return read_len;
 }
 

@@ -201,11 +201,10 @@ fn cmd_ai(prompt) {
         console_writeln("[ai] No response or auth failure (check API key / AI_PROVIDER).", CLR_WARN);
         return 0;
     }
-    console_writeln("*** AI COGNITIVE STREAM ***", CLR_MUTED);
     console_writeln(resp, CLR_TEXT);
     code = extract_code(resp);
     if (len(code) > 0) {
-        console_writeln("[ai] Executable code block detected. Spawning...", CLR_GREEN);
+        console_writeln("[ai] Synthesized Actor code detected. Spawning...", CLR_GREEN);
         actor_id = sys_actor_spawn_code("child_worker", code);
         if (actor_id < 0) {
             console_writeln("[kernel] Failed to compile or spawn actor from AI code.", CLR_WARN);

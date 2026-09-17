@@ -15,6 +15,7 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
   - **Child Actor Fault Containment**: Hardened ``nativeSysActorSpawnCode`` to catch script compilation errors and return ``-1`` gracefully, preventing VM runtime panics in Genesis Actor 0 when resident AI returns malformed code.
   - **Decomposed Compilation & VM Setup**: Refactored ``spawnActorFromCode`` in ``src/kernel/main.zig`` into modular helpers (``compileActorSource``, ``attachActorVm``) adhering strictly to the 40-line function limit.
   - **Linux-Kernel Aesthetic & Dark Theme**: Replaced decorative ASCII box borders and bright banner styling with an elegant, minimalist Linux-kernel-inspired boot typography (``µOS (MicrOS) version 0.14.0-sovereign``) and dark slate theme in ``lib/macros/harness.mx``.
+  - **Eliminated Redundant AI Display & Low-Level Packet Noise**: Removed double printing of AI responses between kernel serial write and harness console display, silenced verbose TCP segment and TLS record packet trace logging, and formatted response lengths in decimal for an elegant terminal experience.
   - **Comprehensive Colocated Testing**: Added unit tests in ``src/kernel/ai/client.zig`` validating extraction from live Gemini responses and in ``src/kernel/harness_bindings.zig`` validating fault-tolerant child actor spawning.
 
 - **Zero-Crash TLS 1.3 & ABI Calling Convention Hardening**:

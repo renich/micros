@@ -176,16 +176,12 @@ fn runDnsResolution() ?[4]u8 {
 
 fn runTcpConnection(ip: [4]u8) bool {
     if (global_net_stack == null) return false;
-    serial.writeString("[kernel] Connecting to Resident AI on port ");
-    serial.writeHex(config.ai_port);
-    serial.writeString("...\n");
     global_net_stack.?.connectTcp(ip, config.ai_port) catch |err| {
         serial.writeString("[kernel] TCP connection failed: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");
         return false;
     };
-    serial.writeString("[net] TCP 3-Way Handshake ESTABLISHED to Resident AI!\n");
     return true;
 }
 
@@ -198,9 +194,6 @@ fn runTlsHandshake() void {
         global_tls_ready = true;
         return;
     }
-    serial.writeString("[kernel] Initiating pure Zig TLS 1.3 handshake with ");
-    serial.writeString(config.ai_endpoint);
-    serial.writeString("...\n");
     global_tls_adapter.init(&global_net_stack.?);
     global_tls_adapter.handshake(config.ai_endpoint) catch |err| {
         serial.writeString("[kernel] TLS 1.3 handshake failed: ");
@@ -210,7 +203,6 @@ fn runTlsHandshake() void {
         return;
     };
     global_tls_ready = true;
-    serial.writeString("[net] TLS 1.3 Handshake ESTABLISHED with Resident AI!\n");
 }
 
 var global_ai_client: ai_mod.client.AiClient = undefined;
@@ -240,7 +232,7 @@ fn readAiResponse(out_text: []u8) usize {
     const read_bytes = collectHttpStream(&ai_http_resp_buf);
     if (read_bytes == 0) return 0;
     serial.writeString("[ai] Response received (");
-    serial.writeHex(@intCast(read_bytes));
+    serial.writeDec(read_bytes);
     serial.writeString(" bytes)\n");
 
     const resp = net_mod.http.parseResponseHeaders(&ai_http_resp_buf, read_bytes) catch |err| {
@@ -252,15 +244,12 @@ fn readAiResponse(out_text: []u8) usize {
 
     if (resp.status_code != net_mod.http.HTTP_OK) {
         serial.writeString("[ai] HTTP status: ");
-        serial.writeHex(resp.status_code);
+        serial.writeDec(resp.status_code);
         serial.writeString("\n");
     }
 
     if (resp.body_offset < read_bytes) {
         if (global_ai_client.extractResponseText(ai_http_resp_buf[resp.body_offset..read_bytes], out_text)) |tlen| {
-            serial.writeString("\n*** [RESIDENT AI SOVEREIGN INTELLIGENCE ONLINE] ***\n");
-            serial.writeString(out_text[0..tlen]);
-            serial.writeString("\n***************************************************\n\n");
             return tlen;
         }
         logRawBody(read_bytes, resp.body_offset);

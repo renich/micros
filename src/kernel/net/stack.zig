@@ -92,16 +92,6 @@ pub const NetworkStack = struct {
         const data = if (payload.len > hdr_len) payload[hdr_len..] else &[_]u8{};
         const was_syn_sent = (client.state == .syn_sent);
 
-        serial.writeString("[net] TCP segment rx: flags=0x");
-        serial.writeHex(tcp_hdr.flags);
-        serial.writeString(" seq=0x");
-        serial.writeHex(tcp_hdr.seq_num);
-        serial.writeString(" ack=0x");
-        serial.writeHex(tcp_hdr.ack_num);
-        serial.writeString(" data_len=");
-        serial.writeHex(@intCast(data.len));
-        serial.writeString("\n");
-
         if (!client.processSegment(tcp_hdr, data)) return;
 
         if (data.len > 0) {
@@ -319,10 +309,6 @@ pub const NetworkStack = struct {
     pub fn sendTcpData(self: *NetworkStack, data: []const u8) !void {
         const client = &(self.tcp_client orelse return error.NotConnected);
         if (client.state != .established) return error.NotConnected;
-
-        serial.writeString("[net] sendTcpData: total bytes=");
-        serial.writeHex(@intCast(data.len));
-        serial.writeString("\n");
 
         var offset: usize = 0;
         const TCP_MSS: usize = 1460;
