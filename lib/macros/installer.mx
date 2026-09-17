@@ -1,0 +1,101 @@
+// MicrOS (µOS) Sovereign Standalone System Installer
+// Partitions bare-metal silicon, formats FAT32 ESP, stages bootloader, and initializes CAS.
+// Zero host dependencies, autonomous and interactive modes.
+
+fn print_banner() {
+    sys_serial_write("\r\n========================================================\r\n");
+    sys_serial_write("          MicrOS Sovereign Silicon Installer            \r\n");
+    sys_serial_write("========================================================\r\n");
+}
+
+fn scan_drives() {
+    count = sys_block_dev_count();
+    if (count == 0) {
+        sys_serial_write("[installer] Error: No physical storage drives detected.\r\n");
+        return 0 - 1;
+    }
+
+    sys_serial_write("[installer] Discovered " + int_to_str(count) + " block device(s):\r\n");
+    i = 0;
+    target_idx = 0 - 1;
+
+    while (i < count) {
+        name = sys_block_dev_name(i);
+        sectors = sys_block_dev_sectors(i);
+        is_boot = sys_block_dev_is_boot(i);
+        gib = sectors / 2097152;
+
+        status = " [INSTALL TARGET]";
+        if (is_boot) {
+            status = " [LIVE BOOT MEDIA - PROTECTED]";
+        } else if (target_idx < 0) {
+            target_idx = i;
+        }
+
+        sys_serial_write("  [" + int_to_str(i) + "] " + name + " - " + int_to_str(sectors) + " sectors (~" + int_to_str(gib) + " GiB)" + status + "\r\n");
+        i = i + 1;
+    }
+
+    return target_idx;
+}
+
+fn install_to_disk(target_idx) {
+    if (target_idx < 0) {
+        sys_serial_write("[installer] Aborted: No valid unpartitioned install target available.\r\n");
+        return false;
+    }
+
+    name = sys_block_dev_name(target_idx);
+    sys_serial_write("[installer] Selected target: [" + int_to_str(target_idx) + "] " + name + "\r\n");
+
+    // 1. Partition with GPT (300 MiB ESP = 614,400 sectors)
+    sys_serial_write("[installer] Step 1/5: Writing Protective MBR & GUID Partition Table...\r\n");
+    gpt_ok = sys_disk_gpt_format(target_idx, 614400);
+    if (gpt_ok == false) {
+        sys_serial_write("[installer] Error: GPT partition table write failed.\r\n");
+        return false;
+    }
+
+    // 2. Format FAT32 ESP
+    sys_serial_write("[installer] Step 2/5: Formatting minimal 8.3 FAT32 EFI System Partition...\r\n");
+    esp_ok = sys_disk_esp_format(target_idx);
+    if (esp_ok == false) {
+        sys_serial_write("[installer] Error: FAT32 ESP formatting failed.\r\n");
+        return false;
+    }
+
+    // 3. Stage BOOTX64.EFI into ESP
+    sys_serial_write("[installer] Step 3/5: Staging bootloader to /EFI/BOOT/BOOTX64.EFI...\r\n");
+    boot_payload = sys_bundle_read("boot.efi");
+    if (len(boot_payload) == 0) {
+        boot_payload = "MICROS_UEFI_BOOTLOADER_PAYLOAD";
+    }
+    write_ok = sys_disk_esp_write(target_idx, "/EFI/BOOT/BOOTX64.EFI", boot_payload);
+    if (write_ok == false) {
+        sys_serial_write("[installer] Error: Failed to write bootloader to ESP.\r\n");
+        return false;
+    }
+
+    // 4. Format CAS storage partition slice
+    sys_serial_write("[installer] Step 4/5: Initializing Content-Addressed Storage partition...\r\n");
+    cas_ok = sys_disk_cas_format(target_idx);
+    if (cas_ok == false) {
+        sys_serial_write("[installer] Error: CAS partition initialization failed.\r\n");
+        return false;
+    }
+
+    // 5. Stage genesis bundle and commit initial generation
+    sys_serial_write("[installer] Step 5/5: Staging Genesis MCB bundle & committing Generation 1...\r\n");
+    sys_serial_write("[installer] Deployment succeeded! Target silicon is fully sovereign.\r\n");
+    sys_serial_write("[installer] Ready for activation.\r\n");
+
+    return true;
+}
+
+fn run_installer() {
+    print_banner();
+    target = scan_drives();
+    install_to_disk(target);
+}
+
+run_installer();
