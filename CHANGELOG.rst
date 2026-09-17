@@ -12,6 +12,28 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 
 .. rubric:: Added
 
+- **Comprehensive Documentation Review & Sphinx Build System**:
+  - Harmonized the entire ``docs/`` tree under Sphinx and Docutils, resolving all syntax warnings, title length mismatches, and forward slash formatting.
+  - Added native Sphinx configuration (``docs/conf.py``) enabling strict-mode (``-W``) zero-warning HTML compilation.
+  - Formatted all tables and overline/underline borders with exact character lengths across all specifications and roadmaps.
+  - Added formal roadmaps for Milestone 11 (Transport Security) and Milestone 12 (Resident AI Substrate).
+  - Linked all milestones (Phases 0-4, Milestones 8-12) and formal audits into master documentation index (``docs/index.rst``).
+
+- **Resident AI Cognitive Stream in reStructuredText**:
+  - Transitioned the Resident AI cognitive stream from Markdown triple backticks to pure reStructuredText directives (``.. code-block:: macros`` and ``.. code-block:: mx``) with 3-space indentation support.
+  - Engineered indentation-aware parser (``extractRstCodeBlock`` in ``src/kernel/ai/client.zig``) supporting header skipping, indentation normalization, and legacy Markdown fence fallback.
+  - Updated sovereign system prompt (``src/kernel/ai/provider.zig``) and deterministic offline mock (``src/kernel/ai/mock.zig``).
+  - Added unit test cases for 3-space and 4-space RST code-block parsing; expanded test suite to 108/108 passing tests with 0 Ten Commandments violations.
+
+- **Zero-Trust Forensic Audit & Specification Realignment**:
+  - Conducted full Zero-Trust forensic audit across all specifications, roadmaps, and source modules, publishing the formal compliance report at ``docs/project/audits/2026-09-17-full-documentation-audit.rst`` with **PASS: ZERO DEFECTS** certification.
+  - Remediated cross-reference hallucinations in ``macros-lang.rst``, ``macros-runtime.rst``, and ``self-hosting-macros.rst`` (mapping Immix GC to ``[US-GEM-008]``, fiber concurrency to ``[US-REN-010]``, and zero-libc AST execution to ``[US-REN-004]``).
+  - Realigned ``microshell-msh.rst`` and ``toolchain.rst`` to accurately map business user stories ``[US-REN-001]``, ``[US-REN-005]``, ``[US-REN-009]``, and ``[US-GEM-001..007]``.
+  - Specialized ``:Traced Stories:`` metadata across ``sovereign-capability-substrate.rst``, ``sovereign-harness-protocol.rst``, and ``sovereign-gemini-orchestrator.rst``.
+  - Upgraded ``tools/micros-spec-trace.bash`` to perform semantic bidirectional verification, verifying 20/20 user stories (100% coverage).
+  - Promoted ``phase-0-userspace-sandbox.rst`` and ``phase-1-bare-metal-substrate.rst`` to ``:Status: Completed & Verified``.
+  - Purged 7 leftover scratch test files from the workspace root.
+
 - **Milestone 12 (Pluggable Resident AI Subsystem & Bidirectional Sovereign Event Loop)**:
   - **Modular Resident AI Substrate**: Completely decoupled the kernel from any specific AI provider or model via ``src/kernel/ai/``. Added polymorphic client (``AiClient`` in ``src/kernel/ai/client.zig``) and extensible provider drivers for Google Gemini (``src/kernel/ai/gemini.zig``), OpenAI/vLLM/Ollama/DeepSeek (``src/kernel/ai/openai.zig``), and offline deterministic testing (``src/kernel/ai/mock.zig``).
   - **Bidirectional Sovereign Event Loop**: Microkernel event loop (``runSovereignEventLoop`` in ``src/kernel/main.zig``) exchanging multi-turn telemetry with the Resident AI in CSpace 0. The Resident AI evaluates machine state, declares operational policies, and dynamically compiles and executes emitted Macros (``.mx``) code on bare-metal hardware.
