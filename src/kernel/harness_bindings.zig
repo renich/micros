@@ -34,6 +34,9 @@ pub const HarnessContext = struct {
     cas_get_fn: ?*const fn (hex_hash: []const u8, out_buf: []u8) anyerror!usize = null,
     persist_actor_fn: ?*const fn (actor_id: u32, out_hex: *[64]u8) anyerror!void = null,
     spawn_cas_fn: ?*const fn (allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u32 = null,
+    grant_cap_fn: ?*const fn (target_actor: u32, source_slot: u32, rights_mask: u16) anyerror!bool = null,
+    draw_canvas_fn: ?*const fn (x: u32, y: u32, w: u32, h: u32, color: u32) void = null,
+    telemetry_fn: ?*const fn () ai_mod.tools.TelemetrySnapshot = null,
 };
 
 var active_ctx: ?*HarnessContext = null;
@@ -218,6 +221,41 @@ fn nativeSysAiExtractCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .string = "" };
 }
 
+var ai_tool_scratch: [8192]u8 = undefined;
+var ai_tool_res_buf: [1024]u8 = undefined;
+var ai_tool_storage_buf: [1024]u8 = undefined;
+
+fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    const resp = args[0].string;
+    const ctx = active_ctx orelse return error.NoContext;
+
+    const call = ai_mod.tool_parser.extractToolCall(resp, &ai_tool_scratch) orelse {
+        return Value{ .string = "" };
+    };
+
+    const disp_ctx = ai_mod.dispatcher.DispatcherContext{
+        .spawn_fn = ctx.spawn_code_fn,
+        .grant_fn = ctx.grant_cap_fn,
+        .cas_put_fn = ctx.cas_put_fn,
+        .cas_get_fn = ctx.cas_get_fn,
+        .draw_canvas_fn = ctx.draw_canvas_fn,
+        .telemetry_fn = ctx.telemetry_fn,
+    };
+    const disp = ai_mod.dispatcher.ToolDispatcher.init(
+        ctx.supervisor.cspace,
+        vm.allocator,
+        disp_ctx,
+        &ai_tool_storage_buf,
+    );
+
+    const result = disp.dispatch(call);
+    const len = try ai_mod.tool_parser.formatResultJson(result, &ai_tool_res_buf);
+    const duped = try vm.allocator.dupe(u8, ai_tool_res_buf[0..len]);
+    return Value{ .string = duped };
+}
+
 fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
@@ -318,6 +356,7 @@ pub fn registerBindings(vm: *VM) !void {
     try vm.globals.put("sys_kbd_read", Value{ .native = nativeSysKbdRead });
     try vm.globals.put("sys_ai_prompt", Value{ .native = nativeSysAiPrompt });
     try vm.globals.put("sys_ai_extract_code", Value{ .native = nativeSysAiExtractCode });
+    try vm.globals.put("sys_ai_tool_call", Value{ .native = nativeSysAiToolCall });
     try vm.globals.put("sys_actor_spawn_code", Value{ .native = nativeSysActorSpawnCode });
     try vm.globals.put("sys_yield", Value{ .native = nativeSysYield });
     try vm.globals.put("sys_actor_name", Value{ .native = nativeSysActorName });
@@ -525,4 +564,44 @@ test "Harness native AI extract and fault-tolerant spawn" {
     var fail_args = [_]Value{ Value{ .string = "broken" }, Value{ .string = "syntax error!!" } };
     const fail_val = try nativeSysActorSpawnCode(&vm, &fail_args);
     try std.testing.expectEqual(@as(i64, -1), fail_val.integer);
+}
+
+test "Harness native AI tool call execution" {
+    const allocator = std.testing.allocator;
+    var chunk = @import("../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var registry = ActorRegistry.init();
+    var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
+    defer supervisor.deinit(allocator);
+
+    _ = try supervisor.cspace.insert(@import("cap/capability.zig").Capability{
+        .cap_type = .actor_control,
+        .rights = @import("cap/capability.zig").Rights.READ | @import("cap/capability.zig").Rights.EXECUTE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+
+    var ctx = HarnessContext{
+        .registry = &registry,
+        .supervisor = supervisor,
+        .spawn_code_fn = testMockSpawn,
+    };
+    setContext(&ctx);
+    defer clearContext();
+
+    const tool_json = "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"spawn_actor\",\"args\":{\"name\":\"w\",\"source\":\"sys_actor_count();\"}}}]}}]}";
+    var args = [_]Value{Value{ .string = tool_json }};
+    const res_val = try nativeSysAiToolCall(&vm, &args);
+    defer allocator.free(res_val.string);
+    try std.testing.expect(std.mem.indexOf(u8, res_val.string, "\"status\":\"ok\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res_val.string, "\"actor_id\":7") != null);
+
+    var no_tool_args = [_]Value{Value{ .string = "Plain prose" }};
+    const empty_val = try nativeSysAiToolCall(&vm, &no_tool_args);
+    try std.testing.expectEqualStrings("", empty_val.string);
 }

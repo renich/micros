@@ -202,6 +202,12 @@ fn cmd_ai(prompt) {
         return 0;
     }
     console_writeln(resp, CLR_TEXT);
+    tool_res = sys_ai_tool_call(resp);
+    if (len(tool_res) > 0) {
+        console_writeln("[ai:tool] Executed: " + tool_res, CLR_GREEN);
+        render_inspector();
+        return 0;
+    }
     code = extract_code(resp);
     if (len(code) > 0) {
         console_writeln("[ai] Synthesized Actor code detected. Spawning...", CLR_GREEN);
@@ -213,7 +219,7 @@ fn cmd_ai(prompt) {
             render_inspector();
         }
     } else {
-        console_writeln("[ai] No executable code block found in AI response.", CLR_WARN);
+        console_writeln("[ai] No executable code block or tool call found.", CLR_WARN);
     }
     return 0;
 }

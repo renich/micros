@@ -49,6 +49,7 @@ const CAP_OBJ_IPC_RING: u32 = 2;
 const CAP_OBJ_BUNDLE: u32 = 3;
 const CAP_OBJ_NETWORK: u32 = 4;
 const CAP_OBJ_STORAGE: u32 = 5;
+const CAP_OBJ_ACTOR_CTRL: u32 = 6;
 
 const GENESIS_CSPACE_CAPACITY: usize = 64;
 const GENESIS_PAGE_TABLE_ROOT: u64 = 0;
@@ -289,7 +290,7 @@ fn logRawBody(read_bytes: usize, body_offset: usize) void {
 
 fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
     if (global_ai_client.config.provider_type == .mock) {
-        return global_ai_client.extractResponseText("", out_text) orelse 0;
+        return ai_mod.mock.generateResponse(prompt, out_text) catch 0;
     }
     if (!global_tls_ready) return 0;
     serial.writeString("[ai] Dispatching prompt to Resident AI (");
@@ -486,6 +487,28 @@ fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u
     return try spawnActorFromCode(allocator, "cas_restored", code_buf[0..len]);
 }
 
+fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerror!bool {
+    const target = global_registry.get(target_actor) orelse return error.ActorNotFound;
+    const genesis = global_registry.get(actor_mod.GENESIS_ACTOR_ID) orelse return error.ActorNotFound;
+    _ = try genesis.cspace.grant(source_slot, target.cspace, rights_mask);
+    return true;
+}
+
+fn drawCanvasBridge(x: u32, y: u32, w: u32, h: u32, color: u32) void {
+    if (global_fb) |*fb| {
+        fb.drawRect(x, y, w, h, color);
+    }
+}
+
+fn telemetryBridge() ai_mod.tools.TelemetrySnapshot {
+    return ai_mod.tools.TelemetrySnapshot{
+        .active_actors = @intCast(global_registry.active_count),
+        .total_faults = if (global_supervisor) |s| s.total_faults else 0,
+        .free_ram_pages = 256,
+        .uptime_ticks = 100,
+    };
+}
+
 fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
     const ring_phys = pmm.allocContiguousPages(virtio_blk_mod.QUEUE_PAGES) orelse return false;
     const dma_phys = pmm.allocContiguousPages(virtio_blk_mod.DMA_PAGES) orelse return false;
@@ -585,11 +608,7 @@ fn registerStorageCap(genesis: *actor_mod.Actor) !void {
     }
 }
 
-fn registerGenesisCapabilities(
-    genesis: *actor_mod.Actor,
-    boot_info: *const BootInfo,
-    ring: *ipc_mod.RingBuffer,
-) !void {
+fn registerDisplayCap(genesis: *actor_mod.Actor, boot_info: *const BootInfo) !void {
     if (boot_info.framebuffer.base_addr != 0) {
         _ = try genesis.insertCap(cap_mod.Capability{
             .cap_type = .framebuffer,
@@ -599,15 +618,9 @@ fn registerGenesisCapabilities(
             .data_size = boot_info.framebuffer.size_bytes,
         });
     }
+}
 
-    _ = try genesis.insertCap(cap_mod.Capability{
-        .cap_type = .ipc_ring,
-        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
-        .object_id = CAP_OBJ_IPC_RING,
-        .data_addr = @intFromPtr(ring),
-        .data_size = @sizeOf(ipc_mod.RingBuffer),
-    });
-
+fn registerBundleCap(genesis: *actor_mod.Actor, boot_info: *const BootInfo) !void {
     if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0) {
         _ = try genesis.insertCap(cap_mod.Capability{
             .cap_type = .memory_extent,
@@ -617,9 +630,34 @@ fn registerGenesisCapabilities(
             .data_size = boot_info.bundle_size,
         });
     }
+}
+
+fn registerGenesisCapabilities(
+    genesis: *actor_mod.Actor,
+    boot_info: *const BootInfo,
+    ring: *ipc_mod.RingBuffer,
+) !void {
+    try registerDisplayCap(genesis, boot_info);
+    try registerBundleCap(genesis, boot_info);
+
+    _ = try genesis.insertCap(cap_mod.Capability{
+        .cap_type = .ipc_ring,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = CAP_OBJ_IPC_RING,
+        .data_addr = @intFromPtr(ring),
+        .data_size = @sizeOf(ipc_mod.RingBuffer),
+    });
 
     try registerNetworkCap(genesis);
     try registerStorageCap(genesis);
+
+    _ = try genesis.insertCap(cap_mod.Capability{
+        .cap_type = .actor_control,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = CAP_OBJ_ACTOR_CTRL,
+        .data_addr = 0,
+        .data_size = 0,
+    });
 }
 
 fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {
@@ -703,6 +741,9 @@ fn setupHarnessEnvironment(
         .cas_get_fn = casGetBridge,
         .persist_actor_fn = persistActorBridge,
         .spawn_cas_fn = spawnCasBridge,
+        .grant_cap_fn = grantCapBridge,
+        .draw_canvas_fn = drawCanvasBridge,
+        .telemetry_fn = telemetryBridge,
     };
     harness_bindings_mod.setContext(&global_harness_ctx.?);
     harness_bindings_mod.registerBindings(vm) catch kernelPanic("harness_bindings");

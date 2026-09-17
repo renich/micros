@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const provider_mod = @import("provider.zig");
+const tools_mod = @import("tools.zig");
 
 pub fn buildPath(buf: []u8, model: []const u8, api_key: []const u8) !usize {
     const prefix = "/v1beta/models/";
@@ -25,7 +26,7 @@ pub fn buildPath(buf: []u8, model: []const u8, api_key: []const u8) !usize {
 pub fn buildRequestBody(buf: []u8, system_prompt: []const u8, user_prompt: []const u8) !usize {
     const p1 = "{\"system_instruction\":{\"parts\":[{\"text\":\"";
     const p2 = "\"}]},\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"";
-    const p3 = "\"}]}],\"generationConfig\":{\"temperature\":1.0,\"topK\":40,\"maxOutputTokens\":8192,\"thinkingConfig\":{\"thinkingLevel\":\"high\"}}}";
+    const p3 = "\"}]}],\"tools\":" ++ tools_mod.GEMINI_TOOLS_JSON ++ ",\"generationConfig\":{\"temperature\":1.0,\"topK\":40,\"maxOutputTokens\":8192,\"thinkingConfig\":{\"thinkingLevel\":\"high\"}}}";
 
     var off: usize = 0;
     if (off + p1.len > buf.len) return error.BufferTooSmall;

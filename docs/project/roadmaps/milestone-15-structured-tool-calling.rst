@@ -2,7 +2,7 @@ Milestone 15: Typed Structured Tool Calling Substrate
 =====================================================
 
 :Objective: Transition Resident AI communication from brittle markdown and reStructuredText string parsing into a typed, deterministic function and tool calling protocol. Implement zero-allocation streaming JSON parsing for tool requests, static compile-time tool schemas matching OpenAI and Gemini specifications, capability-gated tool execution, and bidirectional AI-to-kernel semantic dispatch.
-:Status: Planned
+:Status: Complete
 :Specification: SPEC-TECH-TOOL-001
 
 Milestones & Deliverables

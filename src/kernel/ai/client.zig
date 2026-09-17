@@ -70,11 +70,21 @@ pub const AiClient = struct {
     }
 
     pub fn extractResponseText(self: *const AiClient, json_payload: []const u8, out_text: []u8) ?usize {
-        return switch (self.config.provider_type) {
+        const text_res = switch (self.config.provider_type) {
             .gemini => gemini_mod.extractText(json_payload, out_text),
             .openai, .local_http, .anthropic => openai_mod.extractText(json_payload, out_text),
             .mock => mock_mod.generateResponse("status", out_text) catch null,
         };
+        if (text_res) |len| return len;
+        if (std.mem.indexOf(u8, json_payload, "\"functionCall\"") != null or
+            std.mem.indexOf(u8, json_payload, "\"tool_calls\"") != null or
+            std.mem.indexOf(u8, json_payload, "\"function\"") != null)
+        {
+            const copy_len = @min(json_payload.len, out_text.len);
+            @memcpy(out_text[0..copy_len], json_payload[0..copy_len]);
+            return copy_len;
+        }
+        return null;
     }
 
     pub fn extractCodeBlock(src: []const u8, out_buf: []u8) ?usize {

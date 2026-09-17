@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const provider_mod = @import("provider.zig");
+const tools_mod = @import("tools.zig");
 
 pub const DEFAULT_CHAT_PATH: []const u8 = "/v1/chat/completions";
 
@@ -16,7 +17,7 @@ pub fn buildRequestBody(buf: []u8, model: []const u8, system_prompt: []const u8,
     const p1 = "{\"model\":\"";
     const p2 = "\",\"messages\":[{\"role\":\"system\",\"content\":\"";
     const p3 = "\"},{\"role\":\"user\",\"content\":\"";
-    const p4 = "\"}],\"temperature\":1.0}";
+    const p4 = "\"}],\"tools\":" ++ tools_mod.OPENAI_TOOLS_JSON ++ ",\"temperature\":1.0}";
 
     var off: usize = 0;
     if (off + p1.len > buf.len) return error.BufferTooSmall;
