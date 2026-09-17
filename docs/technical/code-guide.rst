@@ -1,576 +1,291 @@
-=============================
-MicrOS Engineering Code Guide
-=============================
+=================================
+Understanding the MicrOS Codebase
+=================================
 
 :Status: Approved
-:Version: 1.1.0
+:Version: 2.0.0
 :Author: Rénich Bon Ćirić & Antigravity
 :Date: 2026-09-17
 :Language: English (US)
 :Translations: :doc:`code-guide-es`
 
-This document defines the authoritative architectural mental model, codebase layout, entry points, lifecycle pipelines, and code quality standards for the MicrOS (µOS) operating system, the Macros programming language runtime, and host verification tooling. Every engineer, human architect, and autonomous AI agent modifying this codebase MUST comply with these rules without exception.
+This document is the comprehensive architectural and structural guide to the MicrOS (µOS) codebase. It provides human systems architects and autonomous AI agents with the foundational mental model, entry point pathways, subsystem interactions, and navigation maps needed to explore, comprehend, and extend the system.
 
-Computational Sovereignty & Core Philosophy
-===========================================
-MicrOS is engineered to guarantee absolute technological sovereignty, zero external runtime dependency lock-in, and full determinism across the hardware/software boundary.
+Core Architectural Philosophy & Mental Model
+============================================
+MicrOS is an independent, computationally sovereign, post-POSIX operating system built from bare silicon in pure Zig and the Macros programming language. Its fundamental mission is to eliminate fifty years of accumulated operating system bloat and provide a secure, deterministic substrate designed specifically for native human-AI pair programming.
 
-Core Philosophical Directives:
-------------------------------
-* **Zero-Libc Substrate**: The substrate layer (``src/sys/``) and kernel (``src/kernel/``) link zero external C runtime libraries (``libc``, ``musl``, or ``glibc``). All kernel/userspace interactions invoke raw Linux x86_64 syscalls or native assembly.
-* **The Verification Doctrine**: Never assume; always verify. Zero probabilistic guessing, associative shortcuts, or plausible-sounding assertions. Every claim regarding compiler mechanics, memory safety, or system behavior must be verified against actual source code, filesystem state, and test execution.
-* **Content-Addressed Immutability**: Persistent entities, modules, and execution manifests are addressed by 256-bit BLAKE3 cryptographic hashes, replacing mutable POSIX hierarchical inode abstractions.
-* **Anti-Sycophancy & Direct Collaboration**: Engineering reviews prioritize mathematical correctness and memory safety over false agreement. Flawed logic, unhandled edge cases, and architectural regressions must be exposed and corrected directly.
+The Two Computational Worlds:
+-----------------------------
+The codebase is cleanly bifurcated into two cooperating layers:
 
-System Architecture & Mental Model
-==================================
-MicrOS is a post-POSIX, AI-native operating system structured around a strict two-tier computational model that cleanly divides hardware enforcement from high-level orchestration.
+1. **Tier 0: Substrate & Sovereign Microkernel (Zig)**:
+   Residing in ``src/sys/`` and ``src/kernel/``, Tier 0 is written in freestanding Zig without any external C standard library (zero libc). It interacts directly with x86_64 hardware structures and devices. Tier 0 manages the Global Descriptor Table (GDT), Interrupt Descriptor Table (IDT), physical page frames (PMM), 4-level virtual memory paging (VMM), VirtIO network and block storage drivers, Capability Space (CSpace) security tokens, lockless shared-memory ring buffers, and the Immix mark-region bytecode virtual machine.
 
-Two-Tier Substrate and Application Architecture:
-------------------------------------------------
-1. **Tier 0: Sovereign Microkernel & Substrate (Zig)**:
-   A freestanding microkernel and direct syscall layer written in pure Zig. Tier 0 manages CPU structures (GDT/IDT), page-frame memory allocation (PMM/VMM), VirtIO device drivers (network, storage), Capability Space (CSpace) access token validation, structured shared-memory ring buffers, and the Immix mark-region bytecode virtual machine. Tier 0 never links external libraries and operates with mathematical alignment.
+2. **Tier 1: Sovereign Userland Applications (Macros)**:
+   Residing in ``lib/macros/`` and written in the Macros language (``.mx``, ``.macros``), Tier 1 embodies the system personality. It contains the system supervisor (``init.mx``), the interactive MicroShell (``msh.mx``), autonomous execution harnesses, and self-hosting compiler pipelines. Tier 1 programs execute as isolated actors scheduled on cooperative green-thread fibers and communicate via typed shared-memory ring buffers and explicit CSpace capability tokens.
 
-2. **Tier 1: Sovereign Applications & Orchestration (Macros)**:
-   The high-level userland written exclusively in the Macros language (``.mx``, ``.macros``). Tier 1 encompasses system initialization (``init.mx``), the interactive shell (``msh.mx``), the self-hosting compiler pipeline, and resident AI agent orchestrators. Tier 1 programs run as isolated actors inside cooperative userspace fibers and communicate exclusively over typed shared-memory ring buffers and CSpace capabilities.
+Eliminating Legacy POSIX Baggage:
+---------------------------------
+To achieve mathematical determinism and fault containment, MicrOS explicitly discards four foundational POSIX abstractions:
+
+* **No Ambient Authority**: There is no superuser (``root``) and no global ambient permission model. Processes cannot access resources simply because they exist; every operation requires presenting a cryptographically or kernel-validated capability token from the actor's local CSpace.
+* **No Mutable Hierarchical Filesystems**: Hierarchical directory trees and mutable file inodes are replaced by 256-bit BLAKE3 Content-Addressed Storage (CAS). Modules, bytecode chunks, and system state manifests are immutable objects addressed by cryptographic digest.
+* **No Untyped ASCII Pipes**: Inter-process communication does not serialize data into raw byte streams. Processes communicate over structured, typed shared-memory ring buffers with strict binary layouts.
+* **No C Runtime Dependencies**: Neither glibc, musl, nor any external runtime is linked into the kernel substrate. All low-level interactions occur through direct inline assembly or bare-metal Linux syscall wrappers.
 
 Dual Execution Environments (UEFI vs Sandbox):
 ----------------------------------------------
-MicrOS runs in two distinct, complementary environments:
+The codebase is architected to compile and run across two complementary execution targets:
 
-* **Bare-Metal x86_64 UEFI (Production/Emulation)**:
-   The full operating system boots from UEFI firmware (OVMF in QEMU or physical hardware) through ``src/boot/uefi_main.zig``. The kernel initializes hardware directly, discovers PCI devices, drives VirtIO storage and networking, mounts Content-Addressed Storage (CAS), renders a 1280x800 graphical vector canvas via UEFI GOP, and executes the Genesis bundle inside cooperative green-thread fibers.
+* **Bare-Metal x86_64 UEFI (Production/Emulation Target)**:
+   The primary operating environment. Boots via UEFI firmware (OVMF in QEMU or real hardware) through ``src/boot/uefi_main.zig``. The microkernel directly initializes CPU tables, memory paging, PCI devices, VirtIO storage and networking, mounts CAS, initializes the double-buffered 1280x800 GOP vector canvas, and launches the Genesis application bundle inside cooperative fibers.
 
-* **Linux Direct-Syscall Sandbox (Fast TDD/CI)**:
-   For sub-second development loops, ``src/main.zig`` compiles to a freestanding Linux executable (``zig-out/bin/micros-init``) acting as PID 1 inside an isolated QEMU Linux sandbox or container. It invokes raw Linux syscalls directly through ``src/sys/linux.zig`` (zero libc), runs substrate self-tests, executes MicroShell commands, and cleanly triggers ACPI S5 poweroff.
+* **Linux Direct-Syscall Sandbox (Fast TDD/CI Target)**:
+   For rapid development and continuous integration, ``src/main.zig`` compiles into a freestanding binary (``zig-out/bin/micros-init``) that acts as PID 1 inside an isolated Linux sandbox or container. It communicates with the host Linux kernel via raw syscalls in ``src/sys/linux.zig``, executes substrate self-tests, runs MicroShell commands, and triggers clean ACPI S5 poweroff in milliseconds.
 
 System Entry Points & Boot Sequence
 ===================================
-Understanding where execution starts and how control flows across boundaries is essential for navigating the codebase.
+Tracing control flow from initial hardware power-on through userland shell interaction reveals how the various subsystems are assembled.
 
-1. UEFI Bootloader Entry Point (src/boot/uefi_main.zig):
-   Execution begins in ``pub fn main() uefi.Status`` within the UEFI Stage 1 bootloader (``boot.efi``):
-   * Connects to UEFI System Table and initializes console output.
-   * Discovers the hardware framebuffer using the UEFI Graphics Output Protocol (GOP), capturing base address, resolution (1280x800), and pixel format into ``FramebufferInfo``.
-   * Queries the UEFI memory map into a contiguous array of ``MemoryDescriptor`` entries.
-   * Packages physical memory boundaries, HHDM offsets, and framebuffer parameters into a verified ``BootInfo`` structure (magic ``0x4D494352_4F534249``).
-   * Calls ``uefi.boot_services.exitBootServices`` to terminate UEFI firmware runtime.
-   * Jumps directly to the microkernel entry point: ``kernel_main.kmain(&global_boot_info)``.
+1. Bare-Metal UEFI Bootloader (src/boot/uefi_main.zig):
+-------------------------------------------------------
+Control originates in ``pub fn main() uefi.Status`` within ``boot.efi``:
 
-2. Microkernel Entry Point (src/kernel/main.zig):
-   Execution enters the microkernel at ``pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn``:
-   * Disables CPU interrupts (``cli``) and initializes the 16550 UART serial port for early debugging.
-   * Validates ``BootInfo`` signature and installs CPU fault containment: Global Descriptor Table (``gdt.init()``) and Interrupt Descriptor Table (``idt.init()``).
-   * Activates Physical Memory Management (``pmm.init()``) and Virtual Memory 4-level paging (``vmm.init()``).
-   * Scans PCI bus for VirtIO devices (VirtIO-Net for network packets, VirtIO-Blk for persistent block storage).
-   * Allocates an 8 MiB page-aligned kernel heap using ``std.heap.FixedBufferAllocator``.
-   * Instantiates Genesis Actor 0 (``actor_mod.Actor.init``) and creates the root Capability Space (CSpace) with 64 slots.
-   * Mounts Content-Addressed Storage (CAS), block cache, and direct GOP vector canvas.
-   * Unpacks the embedded Genesis bundle (``genesis.mcb``), extracts ``init.mx``, compiles its AST into bytecode via the Stage 0 compiler, and initializes the Genesis Virtual Machine (``vm_mod.VM``).
-   * Binds the microkernel ABI functions into the VM global scope.
-   * Initializes the cooperative userspace fiber scheduler (``fiber_mod.Scheduler``), spawns ``vmThread``, and enters ``sched.run()``.
+* **Firmware Handshake**: Connects to the UEFI System Table and initializes serial/console output.
+* **Framebuffer Discovery**: Locates the UEFI Graphics Output Protocol (GOP), capturing base address, screen geometry (1280x800), scanline stride, and color format into ``FramebufferInfo``.
+* **Memory Map Acquisition**: Queries the UEFI memory map into a contiguous buffer of ``MemoryDescriptor`` entries, classifying usable RAM, bootloader data, and reserved memory.
+* **BootInfo Packaging**: Assembles physical memory boundaries, Higher Half Direct Map (HHDM) offsets, and framebuffer metadata into a verified ``BootInfo`` struct with magic signature ``0x4D494352_4F534249``.
+* **Exit Boot Services**: Invokes ``uefi.boot_services.exitBootServices``, terminating UEFI runtime drivers.
+* **Kernel Transition**: Jumps directly to the microkernel entry point: ``kernel_main.kmain(&global_boot_info)``.
 
-3. High-Level Init & Supervisor Entry Point (lib/macros/init.mx):
-   The first high-level code executed in userspace runs as Genesis Actor 0/PID 1:
-   * Unpacks App 0 (``msh.mx``) from the Genesis bundle via ``sys_bundle_read("msh.mx")``.
-   * Spawns the MicroShell child actor via ``sys_actor_spawn_code("msh", msh_src)``.
-   * Enters the ``supervisor_loop``, continuously polling child actor states (``sys_actor_state``), automatically respawning faulted actors, and yielding CPU time via ``sys_yield()``.
+2. Sovereign Microkernel Root (src/kernel/main.zig):
+----------------------------------------------------
+Execution enters the microkernel at ``pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn``:
 
-4. Linux Sandbox Entry Point (src/main.zig):
-   For testing outside bare-metal emulation, ``pub fn main() !void`` serves as PID 1:
-   * Prints the init banner directly to file descriptor 1 via ``src/sys/io.zig``.
-   * Executes a substrate self-test: compiles and evaluates ``boot_check = 20 + 22`` in a clean Macros VM instance, asserting the result is 42.
-   * Instantiates ``msh.Shell`` connected to stdin (0) and stdout (1).
-   * Executes startup commands, logs completion, and cleanly halts via ``sys.process.poweroff()`` (using raw ACPI reboot magic ``0x4321fedc``).
+* **CPU Fault Containment**: Disables interrupts (``cli``), initializes 16550 UART serial logging, and loads the Global Descriptor Table (``gdt.init()``) and Interrupt Descriptor Table (``idt.init()``).
+* **Memory Initialization**: Configures the Physical Memory Manager bitmap (``pmm.init()``) and sets up 4-level virtual memory page tables (``vmm.init()``).
+* **Driver Probing**: Scans the PCI bus and attaches VirtIO-Net 1.0 (network) and VirtIO-Blk 1.0 (storage).
+* **Kernel Heap & CSpace**: Sets up an 8 MiB page-aligned kernel heap, instantiates Genesis Actor 0, and configures the root Capability Space (CSpace) with 64 slots.
+* **CAS & Display Setup**: Mounts the Content-Addressed Storage engine and initializes the 1280x800 GOP double-buffered vector canvas and window manager.
+* **Genesis Bundle Unpacking**: Accesses the embedded ``genesis.mcb`` archive, extracts ``init.mx``, compiles it to bytecode via the Stage 0 compiler, and initializes the Genesis VM.
+* **ABI Registration**: Injects kernel ABI functions (``sys_actor_spawn_code``, ``sys_bundle_read``, ``sys_yield``, ``sys_actor_state``) into the VM global scope.
+* **Fiber Scheduler Launch**: Initializes the cooperative green-thread scheduler (``fiber_mod.Scheduler``), spawns ``vmThread``, and enters the scheduling loop ``sched.run()``.
 
-5. Standalone Runners:
-   * ``src/macros_main.zig``: CLI runner to compile and execute standalone ``.mx`` script files directly on the host.
-   * ``src/msh_main.zig``: Interactive host CLI to launch the MicroShell REPL for local testing.
+3. High-Level Init Supervisor (lib/macros/init.mx):
+---------------------------------------------------
+The first userland code executed inside the Genesis VM runs as Actor 0 (PID 1):
+
+* **App 0 Deployment**: Reads ``msh.mx`` from the Genesis bundle via ``sys_bundle_read("msh.mx")``.
+* **Actor Spawning**: Spawns the MicroShell child actor via ``sys_actor_spawn_code("msh", msh_src)``.
+* **Supervision Loop**: Enters ``supervisor_loop``, polling child actor states (``sys_actor_state``), automatically respawning faulted actors, and cooperatively yielding CPU cycles via ``sys_yield()``.
+
+4. Linux Direct-Syscall Sandbox (src/main.zig):
+-----------------------------------------------
+When running in sandbox mode, execution begins at ``pub fn main() !void``:
+
+* **Direct Syscall Banner**: Emits early boot diagnostics directly to file descriptor 1 via ``src/sys/io.zig``.
+* **Substrate Verification**: Runs a self-test by parsing, compiling, and running ``boot_check = 20 + 22`` in an isolated Macros VM, validating that the result equals 42.
+* **MicroShell Execution**: Initializes ``msh.Shell`` attached to standard input/output descriptors.
+* **Clean Shutdown**: Calls ``sys.process.poweroff()`` to trigger an ACPI S5 shutdown via raw reboot syscall magic (``0x4321fedc``).
+
+5. Standalone Host Runners:
+---------------------------
+* ``src/macros_main.zig``: Host CLI utility to compile and execute standalone ``.mx`` files directly.
+* ``src/msh_main.zig``: Host interactive CLI providing the MicroShell REPL for terminal testing.
 
 Repository Anatomy: What Is Where
 =================================
-The codebase is strictly structured into domain-driven directories with distinct responsibilities:
+The repository is strictly partitioned into distinct functional layers:
 
-Substrate & Kernel Layer (src/):
---------------------------------
-* ``src/boot/``: Stage 1 UEFI bootloader implementation (``uefi_main.zig``) and protocol headers.
-* ``src/kernel/``: Sovereign microkernel core:
-   * ``arch/x86_64/``: Assembly context switching, GDT, IDT, port I/O, paging definitions.
+Substrate & Microkernel (src/):
+-------------------------------
+The core engine written in freestanding Zig:
+
+* ``src/boot/``: UEFI Stage 1 bootloader implementation (``uefi_main.zig``) and memory handoff protocol.
+* ``src/kernel/``: Sovereign microkernel implementation:
+   * ``arch/x86_64/``: Assembly context switching, GDT, IDT, port I/O, control register definitions.
    * ``mem/``: Physical page frame allocator (``pmm.zig``) and Virtual Memory Manager (``vmm.zig``).
    * ``drivers/``: VirtIO-Net 1.0, VirtIO-Blk 1.0, PCI enumeration, and PS/2 keyboard drivers.
-   * ``cap/``: Capability-based access control (``capability.zig``, ``cspace.zig``).
+   * ``cap/``: Capability-based access control engine (``capability.zig``, ``cspace.zig``).
    * ``storage/``: Content-Addressed Storage engine (``cas.zig``, ``chunk.zig``, ``block_cache.zig``, ``superblock.zig``).
-   * ``ipc/``: Structured lockless ring buffers (``ring.zig``) and typed event channels (``events.zig``).
-   * ``compositor/``: Vector graphics engine, 1280x800 canvas, font rendering, mouse pointer, BSP tiling window manager.
-   * ``net/``: In-kernel network stack (DHCP client, DNS resolver, TCP socket state machine, TLS 1.3 adapter).
-   * ``ai.zig``: Resident AI orchestrator client (HTTP 1.1 streaming, prompt generation, tool dispatch).
-   * ``actor.zig`` & ``supervisor.zig``: Actor lifecycle management and fault supervision trees.
-   * ``abi.zig``: Syscall and ABI function bindings exposed to the Macros VM.
-   * ``main.zig``: Microkernel root initialization and ``kmain`` execution flow.
-* ``src/sys/``: Zero-libc freestanding Linux syscall library (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``).
-* ``src/msh/``: MicroShell engine (``shell.zig``, ``builtins.zig``) providing command parsing and execution pipelines.
+   * ``ipc/``: Lockless ring buffers (``ring.zig``) and typed event channels (``events.zig``).
+   * ``compositor/``: Vector graphics engine, 1280x800 canvas, font rendering, mouse cursor, and BSP tiling window manager.
+   * ``net/``: In-kernel network stack (DHCP client, DNS resolver, TCP state machine, TLS 1.3 adapter).
+   * ``ai.zig``: Resident AI subsystem managing streaming HTTP 1.1 sessions with Gemini/Local AI providers.
+   * ``actor.zig`` & ``supervisor.zig``: Actor lifecycle management and supervision hierarchies.
+   * ``abi.zig``: Microkernel ABI bindings exposed to the Macros VM.
+   * ``main.zig``: Microkernel root entry point (``kmain``).
+* ``src/sys/``: Freestanding Linux syscall library (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``).
+* ``src/msh/``: Host MicroShell implementation (``shell.zig``, ``builtins.zig``).
 
 Language Engine & Runtime (src/macros/):
 ----------------------------------------
-The Stage 0 Macros implementation written in freestanding Zig:
-* ``lexer.zig``: Scans UTF-8 source streams into typed tokens.
+The Stage 0 Macros implementation in Zig:
+
+* ``lexer.zig``: Scans UTF-8 source streams into strongly typed token sequences.
 * ``parser.zig`` & ``ast.zig``: Generates and validates recursive-descent Abstract Syntax Trees.
-* ``compiler.zig`` & ``chunk.zig``: Compiles AST nodes into serialized bytecode instruction arrays.
-* ``vm.zig``: High-performance stack-based bytecode interpreter.
+* ``compiler.zig`` & ``chunk.zig``: Compiles AST nodes into serialized bytecode chunks.
+* ``vm.zig``: Stack-based virtual machine executing bytecode instructions.
 * ``eval.zig``: Tree-walk interpreter used during early bootstrap stages.
-* ``gc.zig`` & ``immix.zig``: Immix mark-region garbage collector (32 KiB blocks, line mark bitmaps, hole allocation).
-* ``fiber.zig`` & ``context_switch.s``: Userspace cooperative green threads and callee-saved assembly context switching.
-* ``codegen_x86_64.zig``: Freestanding machine code generator with W^X page protection.
-* ``module.zig`` & ``serializer.zig``: CAS module loader (``b3:...`` and ``bundle:...``) and canonical chunk serialization.
+* ``gc.zig`` & ``immix.zig``: Immix mark-region garbage collector (32 KiB blocks, line mark bitmaps, recyclable hole allocation).
+* ``fiber.zig`` & ``context_switch.s``: Userspace cooperative green threads and assembly context switching.
+* ``codegen_x86_64.zig``: Direct machine code generator with W^X page protection.
+* ``module.zig`` & ``serializer.zig``: Content-addressed module resolver (``b3:...`` and ``bundle:...``) and canonical serialization.
 
-Self-Hosting Compiler & Apps (lib/macros/):
--------------------------------------------
+Self-Hosting Applications (lib/macros/):
+----------------------------------------
 The Stage 1 Macros implementation written entirely in pure Macros:
-* ``init.mx``: System supervisor and Actor 0 init script.
-* ``msh.mx``: Sovereign MicroShell implementation written in pure Macros.
-* ``harness.mx``: Autonomous test runner and verification harness.
-* ``ast.mx``, ``lexer.mx``, ``parser.mx``: Self-hosting compiler frontend.
-* ``compiler.mx``, ``compiler_main.mx``: Self-hosting bytecode compiler.
 
-Verification Toolchain (tools/):
---------------------------------
-Seven host utilities providing automated quality gates and diagnostic verification:
+* ``init.mx``: System supervisor and Actor 0 root init script.
+* ``msh.mx``: Sovereign MicroShell implementation written in pure Macros.
+* ``harness.mx``: Autonomous test runner and verification suite.
+* ``ast.mx``, ``lexer.mx``, ``parser.mx``: Self-hosting compiler frontend.
+* ``compiler.mx``, ``compiler_main.mx``: Self-hosting bytecode compiler emitting runnable chunks.
+
+Verification & Build Toolchain (tools/):
+----------------------------------------
+Host verification utilities ensuring system correctness:
+
 * ``micros-runner.bash``: Headless event-driven QEMU test harness with serial sentinel detection.
 * ``src/fb_verify.zig`` (``micros-fb-verify``): Sub-millisecond framebuffer pixel variance validator.
-* ``src/lint.zig`` (``micros-lint``): Native Zig AST linter enforcing the Ten Commandments.
+* ``src/lint.zig`` (``micros-lint``): Native Zig AST linter enforcing code quality metrics.
 * ``src/sym.zig`` (``micros-sym``): Freestanding 64-bit ELF symbol unwinder and address-to-line resolver.
-* ``micros-inspect.bash``: Non-interactive QEMU monitor socket CPU state and register disassembler.
-* ``src/telem.zig`` (``micros-telem``): Native 64-byte binary telemetry decoder.
-* ``micros-spec-trace.bash``: Four-tier bidirectional specification traceability auditor.
-* ``src/virtio_bench.zig`` (``micros-virtio-bench``): VirtIO split-virtqueue validator and RDTSC DMA benchmark.
-* ``src/bundle.zig`` (``micros-bundle``): Packages Stage 1 ``.mx`` files into the binary ``genesis.mcb`` bundle.
+* ``micros-inspect.bash``: QEMU monitor socket CPU state and register disassembler.
+* ``src/telem.zig`` (``micros-telem``): Native 64-byte binary telemetry stream decoder.
+* ``micros-spec-trace.bash``: Bidirectional specification traceability auditor across all four specification tiers.
+* ``src/virtio_bench.zig`` (``micros-virtio-bench``): VirtIO split-virtqueue validator and RDTSC DMA micro-benchmarker.
+* ``src/bundle.zig`` (``micros-bundle``): Packs Stage 1 ``.mx`` source files into the binary ``genesis.mcb`` archive.
 
-How It Is All Put Together: Lifecycle Pipeline
-==============================================
-The lifecycle of MicrOS links build-time artifact generation to boot-time hardware execution.
+Subsystem Deep Dives: How Moving Parts Interact
+===============================================
+To modify or debug MicrOS effectively, one must understand the key coordination mechanisms connecting the substrate to the userland.
 
-Build-Time Assembly Pipeline:
+The Zig-to-Macros ABI Bridge:
 -----------------------------
-1. **Compile Host Tools**: ``make tools`` compiles native Zig utilities into ``zig-out/bin/``.
-2. **Package Genesis Bundle**: ``tools/micros-bundle`` reads Stage 1 source scripts from ``lib/macros/`` (``init.mx``, ``msh.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) and serializes them into a single binary file: ``src/kernel/genesis.mcb``.
-3. **Compile Microkernel & Bootloader**: ``zig build`` compiles ``src/boot.zig`` into ``zig-out/bin/boot.efi`` and ``src/kernel.zig`` into ``zig-out/bin/micros-kernel.elf`` (embedding ``genesis.mcb`` via ``@embedFile``).
-4. **Compile Sandbox Target**: ``zig build`` compiles ``src/main.zig`` into the freestanding executable ``zig-out/bin/micros-init``.
-
-Execution & Runtime Lifecycle Flow:
------------------------------------
-The complete execution sequence from cold boot to interactive shell:
-
-.. code-block:: text
-
-   +-------------------------------------------------------------------------+
-   | UEFI Firmware (OVMF in QEMU/Physical Hardware)                        |
-   +-------------------------------------------------------------------------+
-                                      |
-                                      v
-   +-------------------------------------------------------------------------+
-   | Stage 1 Bootloader: src/boot/uefi_main.zig                              |
-   | - Locates GOP Framebuffer (1280x800x32)                                 |
-   | - Captures Memory Descriptors into BootInfo (0x4D494352_4F534249)       |
-   | - Calls exitBootServices and jumps to kmain                             |
-   +-------------------------------------------------------------------------+
-                                      |
-                                      v
-   +-------------------------------------------------------------------------+
-   | Microkernel Root: src/kernel/main.zig (kmain)                           |
-   | - Initializes Serial UART, GDT, IDT, PMM, VMM (4-level paging)          |
-   | - Discovers PCI VirtIO-Net and VirtIO-Blk drivers                       |
-   | - Mounts Content-Addressed Storage (CAS) & Block Cache                  |
-   | - Initializes Genesis CSpace (64 slots) & Framebuffer Canvas            |
-   | - Unpacks genesis.mcb, compiles init.mx via Stage 0 compiler            |
-   | - Binds Microkernel ABI functions into Genesis VM                       |
-   | - Starts Fiber Scheduler (fiber_mod.Scheduler.run)                      |
-   +-------------------------------------------------------------------------+
-                                      |
-                                      v
-   +-------------------------------------------------------------------------+
-   | System Supervisor: lib/macros/init.mx (Actor 0/PID 1 in Macros)       |
-   | - Reads msh.mx from genesis bundle                                      |
-   | - Spawns App 0 (msh) via sys_actor_spawn_code                           |
-   | - Runs supervisor loop monitoring actor states & yielding CPU           |
-   +-------------------------------------------------------------------------+
-                                      |
-                                      v
-   +-------------------------------------------------------------------------+
-   | MicroShell & Window Manager: lib/macros/msh.mx + src/kernel/compositor/ |
-   | - Renders graphical vector windows on 1280x800 GOP canvas               |
-   | - Processes PS/2 keyboard input and mouse pointer events                |
-   | - Orchestrates commands, Resident AI agents, and CAS modules            |
-   +-------------------------------------------------------------------------+
-
-The Ten Commandments of Code Quality
-====================================
-The Ten Commandments form the non-negotiable bedrock of code craftsmanship in MicrOS. These rules are enforced deterministically by the native AST linter (``tools/micros-lint``) and automated CI gates.
-
-.. table:: The Ten Commandments Summary
-   :widths: auto
-
-   +----+--------------------------+-------------------------------------------------------------+
-   | No | Commandment              | Mandatory Constraint                                        |
-   +====+==========================+=============================================================+
-   | 1  | Maximum File Size        | Files must not exceed 1,000 lines of code.                  |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 2  | Maximum Function Size    | Functions must not exceed 40 lines of code.                 |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 3  | Maximum Nesting Depth    | Maximum indentation depth is 3 levels.                      |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 4  | Formatting Style         | No spaces around slashes (``word/word``); strict ``zig fmt``|
-   +----+--------------------------+-------------------------------------------------------------+
-   | 5  | No Magic Numbers         | Typed constants or ``UPPER_SNAKE_CASE`` identifiers.        |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 6  | Explicit Errors          | Prohibit ``catch unreachable`` outside test blocks.         |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 7  | Zero Libc Dependencies   | Substrate layer must never link or include libc.            |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 8  | Explicit Memory Safety   | Explicit ``Allocator`` parameter; no hidden global heaps.   |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 9  | Page & Sector Alignment  | Enforce 4096-byte page and 512-byte sector alignment.       |
-   +----+--------------------------+-------------------------------------------------------------+
-   | 10 | Colocated Unit Testing   | Tests must reside natively alongside code in same module.   |
-   +----+--------------------------+-------------------------------------------------------------+
-
-Commandment 1: Maximum File Size (<= 1,000 Lines)
--------------------------------------------------
-No source file shall exceed 1,000 lines of code. Monolithic source files impede local reasoning, dilute domain boundaries, and exceed AI context window limits. When a file approaches 800 lines, decompose it into coherent domain submodules within the same package directory.
-
-Commandment 2: Maximum Function Size (<= 40 Lines)
---------------------------------------------------
-No function shall exceed 40 lines of code. Functions exceeding 40 lines violate the Single Responsibility Principle and indicate multiple unseparated concerns. Decompose multi-phase logic into small, private helper functions with clear verbs.
-
-Commandment 3: Maximum Nesting Depth (<= 3 Levels)
---------------------------------------------------
-Deeply nested blocks obscure control flow and hide edge cases. Maximum nesting depth is strictly 3 levels. Flatten control flow using early returns and guard clauses.
+The microkernel exposes hardware capabilities to Macros through ``src/kernel/abi.zig``. The VM maintains a global environment table where native Zig functions are registered as callable values:
 
 .. code-block:: zig
 
-   // FORBIDDEN: Nesting depth >= 4
-   pub fn processPacket(packet: *const Packet) !void {
-       if (packet.isValid()) {
-           if (packet.hasPayload()) {
-               if (packet.header.version == CURRENT_VERSION) {
-                   if (packet.isEncrypted()) {
-                       try decryptAndRoute(packet);
-                   }
-               }
-           }
-       }
+   // Example ABI Registration in src/kernel/abi.zig
+   pub fn registerBuiltins(vm: *vm_mod.VM) !void {
+       try vm.registerNative("sys_actor_spawn_code", nativeActorSpawnCode);
+       try vm.registerNative("sys_bundle_read", nativeBundleRead);
+       try vm.registerNative("sys_yield", nativeYield);
+       try vm.registerNative("sys_actor_state", nativeActorState);
+       try vm.registerNative("sys_wm_create_window", nativeWmCreateWindow);
    }
 
-   // MANDATORY: Guard clauses flattening nesting depth <= 2
-   pub fn processPacket(packet: *const Packet) !void {
-       if (!packet.isValid()) return error.InvalidPacket;
-       if (!packet.hasPayload()) return error.EmptyPayload;
-       if (packet.header.version != CURRENT_VERSION) return error.UnsupportedVersion;
+When a Macros script executes ``sys_bundle_read("msh.mx")``, the VM pauses interpreted bytecode, marshals arguments from the VM operand stack, invokes the native Zig function, and pushes the resulting ``eval.Value`` back onto the stack without memory leakage.
 
-       if (packet.isEncrypted()) {
-           return decryptAndRoute(packet);
-       }
-       return routePlaintext(packet);
-   }
+Memory Architecture & Immix Mark-Region GC:
+-------------------------------------------
+Memory management operates across two cooperating levels:
 
-Commandment 4: Formatting & Slash Style
----------------------------------------
-Never insert spaces around forward slashes. Always format slashes as ``word/word`` (e.g., ``kernel/userspace``, ``read/write``, ``QEMU/KVM``, ``input/output``), never with whitespace separating the slash from words. All Zig source files must be formatted cleanly with ``zig fmt`` before commit.
+1. **Hardware Page Level (PMM/VMM)**:
+   The physical memory manager (``pmm.zig``) manages physical 4096-byte page frames via a bitmap. The virtual memory manager (``vmm.zig``) builds 4-level page tables (PML4, PDPT, PD, PT) mapping physical RAM to the Higher Half Direct Map (HHDM).
+2. **Object Level (Immix Mark-Region GC)**:
+   The Macros runtime uses an Immix mark-region collector (``src/macros/gc.zig``). It allocates heap space in 32 KiB blocks partitioned into 256 lines of 128 bytes. Small objects are allocated rapidly using bump pointers into recyclable free line holes, eliminating external fragmentation. Large objects (> 512 bytes) are mapped directly to dedicated virtual pages.
 
-Commandment 5: No Magic Numbers
--------------------------------
-Numeric literals must be given semantic meaning. Use strongly typed enums or ``UPPER_SNAKE_CASE`` constants.
-
-.. code-block:: zig
-
-   // FORBIDDEN: Magic literals
-   const page = try sys.mem.map(0, 65536, 3, 34, -1, 0);
-
-   // OBLIGATORIO: Typed constants and bitmasks
-   pub const FIBER_STACK_SIZE: usize = 64 * 1024;
-   pub const MMAP_PROT_RW: u32 = sys.linux.PROT_READ | sys.linux.PROT_WRITE;
-   pub const MMAP_FLAGS_ANON: u32 = sys.linux.MAP_PRIVATE | sys.linux.MAP_ANONYMOUS;
-
-   const stack_mem = try sys.mem.map(
-       0,
-       FIBER_STACK_SIZE,
-       MMAP_PROT_RW,
-       MMAP_FLAGS_ANON,
-       -1,
-       0,
-   );
-
-Commandment 6: Explicit Error Propagation
------------------------------------------
-Never use ``catch unreachable`` outside of isolated unit test assertions. Swallowing errors or panicking via ``unreachable`` in runtime code destroys fault tolerance. Bubble errors up using Zig error sets (``!T``) and ``try``, or handle them explicitly with ``catch |err|``.
-
-.. code-block:: zig
-
-   // FORBIDDEN: Swallowing fallible operations
-   const handle = openFile(path) catch unreachable;
-
-   // MANDATORY: Explicit bubbling or deterministic recovery
-   const handle = openFile(path) catch |err| switch (err) {
-       error.FileNotFound => return error.MissingResource,
-       error.AccessDenied => return error.PermissionDenied,
-       else => return err,
-   };
-
-Commandment 7: Zero Libc Dependencies
--------------------------------------
-The substrate layer (``src/sys/``) and kernel (``src/kernel/``) must never link against or include ``libc`` or external POSIX runtimes. All operating system interactions must use direct freestanding Linux syscall wrappers (``src/sys/linux.zig``) or inline x86_64 assembly.
-
-Commandment 8: Explicit Memory Safety & Allocators
---------------------------------------------------
-Zig Zen dictates: No hidden memory allocations.
-Every function that allocates heap or virtual memory must accept an explicit ``allocator: std.mem.Allocator`` parameter. Global heap allocations are forbidden. All allocated resources must be freed immediately using ``defer`` or ``errdefer``. In tests, verify memory leak freedom using ``std.testing.allocator``.
-
-.. code-block:: zig
-
-   pub fn createBuffer(allocator: std.mem.Allocator, capacity: usize) ![]u8 {
-       const buffer = try allocator.alloc(u8, capacity);
-       errdefer allocator.free(buffer);
-
-       try initializeBuffer(buffer);
-       return buffer;
-   }
-
-Commandment 9: Mathematical Page & Sector Alignment
----------------------------------------------------
-All memory buffers mapped via ``sys.mem.map``, VirtIO DMA queues, and hardware framebuffers must mathematically enforce 4096-byte page alignment. Storage blocks must enforce 512-byte sector alignment. Unaligned memory access produces undefined behavior or CPU faults.
-
-.. code-block:: zig
-
-   pub const PAGE_SIZE: usize = 4096;
-   pub const SECTOR_SIZE: usize = 512;
-
-   pub fn assertPageAligned(addr: usize) !void {
-       if (addr % PAGE_SIZE != 0) {
-           return error.MisalignedPageBoundary;
-       }
-   }
-
-   pub fn assertSectorAligned(offset: u64) !void {
-       if (offset % SECTOR_SIZE != 0) {
-           return error.MisalignedSectorBoundary;
-       }
-   }
-
-Commandment 10: Colocated Unit Testing
---------------------------------------
-Tests must reside in the exact same file as the code they verify, leveraging Zig's native ``test`` blocks. Colocation keeps tests synchronized with implementation changes and enables thorough testing of private functions and internal invariants.
-
-.. code-block:: zig
-
-   pub fn addSaturated(a: u32, b: u32) u32 {
-       const res = @addWithOverflow(a, b);
-       return if (res[1] != 0) std.math.maxInt(u32) else res[0];
-   }
-
-   test "addSaturated bounds verification" {
-       try std.testing.expectEqual(@as(u32, 42), addSaturated(20, 22));
-       try std.testing.expectEqual(std.math.maxInt(u32), addSaturated(std.math.maxInt(u32), 1));
-   }
-
-Domain-Driven Architecture & Bounded Contexts
-=============================================
-MicrOS enforces strict package boundaries. Code must be organized around cohesive domains rather than technical utility categories.
-
-The Forbidden Names Rule:
--------------------------
-The creation of generic garbage bins such as ``utils.zig``, ``common.zig``, or ``helpers.zig`` is strictly prohibited. The AST linter (``tools/micros-lint``) rejects any file bearing these names. Code must reside in descriptive, domain-specific modules:
-
-* Instead of ``utils.zig`` -> ``src/kernel/mem/page_table.zig`` or ``src/kernel/storage/crc32.zig``.
-* Instead of ``common.zig`` -> ``src/sys/constants.zig`` or ``src/macros/chunk.zig``.
-* Instead of ``helpers.zig`` -> ``src/macros/token_stream.zig`` or ``src/kernel/compositor/color.zig``.
-
-Architectural Principles:
--------------------------
-* **Metz's Single Responsibility Rule**: A module or struct has a single responsibility if its role can be described in one concise sentence without using the words "and" or "but".
-* **Tell, Don't Ask**: Objects and structs should command behavior rather than exposing raw internal state for external modification.
-* **Law of Demeter**: A function should only invoke methods on its direct dependencies, method parameters, or locally instantiated objects. Avoid train-wreck chaining (``a.b().c().d()``).
-* **Command-Query Separation (CQS)**: Methods must either mutate state (returning void) or compute a result (pure query, leaving state intact). Never combine mutations and queries.
-
-Substrate & Kernel Zig Development
-==================================
-The substrate layer bridges the hardware and higher-level runtimes. High-performance, zero-allocation invariants apply.
-
-Freestanding Syscall Invocation:
+Cooperative Green-Thread Fibers:
 --------------------------------
-The ``src/sys/linux.zig`` module provides raw, inline assembly syscall wrappers from ``syscall1`` through ``syscall6``. Syscall returns must be checked immediately for negative error codes and converted into typed Zig error unions.
+MicrOS rejects preemptive kernel threads for application orchestration, relying instead on lightweight userspace fibers (``src/macros/fiber.zig``):
 
-.. code-block:: zig
+* **Fiber Structure**: Each fiber is provisioned with an isolated 64 KiB page-aligned stack.
+* **Context Switching**: The assembly routine in ``src/macros/context_switch.s`` saves callee-saved registers (``rbx``, ``rbp``, ``r12``, ``r13``, ``r14``, ``r15``) onto the current stack, swaps the stack pointer (``rsp``), and restores the destination registers.
+* **Non-Preemptive Scheduling**: Fibers yield CPU time cooperatively via ``yield()`` or when awaiting I/O events, eliminating kernel locking overhead.
 
-   pub fn write(fd: i32, buf: []const u8) !usize {
-       const rc = linux.syscall3(
-           linux.SYS_write,
-           @bitCast(@as(isize, fd)),
-           @intFromPtr(buf.ptr),
-           buf.len,
-       );
-       if (rc < 0) return linux.toError(rc);
-       return @intCast(rc);
-   }
+Content-Addressed Storage Substrate (CAS):
+------------------------------------------
+MicrOS stores all persistent data using content addressing (``src/kernel/storage/cas.zig``):
 
-Ring Buffers & Zero-Allocation Loops:
--------------------------------------
-Critical communication channels (e.g., compositor events, telemetry tokens, VirtIO queues) must execute with zero heap allocations. Use fixed-capacity ring buffers with atomic head/tail indices:
+* **BLAKE3 Addressing**: Every data chunk is addressed by its 256-bit BLAKE3 hash (``b3:<hex>``).
+* **VirtIO-Blk Backend**: Underlying disk transfers operate on 512-byte sectors with an LRU block cache.
+* **System Manifests**: Instead of a mutable file allocation table, system state is represented by root manifests referencing tree-structured content hashes. Superblocks advance monotonically upon verified flushes.
 
-.. code-block:: zig
+Capability-Based Security (CSpace):
+-----------------------------------
+Every actor in MicrOS operates inside a restricted sandbox governed by its Capability Space (``src/kernel/cap/cspace.zig``):
 
-   pub fn RingBuffer(comptime T: type, comptime CAPACITY: usize) type {
-       comptime std.debug.assert(std.math.isPowerOfTwo(CAPACITY));
-       return struct {
-           const Self = @This();
-           storage: [CAPACITY]T = undefined,
-           head: usize = 0,
-           tail: usize = 0,
+* **Capability Tokens**: Represent unforgeable tokens granting specific rights (read, write, spawn, send, map) over kernel objects (framebuffer, IPC ring, bundle storage, network sockets).
+* **Zero Ambient Authority**: If an actor attempts to draw to the screen or send an IPC message without referencing a valid capability slot, the microkernel faults the actor immediately.
 
-           pub fn push(self: *Self, item: T) bool {
-               const next = (self.head + 1) & (CAPACITY - 1);
-               if (next == self.tail) return false; // Full
-               self.storage[self.head] = item;
-               self.head = next;
-               return true;
-           }
+Reactive Vector Compositor & Window Manager:
+--------------------------------------------
+The visual interface (``src/kernel/compositor.zig``) operates directly on the UEFI GOP framebuffer:
 
-           pub fn pop(self: *Self) ?T {
-               if (self.head == self.tail) return null; // Empty
-               const item = self.storage[self.tail];
-               self.tail = (self.tail + 1) & (CAPACITY - 1);
-               return item;
-           }
-       };
-   }
+* **Double-Buffering**: Renders into a 1280x800x32 backbuffer and blits dirty rectangles to the frontbuffer, eliminating screen tearing.
+* **BSP Tiling Window Manager**: Windows are organized in a Binary Space Partitioning tree, automatically tiling visible actor surfaces.
+* **Event Dispatch**: PS/2 keyboard packets and mouse motion events are routed to the focused actor surface over its IPC event queue.
 
-Macros Programming Language Standards
-=====================================
-The Macros programming language (``.mx``, ``.macros``) is the sovereign application and orchestration language of MicrOS.
+The Genesis Bundle & Self-Hosting Pipeline
+==========================================
+MicrOS is designed to compile itself, establishing computational independence from external toolchains.
 
-File Extensions:
-----------------
-* ``.mx``: Canonical concise extension for all Macros scripts, modules, and tests.
-* ``.macros``: Canonical verbose extension, fully supported by runtime and compiler.
-* ``.mc``: Legacy extension supported for backward compatibility during bootstrap.
-
-Language Grammar & Idioms:
+Build-Time Packaging Flow:
 --------------------------
-* Expression-oriented syntax with strict type boundaries.
-* Variables are declared and scoped explicitly.
-* Functions are defined using ``fn name(params) { ... }``.
-* Fiber scheduling is cooperative via ``yield()``.
+1. **Compilation of Tools**: Host utilities (including ``micros-bundle``) are compiled via ``make tools``.
+2. **Bundle Serialization**: ``tools/micros-bundle`` reads Stage 1 source files from ``lib/macros/`` (``init.mx``, ``msh.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) and serializes them into ``src/kernel/genesis.mcb``.
+3. **Kernel Ingestion**: The kernel source (``src/kernel/main.zig``) embeds this binary archive using ``@embedFile("genesis.mcb")``. When the microkernel boots on bare silicon, all essential userland source code is already present in memory without requiring a functional disk driver.
 
-.. code-block:: text
-
-   // Canonical Macros implementation
-   fn calculate_checksum(buffer, length) {
-       acc = 0;
-       i = 0;
-       while (i < length) {
-           acc = acc + buffer[i];
-           i = i + 1;
-       }
-       return acc;
-   }
-
-Immix Mark-Region Memory Invariants:
-------------------------------------
-All runtime allocations in Macros operate on the Immix mark-region garbage collector (``src/macros/gc.zig``):
-* **Block Geometry**: 32 KiB blocks containing 256 lines of 128 bytes (or 256 bytes depending on runtime configuration).
-* **Bump-Pointer Hole Allocation**: Allocation fast-path allocates into contiguous recyclable line holes without memory fragmentation.
-* **Large Objects**: Objects larger than 512 bytes bypass line marks and allocate directly from dedicated virtual memory pages.
-* **Multi-Root Tracing**: The GC must trace roots across fiber execution stacks, VM registers, and global symbol tables.
-
-Content-Addressed Modules (CAS):
---------------------------------
-Macros source modules and precompiled binary chunks (``.mcb``) are addressed by their 256-bit BLAKE3 hash:
-* Module imports use the ``b3:<hex_digest>`` URI scheme for immutable dependencies.
-* System boot bundles use the ``bundle:<name>`` scheme for self-contained execution.
-* Hierarchical mutable filesystem lookups are strictly prohibited in the kernel runtime.
-
-Bash Scripting Standards
-========================
-Host verification scripts, test runners, and build helpers written in Bash must adhere to rigorous defensive scripting standards.
-
-Mandatory Script Invariants:
-----------------------------
-#. **File Extension**: Must use ``.bash`` (e.g., ``tools/micros-runner.bash``). The ``.sh`` extension is strictly forbidden.
-#. **Shebang**: Must begin with ``#!/usr/bin/bash``.
-#. **Strict Header**: Immediately following the shebang, declare:
-
-   .. code-block:: bash
-
-      set -euo pipefail
-      IFS=$'\n\t'
-
-#. **Scoped Variables**: All variables inside functions must be declared with ``local``.
-#. **Test Conditions**: Use double brackets ``[[ ... ]]`` for conditional tests instead of ``[ ... ]``.
-#. **Command Substitution**: Use ``$(command)`` instead of backticks.
-#. **Static Analysis**: All scripts must pass ``shellcheck`` with zero errors and zero warnings.
-
-Verification Toolchain & Pre-Commit Protocol
-============================================
-MicrOS provides a comprehensive host toolchain in ``tools/`` to enforce quality gates deterministically.
-
-Substrate Tool Catalog:
------------------------
-* **micros-runner**: Headless QEMU event-driven harness for UEFI and Linux direct-syscall sandbox execution.
-* **micros-fb-verify**: Sub-millisecond framebuffer pixel variance and bounding-box color regression tester.
-* **micros-lint**: Native Zig AST static analysis engine enforcing the Ten Commandments.
-* **micros-sym**: Freestanding 64-bit ELF symbol table unwinder and address-to-line resolver.
-* **micros-inspect**: Non-interactive QEMU monitor socket inspector for CPU register disassembly during panics.
-* **micros-telem**: Native 64-byte binary telemetry stream decoder and fault analyzer.
-* **micros-spec-trace**: Bidirectional specification traceability matrix auditor across business, functional, technical, and roadmap tiers.
-* **micros-virtio-bench**: VirtIO 1.0 split-virtqueue geometry validator and RDTSC DMA micro-benchmarker.
-* **micros-bundle**: Binary genesis bundle packager serializing Stage 1 Macros files into ``genesis.mcb``.
-
-The Mandatory Pre-Commit Checklist:
+Fixed-Point Bootstrap Verification:
 -----------------------------------
-Before committing any changes to the repository, execute the following sequence:
+The self-hosting pipeline operates across three stages:
 
-#. Compile all tools:
+* **Stage 0**: Freestanding Zig engine in ``src/macros/`` evaluates the Stage 1 compiler scripts.
+* **Stage 1**: Pure Macros compiler in ``lib/macros/compiler.mx`` parses Macros source and emits bytecode chunks.
+* **Stage 2**: The emitted bytecode compiler is executed to compile itself again, verifying bit-for-bit identical BLAKE3 hashes (fixed point) to prove compiler determinism.
 
-   .. code-block:: bash
+Developer Walkthrough: Navigating & Extending
+=============================================
+When contributing to MicrOS, consult the following procedural paths for common development workflows:
 
-      make tools
+Adding a New Microkernel Syscall or Capability:
+-----------------------------------------------
+#. **Define the ABI Prototype**: In ``src/kernel/abi.zig``, implement the native Zig handler (e.g., ``nativeMyFeature``), unpacking arguments from ``args: []eval.Value``.
+#. **Register in Builtins**: Add the mapping inside ``registerBuiltins`` in ``src/kernel/abi.zig``:
+   ``try vm.registerNative("sys_my_feature", nativeMyFeature);``
+#. **Implement Kernel Logic**: If accessing a hardware driver or memory subsystem, invoke the appropriate domain module in ``src/kernel/``, validating the calling actor's CSpace capability.
+#. **Expose to Userland**: Call the new primitive in ``lib/macros/init.mx`` or ``lib/macros/msh.mx``.
 
-#. Run static linter and ShellCheck:
+Adding a New Primitive or Opcode to Macros:
+-------------------------------------------
+#. **Opcode Definition**: Add the new opcode tag to ``OpCode`` enum in ``src/macros/chunk.zig``.
+#. **Frontend Scanning & Parsing**: Update ``src/macros/lexer.zig`` (if introducing keywords/symbols) and ``src/macros/parser.zig`` to produce an AST node.
+#. **Compiler Emission**: In ``src/macros/compiler.zig``, emit the new bytecode instruction and operands into the current chunk.
+#. **VM Execution**: In ``src/macros/vm.zig``, add a ``case`` branch in the main execution loop to handle the opcode.
+#. **Self-Hosting Mirror**: Mirror the syntax and code generation changes in ``lib/macros/lexer.mx``, ``parser.mx``, and ``compiler.mx``.
 
-   .. code-block:: bash
+Debugging a Crash or Kernel Panic:
+----------------------------------
+#. **Serial Console Capture**: Inspect serial logs written by the kernel (captured automatically by ``tools/micros-runner.bash --serial-log build/serial.log``).
+#. **Symbol Resolution**: Run hexadecimal instruction pointers through ``./tools/micros-sym <address>`` to obtain function names and line offsets.
+#. **Monitor Register Inspection**: If QEMU hangs, execute ``./tools/micros-inspect`` to connect to the monitor socket and dump CPU registers (RAX, CR3, RIP) and disassembly.
+#. **Telemetry Frame Decoding**: If telemetry rings are active, inspect decoded frames with ``./tools/micros-telem -f /tmp/telemetry.bin``.
 
-      make lint
+Executing the Verification Suite:
+---------------------------------
+Before submitting changes, run the mandatory verification sequence:
 
-#. Check formatting:
+.. code-block:: bash
 
-   .. code-block:: bash
+   # 1. Compile host verification tools
+   make tools
 
-      make fmt-check
+   # 2. Run static code analyzer and ShellCheck
+   make lint
 
-#. Verify specification traceability:
+   # 3. Check source formatting
+   make fmt-check
 
-   .. code-block:: bash
+   # 4. Audit specification traceability
+   make spec-trace
 
-      make spec-trace
+   # 5. Run full unit test suite
+   zig build test
 
-#. Run unit test suite:
+   # 6. Execute headless bare-metal boot in QEMU
+   make test-uefi
 
-   .. code-block:: bash
-
-      zig build test
-      make -C tools test
-
-#. Run UEFI and sandbox integration tests:
-
-   .. code-block:: bash
-
-      make test-sandbox
-      make test-uefi
-
-Git Standards & Commit Hygiene
-==============================
-Commit messages must follow the Conventional Commits specification:
-
-* Format: ``type(scope): concise description in present tense``
-* Supported types: ``feat``, ``fix``, ``docs``, ``style``, ``refactor``, ``perf``, ``test``, ``chore``.
-* Example: ``feat(gc): consolidate Immix mark-region collector with multi-root tracing``
-* Commits must include human and agent sign-off trailers.
-* Zero credentials, API keys, or private endpoints in repository commits.
+   # 7. Execute direct-syscall sandbox test
+   make test-sandbox
