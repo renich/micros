@@ -14,6 +14,7 @@ const fat32 = @import("fat32.zig");
 const cas_mod = @import("cas.zig");
 const rebuild = @import("rebuild.zig");
 const pe_emitter = @import("../../boot/pe_emitter.zig");
+const bundle_writer = @import("bundle_writer.zig");
 const io = @import("../arch/x86_64/io.zig");
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
@@ -190,6 +191,27 @@ fn nativeSysReboot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
 }
 
+fn nativeSysBundlePack(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .array) return error.InvalidArgs;
+    const raw_arr = args[0].array;
+
+    var entries = try vm.allocator.alloc(bundle_writer.EntryInput, raw_arr.len);
+    defer vm.allocator.free(entries);
+
+    for (raw_arr, 0..) |item, i| {
+        if (item != .array or item.array.len != 2) return error.InvalidEntryFormat;
+        if (item.array[0] != .string or item.array[1] != .string) return error.InvalidEntryType;
+        entries[i] = .{
+            .tag = item.array[0].string,
+            .data = item.array[1].string,
+        };
+    }
+
+    const bundle_bytes = try bundle_writer.packBundle(vm.allocator, entries);
+    return Value{ .string = bundle_bytes };
+}
+
 pub fn registerStorageSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_block_dev_count", Value{ .native = nativeSysBlockDevCount });
     try vm.globals.put("sys_block_dev_name", Value{ .native = nativeSysBlockDevName });
@@ -201,6 +223,7 @@ pub fn registerStorageSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_disk_esp_stage_bootloader", Value{ .native = nativeSysDiskEspStageBootloader });
     try vm.globals.put("sys_disk_cas_format", Value{ .native = nativeSysDiskCasFormat });
     try vm.globals.put("sys_cas_confirm_boot", Value{ .native = nativeSysCasConfirmBoot });
+    try vm.globals.put("sys_bundle_pack", Value{ .native = nativeSysBundlePack });
     try vm.globals.put("sys_reboot", Value{ .native = nativeSysReboot });
 }
 
@@ -274,4 +297,27 @@ fn testMockWrites(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anye
 
 fn testMockFlush(ctx: *anyopaque) anyerror!void {
     _ = ctx;
+}
+
+test "storage abi sys_bundle_pack packs and roundtrips entries" {
+    const allocator = std.testing.allocator;
+    var chunk = @import("../../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var item0 = [_]Value{ Value{ .string = "alpha.mx" }, Value{ .string = "content 1" } };
+    var item1 = [_]Value{ Value{ .string = "beta.mx" }, Value{ .string = "content 2" } };
+    var items = [_]Value{ Value{ .array = &item0 }, Value{ .array = &item1 } };
+    var args = [_]Value{Value{ .array = &items }};
+
+    const res = try nativeSysBundlePack(&vm, &args);
+    defer allocator.free(res.string);
+
+    const bundle_mod = @import("../bundle.zig");
+    const reader = try bundle_mod.BundleReader.init(res.string);
+    try std.testing.expectEqual(@as(u32, 2), reader.header.entry_count);
+    try std.testing.expectEqualStrings("content 1", reader.findData("alpha.mx").?);
+    try std.testing.expectEqualStrings("content 2", reader.findData("beta.mx").?);
 }

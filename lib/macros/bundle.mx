@@ -1,0 +1,51 @@
+// MicrOS (µOS) In-System Genesis Bundle Packager
+// Collects system actors and compiler sources from active bundle/CAS
+// and packs them into a deterministic genesis.mcb bundle via sys_bundle_pack().
+
+fn pack_system_bundle() {
+    init_src = sys_bundle_read("init.mx");
+    msh_src = sys_bundle_read("msh.mx");
+    harness_src = sys_bundle_read("harness.mx");
+    installer_src = sys_bundle_read("installer.mx");
+    lexer_src = sys_bundle_read("lexer.mx");
+    parser_src = sys_bundle_read("parser.mx");
+    compiler_src = sys_bundle_read("compiler.mx");
+    compiler_main_src = sys_bundle_read("compiler_main.mx");
+    bundle_src = sys_bundle_read("bundle.mx");
+
+    entries = [
+        ["init.mx", init_src],
+        ["msh.mx", msh_src],
+        ["harness.mx", harness_src],
+        ["installer.mx", installer_src],
+        ["lexer.mx", lexer_src],
+        ["parser.mx", parser_src],
+        ["compiler.mx", compiler_src],
+        ["compiler_main.mx", compiler_main_src],
+        ["bundle.mx", bundle_src]
+    ];
+
+    bundle_bytes = sys_bundle_pack(entries);
+    return bundle_bytes;
+}
+
+fn pack_custom_bundle(entries) {
+    if (len(entries) == 0) {
+        return "";
+    }
+    return sys_bundle_pack(entries);
+}
+
+fn main() {
+    print("[bundle] Synthesizing system Genesis MCB bundle...");
+    bundle_bytes = pack_system_bundle();
+    if (len(bundle_bytes) == 0) {
+        print("[bundle] Error: Bundle synthesis failed.");
+        return 1;
+    }
+    hash = sys_cas_put(bundle_bytes);
+    print("[bundle] Genesis bundle packed successfully.");
+    print("[bundle] Bytes: " + int_to_str(len(bundle_bytes)));
+    print("[bundle] CAS Hash: " + hash);
+    return 0;
+}

@@ -10,6 +10,9 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Track D (Bit-for-Bit Self-Rebuilding Kernel Pipeline)**:
+  - **In-System MCB Synthesizer & Pack Syscall (Milestone M4.1)**: Implemented freestanding ``src/kernel/storage/bundle_writer.zig`` assembling immutable, 64-byte aligned Capability Bundle (``.mcb``) binaries entirely in memory with zero libc and explicit allocator. Enforces lexicographical tag sorting to eradicate file-ordering non-determinism, computes BLAKE3 content digests per entry, and ensures deterministic zero-padding. Exposed ``sys_bundle_pack`` in ``src/kernel/storage/storage_abi.zig`` and implemented userspace bundle packaging in ``lib/macros/bundle.mx``.
+
 - **Resident AI Transport Security & Process Decoupling**:
   - **Freestanding TLS 1.3 Unlocked on UEFI**: Enabled ``std.crypto.tls.Client`` unconditionally across freestanding ``x86_64-uefi`` targets in ``src/kernel/net/tls_stream.zig``, removing legacy compile-time stubbing and enabling live HTTPS inference with Gemini and OpenAI directly on bare-metal UEFI.
   - **MicroShell Decoupling & Centralized AI Harness**: Stripped the ``ai`` command from App 0 MicroShell (``lib/macros/msh.mx``) to enforce strict separation of responsibilities, preserving ``msh`` as a lean systems administration CLI and centralizing synthetic intelligence orchestration within App 1 (``lib/macros/harness.mx``). Updated installer messaging to neutral technical phrasing.
