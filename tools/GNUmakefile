@@ -21,7 +21,8 @@ BINARIES := \
 	$(BIN_DIR)/micros-fb-verify \
 	$(BIN_DIR)/micros-lint \
 	$(BIN_DIR)/micros-sym \
-	$(BIN_DIR)/micros-telem
+	$(BIN_DIR)/micros-telem \
+	$(BIN_DIR)/micros-virtio-bench
 
 # Shell scripts
 SCRIPTS := \
@@ -39,7 +40,8 @@ SYMLINKS := \
 	micros-lint \
 	micros-sym \
 	micros-addr2line \
-	micros-telem
+	micros-telem \
+	micros-virtio-bench
 
 # Default goal
 .DEFAULT_GOAL := all
@@ -53,6 +55,10 @@ $(BIN_DIR):
 	mkdir -p $@
 
 $(BIN_DIR)/micros-fb-verify: $(SRC_DIR)/fb_verify.zig | $(BIN_DIR)
+	@echo "=> Compiling $@..."
+	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
+
+$(BIN_DIR)/micros-virtio-bench: $(SRC_DIR)/virtio_bench.zig | $(BIN_DIR)
 	@echo "=> Compiling $@..."
 	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
 
@@ -88,6 +94,9 @@ micros-addr2line: micros-sym
 micros-telem: $(BIN_DIR)/micros-telem
 	ln -sf $< $@
 
+micros-virtio-bench: $(BIN_DIR)/micros-virtio-bench
+	ln -sf $< $@
+
 ## test: Execute unit and integration tests for tools
 test: all
 	@echo "=> Running tools test suite..."
@@ -96,6 +105,7 @@ test: all
 	$(ZIG) test $(SRC_DIR)/sym.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/telem.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/bundle.zig --cache-dir $(CACHE_DIR)
+	$(ZIG) test $(SRC_DIR)/virtio_bench.zig --cache-dir $(CACHE_DIR)
 	./micros-spec-trace.bash --check
 	@echo "=> Tools test suite passed."
 

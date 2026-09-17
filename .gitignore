@@ -12,6 +12,7 @@ tools/micros-lint
 tools/micros-sym
 tools/micros-addr2line
 tools/micros-telem
+tools/micros-virtio-bench
 tools/.zig-cache/
 esp/
 docs/_build/

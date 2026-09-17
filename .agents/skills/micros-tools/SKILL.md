@@ -206,8 +206,34 @@ This skill governs the operational usage, CLI conventions, and agent workflows f
   # Inspect complete traceability matrix
   ./tools/micros-spec-trace --format matrix
 
-  # Trace dependency graph for telemetry technical specification
+# Trace dependency graph for telemetry technical specification
   ./tools/micros-spec-trace --tag TECH-TELEM-001
+  ```
+
+---
+
+### 1.8. `micros-virtio-bench` — VirtIO Subsystem Benchmark & Geometric Validator
+* **Source**: [`tools/src/virtio_bench.zig`](file:///home/renich/Projects/zig/micros/tools/src/virtio_bench.zig)
+* **Launcher**: [`tools/micros-virtio-bench`](file:///home/renich/Projects/zig/micros/tools/micros-virtio-bench)
+* **Purpose**: Freestanding geometric validator and micro-benchmark harness for VirtIO 1.0 split-virtqueue ring buffers, descriptor layouts, and multi-sector DMA batching.
+* **CLI Syntax**:
+  ```bash
+  ./tools/micros-virtio-bench [options]
+  ```
+* **Options**:
+  * `--validate`: Mathematically audits split-virtqueue geometries, ring alignments, descriptor sizes, and 512-byte sector DMA boundaries.
+  * `--bench`: Executes RDTSC micro-benchmarking comparing single-sector serialization against batched DMA transfers, reporting speedup factor, cycle reduction, and VM exit trap savings.
+  * `--iterations <N>`: Configures test iterations (default: `50000`).
+* **Usage Examples**:
+  ```bash
+  # Run both validation and benchmark
+  ./tools/micros-virtio-bench
+
+  # Audit geometric layout invariants only
+  ./tools/micros-virtio-bench --validate
+
+  # Run high-iteration benchmark
+  ./tools/micros-virtio-bench --bench --iterations 100000
   ```
 
 ---

@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "micros-lint", .src = "tools/src/lint.zig" },
         .{ .name = "micros-sym", .src = "tools/src/sym.zig" },
         .{ .name = "micros-telem", .src = "tools/src/telem.zig" },
+        .{ .name = "micros-virtio-bench", .src = "tools/src/virtio_bench.zig" },
     };
 
     const tools_step = b.step("tools", "Build the MicrOS substrate toolchain");

@@ -162,6 +162,9 @@ Booting the Sovereign Machine
    # 6. Verify two-stage cold reboot storage persistence across VirtIO-Blk & CAS
    tools/micros-runner.bash --verify-persistence --timeout 15
 
+   # 7. Benchmark VirtIO split-virtqueue batching and validate geometries
+   tools/micros-virtio-bench
+
 --------------------------------------------------------------------------------
 
 A Call to Explorers

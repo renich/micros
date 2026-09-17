@@ -9,7 +9,12 @@ const serial = @import("../serial.zig");
 
 pub const QUEUE_SIZE: u16 = 256;
 pub const QUEUE_PAGES: usize = 3;
+pub const DMA_PAGES: usize = 2;
+pub const MAX_BATCH_SECTORS: usize = 8;
 pub const SECTOR_SIZE: usize = 512;
+pub const STATUS_DMA_OFFSET: usize = 16;
+pub const DATA_DMA_OFFSET: usize = 512;
+pub const PAUSE_SPIN_LIMIT: usize = 5_000_000;
 pub const QUEUE_INDEX: u16 = 0;
 
 pub const REG_DEVICE_FEATURES: u16 = 0x00;
@@ -32,6 +37,7 @@ pub const STATUS_FAILED: u8 = 0x80;
 
 pub const VRING_DESC_F_NEXT: u16 = 0x0001;
 pub const VRING_DESC_F_WRITE: u16 = 0x0002;
+pub const VRING_AVAIL_F_NO_INTERRUPT: u16 = 0x0001;
 
 pub const VIRTIO_BLK_T_IN: u32 = 0;
 pub const VIRTIO_BLK_T_OUT: u32 = 1;
@@ -80,8 +86,8 @@ pub const VirtQueue = struct {
     queue_index: u16,
     num_descs: u16,
     descs: [*]VRingDesc,
-    avail: *VRingAvail,
-    used: *VRingUsed,
+    avail: *volatile VRingAvail,
+    used: *volatile VRingUsed,
     last_used_idx: u16,
     ring_phys: u64,
 
@@ -94,10 +100,10 @@ pub const VirtQueue = struct {
         const used_offset = std.mem.alignForward(usize, desc_size + avail_size, 4096);
 
         const descs: [*]VRingDesc = @ptrCast(@alignCast(mem_virt));
-        const avail: *VRingAvail = @ptrCast(@alignCast(mem_virt + avail_offset));
-        const used: *VRingUsed = @ptrCast(@alignCast(mem_virt + used_offset));
+        const avail: *volatile VRingAvail = @ptrCast(@alignCast(mem_virt + avail_offset));
+        const used: *volatile VRingUsed = @ptrCast(@alignCast(mem_virt + used_offset));
 
-        avail.flags = 0;
+        avail.flags = VRING_AVAIL_F_NO_INTERRUPT;
         avail.idx = 0;
         used.flags = 0;
         used.idx = 0;
@@ -145,7 +151,7 @@ pub const VirtioBlkDevice = struct {
         io.outb(io_port + REG_DEVICE_STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_DRIVER_OK);
 
         const dma_virt: [*]u8 = @ptrFromInt(dma_page_phys + hhdm_offset);
-        @memset(dma_virt[0..4096], 0);
+        @memset(dma_virt[0 .. DMA_PAGES * 4096], 0);
 
         return VirtioBlkDevice{
             .io_base = io_port,
@@ -158,8 +164,11 @@ pub const VirtioBlkDevice = struct {
     }
 
     pub fn readSector(self: *VirtioBlkDevice, sector: u64, out_buf: *[SECTOR_SIZE]u8) !void {
-        if (!self.initialized) return error.DeviceNotInitialized;
-        if (sector >= self.capacity_sectors) return error.SectorOutOfBounds;
+        return self.readSectors(sector, 1, out_buf);
+    }
+
+    pub fn readSectors(self: *VirtioBlkDevice, sector: u64, count: usize, out_buf: []u8) !void {
+        try self.validateTransfer(sector, count, out_buf.len);
 
         const hdr_ptr: *VirtioBlkOutHdr = @ptrCast(@alignCast(self.dma_buffer_virt));
         hdr_ptr.* = VirtioBlkOutHdr{
@@ -168,25 +177,28 @@ pub const VirtioBlkDevice = struct {
             .sector = sector,
         };
 
-        const status_offset: usize = @sizeOf(VirtioBlkOutHdr) + SECTOR_SIZE;
-        self.dma_buffer_virt[status_offset] = @intFromEnum(VirtioBlkStatus.pending);
+        self.dma_buffer_virt[STATUS_DMA_OFFSET] = @intFromEnum(VirtioBlkStatus.pending);
+        const data_phys = self.dma_buffer_phys + DATA_DMA_OFFSET;
+        const status_phys = self.dma_buffer_phys + STATUS_DMA_OFFSET;
 
-        const data_phys = self.dma_buffer_phys + @sizeOf(VirtioBlkOutHdr);
-        const status_phys = self.dma_buffer_phys + status_offset;
-
-        self.setupDescChain(self.dma_buffer_phys, data_phys, status_phys, VRING_DESC_F_WRITE);
+        const data_len: u32 = @intCast(count * SECTOR_SIZE);
+        self.setupDescChain(self.dma_buffer_phys, data_phys, data_len, status_phys, VRING_DESC_F_WRITE);
         try self.submitAndWait();
 
-        const status_val = self.dma_buffer_virt[status_offset];
-        if (status_val != @intFromEnum(VirtioBlkStatus.ok)) return error.IoError;
+        if (self.dma_buffer_virt[STATUS_DMA_OFFSET] != @intFromEnum(VirtioBlkStatus.ok)) {
+            return error.IoError;
+        }
 
-        const data_slice = self.dma_buffer_virt[@sizeOf(VirtioBlkOutHdr) .. @sizeOf(VirtioBlkOutHdr) + SECTOR_SIZE];
-        @memcpy(out_buf, data_slice);
+        const data_slice = self.dma_buffer_virt[DATA_DMA_OFFSET .. DATA_DMA_OFFSET + data_len];
+        @memcpy(out_buf[0..data_len], data_slice);
     }
 
     pub fn writeSector(self: *VirtioBlkDevice, sector: u64, in_buf: *const [SECTOR_SIZE]u8) !void {
-        if (!self.initialized) return error.DeviceNotInitialized;
-        if (sector >= self.capacity_sectors) return error.SectorOutOfBounds;
+        return self.writeSectors(sector, 1, in_buf);
+    }
+
+    pub fn writeSectors(self: *VirtioBlkDevice, sector: u64, count: usize, in_buf: []const u8) !void {
+        try self.validateTransfer(sector, count, in_buf.len);
 
         const hdr_ptr: *VirtioBlkOutHdr = @ptrCast(@alignCast(self.dma_buffer_virt));
         hdr_ptr.* = VirtioBlkOutHdr{
@@ -195,23 +207,30 @@ pub const VirtioBlkDevice = struct {
             .sector = sector,
         };
 
-        const data_slice = self.dma_buffer_virt[@sizeOf(VirtioBlkOutHdr) .. @sizeOf(VirtioBlkOutHdr) + SECTOR_SIZE];
-        @memcpy(data_slice, in_buf);
+        const data_len: u32 = @intCast(count * SECTOR_SIZE);
+        const data_slice = self.dma_buffer_virt[DATA_DMA_OFFSET .. DATA_DMA_OFFSET + data_len];
+        @memcpy(data_slice, in_buf[0..data_len]);
 
-        const status_offset: usize = @sizeOf(VirtioBlkOutHdr) + SECTOR_SIZE;
-        self.dma_buffer_virt[status_offset] = @intFromEnum(VirtioBlkStatus.pending);
+        self.dma_buffer_virt[STATUS_DMA_OFFSET] = @intFromEnum(VirtioBlkStatus.pending);
+        const data_phys = self.dma_buffer_phys + DATA_DMA_OFFSET;
+        const status_phys = self.dma_buffer_phys + STATUS_DMA_OFFSET;
 
-        const data_phys = self.dma_buffer_phys + @sizeOf(VirtioBlkOutHdr);
-        const status_phys = self.dma_buffer_phys + status_offset;
-
-        self.setupDescChain(self.dma_buffer_phys, data_phys, status_phys, 0);
+        self.setupDescChain(self.dma_buffer_phys, data_phys, data_len, status_phys, 0);
         try self.submitAndWait();
 
-        const status_val = self.dma_buffer_virt[status_offset];
-        if (status_val != @intFromEnum(VirtioBlkStatus.ok)) return error.IoError;
+        if (self.dma_buffer_virt[STATUS_DMA_OFFSET] != @intFromEnum(VirtioBlkStatus.ok)) {
+            return error.IoError;
+        }
     }
 
-    fn setupDescChain(self: *VirtioBlkDevice, hdr_phys: u64, data_phys: u64, status_phys: u64, data_extra_flag: u16) void {
+    fn validateTransfer(self: *const VirtioBlkDevice, sector: u64, count: usize, buf_len: usize) !void {
+        if (!self.initialized) return error.DeviceNotInitialized;
+        if (count == 0 or count > MAX_BATCH_SECTORS) return error.InvalidSectorCount;
+        if (buf_len < count * SECTOR_SIZE) return error.BufferTooSmall;
+        if (sector + @as(u64, @intCast(count)) > self.capacity_sectors) return error.SectorOutOfBounds;
+    }
+
+    fn setupDescChain(self: *VirtioBlkDevice, hdr_phys: u64, data_phys: u64, data_len: u32, status_phys: u64, data_extra_flag: u16) void {
         self.queue.descs[0] = VRingDesc{
             .addr = hdr_phys,
             .len = @sizeOf(VirtioBlkOutHdr),
@@ -220,7 +239,7 @@ pub const VirtioBlkDevice = struct {
         };
         self.queue.descs[1] = VRingDesc{
             .addr = data_phys,
-            .len = SECTOR_SIZE,
+            .len = data_len,
             .flags = VRING_DESC_F_NEXT | data_extra_flag,
             .next = 2,
         };
@@ -233,7 +252,7 @@ pub const VirtioBlkDevice = struct {
     }
 
     fn submitAndWait(self: *VirtioBlkDevice) !void {
-        const avail_ptr: *volatile VRingAvail = @ptrCast(self.queue.avail);
+        const avail_ptr = self.queue.avail;
         const avail_idx = avail_ptr.idx;
         avail_ptr.ring[avail_idx % QUEUE_SIZE] = 0;
         asm volatile ("" ::: .{ .memory = true });
@@ -242,10 +261,10 @@ pub const VirtioBlkDevice = struct {
 
         io.outw(self.io_base + REG_QUEUE_NOTIFY, QUEUE_INDEX);
 
-        const used_ptr: *volatile VRingUsed = @ptrCast(self.queue.used);
+        const used_ptr = self.queue.used;
         var wait_iter: usize = 0;
-        while (used_ptr.idx == self.queue.last_used_idx and wait_iter < 1_000_000) : (wait_iter += 1) {
-            io.ioWait();
+        while (used_ptr.idx == self.queue.last_used_idx and wait_iter < PAUSE_SPIN_LIMIT) : (wait_iter += 1) {
+            io.pause();
         }
 
         if (used_ptr.idx == self.queue.last_used_idx) {
@@ -286,4 +305,21 @@ test "virtio blk sector bounds check" {
     var buf: [512]u8 = undefined;
     const err = dev.readSector(100, &buf);
     try std.testing.expectError(error.SectorOutOfBounds, err);
+}
+
+test "virtio blk batch sector validation" {
+    var dev = VirtioBlkDevice{
+        .io_base = 0xC100,
+        .capacity_sectors = 100,
+        .queue = undefined,
+        .dma_buffer_virt = undefined,
+        .dma_buffer_phys = 0,
+        .initialized = true,
+    };
+    var buf: [4096]u8 = undefined;
+    try std.testing.expectError(error.InvalidSectorCount, dev.readSectors(0, 0, &buf));
+    try std.testing.expectError(error.InvalidSectorCount, dev.readSectors(0, 9, &buf));
+    var small_buf: [511]u8 = undefined;
+    try std.testing.expectError(error.BufferTooSmall, dev.readSectors(0, 1, &small_buf));
+    try std.testing.expectError(error.SectorOutOfBounds, dev.readSectors(98, 4, &buf));
 }

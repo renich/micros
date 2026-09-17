@@ -150,23 +150,11 @@ fn flushVictim(victim: *CacheEntry, dev: ?*virtio_blk.VirtioBlkDevice) !void {
 }
 
 fn flushEntry(entry: *CacheEntry, dev: *virtio_blk.VirtioBlkDevice) !void {
-    var s: usize = 0;
-    while (s < SECTORS_PER_PAGE) : (s += 1) {
-        const sector_num = entry.page_sector + @as(u64, @intCast(s));
-        const offset = s * SECTOR_SIZE;
-        const sec_ptr: *const [SECTOR_SIZE]u8 = @ptrCast(entry.data[offset .. offset + SECTOR_SIZE]);
-        try dev.writeSector(sector_num, sec_ptr);
-    }
+    try dev.writeSectors(entry.page_sector, SECTORS_PER_PAGE, entry.data);
 }
 
 fn loadEntry(entry: *CacheEntry, page_base: u64, dev: *virtio_blk.VirtioBlkDevice) !void {
-    var s: usize = 0;
-    while (s < SECTORS_PER_PAGE) : (s += 1) {
-        const sector_num = page_base + @as(u64, @intCast(s));
-        const offset = s * SECTOR_SIZE;
-        const sec_ptr: *[SECTOR_SIZE]u8 = @ptrCast(entry.data[offset .. offset + SECTOR_SIZE]);
-        try dev.readSector(sector_num, sec_ptr);
-    }
+    try dev.readSectors(page_base, SECTORS_PER_PAGE, entry.data);
 }
 
 test "block cache memory page alignment" {

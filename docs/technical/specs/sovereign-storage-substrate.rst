@@ -53,12 +53,14 @@ All sector transactions are formatted as 16-byte request headers:
 
 2.2 Split Virtqueue Mechanics
 -----------------------------
-* Queue index 0 is configured with 128 descriptors.
+* Queue index 0 is configured with 256 descriptors.
 * Physical memory for the descriptor table, available ring, and used ring is allocated from the Physical Memory Manager (PMM) and strictly aligned to 4096-byte boundaries.
 * Each transaction uses a 3-descriptor chain:
   1. Header descriptor (Device-readable, 16 bytes: `VirtioBlkOutHdr`).
-  2. Data buffer descriptor (Device-readable for write, Device-writable for read; multiple of 512 bytes).
+  2. Data buffer descriptor (Device-readable for write, Device-writable for read; 512-byte sector-aligned, supporting up to 8 sectors / 4096 bytes batched DMA).
   3. Status byte descriptor (Device-writable, 1 byte: `VirtioBlkStatus`).
+* Polled completion uses CPU `pause` instructions (`PAUSE_SPIN_LIMIT = 5_000_000`) with zero port 0x80 VM exit traps.
+* Block cache page frame loads and flushes execute as a single batched 4096-byte DMA transfer (8 sectors), reducing doorbell kicks and descriptor processing by 87.5%.
 
 3. Page-Aligned Bounded Block Cache (LRU)
 =========================================

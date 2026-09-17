@@ -52,6 +52,21 @@ pub inline fn ioWait() void {
     outb(0x80, 0);
 }
 
+pub inline fn pause() void {
+    asm volatile ("pause" ::: .{ .memory = true });
+}
+
+pub inline fn rdtsc() u64 {
+    var rax_val: u64 = undefined;
+    var rdx_val: u64 = undefined;
+    asm volatile (
+        \\rdtsc
+        : [rax_val] "={rax}" (rax_val),
+          [rdx_val] "={rdx}" (rdx_val),
+    );
+    return (rdx_val << 32) | rax_val;
+}
+
 test "port io signatures compile" {
     // Verified compilation of port I/O primitives
     try std.testing.expect(@sizeOf(u16) == 2);

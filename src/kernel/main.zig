@@ -490,7 +490,7 @@ fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocat
         serial.writeString("[kernel] PMM alloc failed for virtio-blk ring\n");
         return;
     };
-    const dma_phys = pmm.allocPage() orelse {
+    const dma_phys = pmm.allocContiguousPages(virtio_blk_mod.DMA_PAGES) orelse {
         serial.writeString("[kernel] PMM alloc failed for virtio-blk dma\n");
         return;
     };

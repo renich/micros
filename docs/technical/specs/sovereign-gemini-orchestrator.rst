@@ -41,6 +41,8 @@ Gemini Flash interacts with µOS through bidirectional structured tool calling. 
 * Targets Modern VirtIO 1.0 specifications over PCI bus (`0x1af4:0x1000`/`0x1041`).
 * Split virtqueues: Receive Queue (Queue 0) and Transmit Queue (Queue 1).
 * Buffer descriptors aligned to 4096-byte page boundaries with zero-copy packet passing.
+* Interrupt suppression (`VRING_AVAIL_F_NO_INTERRUPT = 0x0001`) in polled mode.
+* Asynchronous TX transmission pipeline: eliminates synchronous double-waits by retiring transmit descriptors lazily on subsequent packet dispatches with CPU `pause` spinloops.
 
 2.2 Layer 2 & Layer 3 Protocol Engine
 -------------------------------------

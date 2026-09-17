@@ -35,6 +35,8 @@ pub const STATUS_FAILED: u8 = 0x80;
 
 pub const VRING_DESC_F_NEXT: u16 = 0x0001;
 pub const VRING_DESC_F_WRITE: u16 = 0x0002;
+pub const VRING_AVAIL_F_NO_INTERRUPT: u16 = 0x0001;
+pub const PAUSE_SPIN_LIMIT: usize = 5_000_000;
 
 pub const VirtioNetHeader = extern struct {
     flags: u8 = 0,
@@ -75,8 +77,8 @@ pub const VirtQueue = struct {
     queue_index: u16,
     num_descs: u16,
     descs: [*]VRingDesc,
-    avail: *VRingAvail,
-    used: *VRingUsed,
+    avail: *volatile VRingAvail,
+    used: *volatile VRingUsed,
     last_used_idx: u16,
     ring_phys: u64,
 
@@ -87,10 +89,10 @@ pub const VirtQueue = struct {
         const used_offset = std.mem.alignForward(usize, desc_size + avail_size, 4096);
 
         const descs: [*]VRingDesc = @ptrCast(@alignCast(mem_virt));
-        const avail: *VRingAvail = @ptrCast(@alignCast(mem_virt + avail_offset));
-        const used: *VRingUsed = @ptrCast(@alignCast(mem_virt + used_offset));
+        const avail: *volatile VRingAvail = @ptrCast(@alignCast(mem_virt + avail_offset));
+        const used: *volatile VRingUsed = @ptrCast(@alignCast(mem_virt + used_offset));
 
-        avail.flags = 0;
+        avail.flags = VRING_AVAIL_F_NO_INTERRUPT;
         avail.idx = 0;
         used.flags = 0;
         used.idx = 0;
@@ -116,6 +118,7 @@ pub const VirtioNetDevice = struct {
     rx_buffers_phys: u64,
     tx_buffer_virt: [*]u8,
     tx_buffer_phys: u64,
+    tx_in_flight: bool,
     initialized: bool,
 
     pub fn init(pci_dev: pci.PciDevice, rx_ring_page: u64, tx_ring_page: u64, buf_page_rx: u64, buf_page_tx: u64, hhdm_offset: u64) !VirtioNetDevice {
@@ -140,6 +143,7 @@ pub const VirtioNetDevice = struct {
             .rx_buffers_phys = buf_page_rx,
             .tx_buffer_virt = @ptrFromInt(buf_page_tx + hhdm_offset),
             .tx_buffer_phys = buf_page_tx,
+            .tx_in_flight = false,
             .initialized = true,
         };
     }
@@ -147,9 +151,8 @@ pub const VirtioNetDevice = struct {
     pub fn sendPacket(self: *VirtioNetDevice, packet: []const u8) !void {
         if (packet.len > MAX_PACKET_SIZE) return error.PacketTooLarge;
 
-        var wait_iter: usize = 0;
-        while (self.tx_queue.avail.idx != self.tx_queue.used.idx and wait_iter < 100_000) : (wait_iter += 1) {
-            io.ioWait();
+        if (self.tx_in_flight) {
+            try self.retireTx();
         }
 
         const hdr_ptr: *VirtioNetHeader = @ptrCast(@alignCast(self.tx_buffer_virt));
@@ -168,13 +171,27 @@ pub const VirtioNetDevice = struct {
         self.tx_queue.avail.ring[avail_idx % QUEUE_SIZE] = 0;
         asm volatile ("" ::: .{ .memory = true });
         self.tx_queue.avail.idx = avail_idx +% 1;
+        asm volatile ("" ::: .{ .memory = true });
 
         io.outw(self.io_base + REG_QUEUE_NOTIFY, QUEUE_TX);
+        self.tx_in_flight = true;
+    }
 
-        wait_iter = 0;
-        while (self.tx_queue.avail.idx != self.tx_queue.used.idx and wait_iter < 100_000) : (wait_iter += 1) {
-            io.ioWait();
+    pub fn flushTx(self: *VirtioNetDevice) !void {
+        if (self.tx_in_flight) {
+            try self.retireTx();
         }
+    }
+
+    fn retireTx(self: *VirtioNetDevice) !void {
+        var wait_iter: usize = 0;
+        while (self.tx_queue.avail.idx != self.tx_queue.used.idx and wait_iter < PAUSE_SPIN_LIMIT) : (wait_iter += 1) {
+            io.pause();
+        }
+        if (self.tx_queue.avail.idx != self.tx_queue.used.idx) {
+            return error.TxTimeout;
+        }
+        self.tx_in_flight = false;
     }
 
     pub fn pollReceive(self: *VirtioNetDevice, out_buffer: []u8) ?usize {
@@ -272,6 +289,7 @@ test "virtio net packet payload bounds" {
         .rx_buffers_phys = 0,
         .tx_buffer_virt = undefined,
         .tx_buffer_phys = 0,
+        .tx_in_flight = false,
         .initialized = false,
     };
     var oversized: [2000]u8 = undefined;
