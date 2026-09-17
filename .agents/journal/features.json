@@ -20,6 +20,13 @@
       "passes": true,
       "spec_ref": "docs/technical/specs/self-hosting-macros.rst",
       "verification_cmd": "make check"
+    },
+    "SPEC-TECH-SILICON-001": {
+      "last_checked": "2026-09-17T22:10:29.402Z",
+      "name": "Sovereign Cord-Cutting & Silicon Deployment",
+      "passes": false,
+      "spec_ref": "docs/technical/specs/sovereign-cord-cutting.rst",
+      "verification_cmd": "make check"
     }
   },
   "version": "0.3.0"
