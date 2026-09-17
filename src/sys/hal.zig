@@ -13,6 +13,10 @@ pub fn munmap(addr: *anyopaque, length: usize) !void {
     return impl.munmap(addr, length);
 }
 
+pub fn mprotect(addr: *anyopaque, length: usize, prot: usize) !void {
+    return impl.mprotect(addr, length, prot);
+}
+
 pub fn read(fd: i32, buf: []u8) !usize {
     return impl.read(fd, buf);
 }

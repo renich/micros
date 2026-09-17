@@ -23,6 +23,11 @@ pub fn unmap(addr: *anyopaque, length: usize) !void {
     return hal.munmap(addr, length);
 }
 
+pub fn protect(addr: *anyopaque, length: usize, prot: usize) !void {
+    if (@intFromPtr(addr) & (4096 - 1) != 0) return error.InvalidArgument;
+    return hal.mprotect(addr, length, prot);
+}
+
 const testing = std.testing;
 
 test "memory allocation via mmap" {

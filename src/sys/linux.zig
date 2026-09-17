@@ -69,6 +69,12 @@ pub fn munmap(addr: *anyopaque, length: usize) !void {
     _ = try check(rc);
 }
 
+pub fn mprotect(addr: *anyopaque, length: usize, prot: usize) !void {
+    if (@intFromPtr(addr) % 4096 != 0 or length % 4096 != 0) return error.InvalidArgument;
+    const rc = linux.syscall3(.mprotect, @intFromPtr(addr), length, prot);
+    _ = try check(rc);
+}
+
 pub fn read(fd: i32, buf: []u8) !usize {
     const fd_arg: usize = @bitCast(@as(isize, fd));
     while (true) {

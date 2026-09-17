@@ -22,6 +22,12 @@ pub fn munmap(addr: *anyopaque, length: usize) !void {
     // Stub
 }
 
+pub fn mprotect(addr: *anyopaque, length: usize, prot: usize) !void {
+    _ = addr;
+    _ = length;
+    _ = prot;
+}
+
 pub fn read(fd: i32, buf: []u8) !usize {
     if (fd == 0) {
         var count: usize = 0;
