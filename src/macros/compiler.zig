@@ -116,11 +116,20 @@ pub const Compiler = struct {
         return try self.allocator.realloc(buf, dst_i);
     }
 
+    fn addStringConstant(self: *Compiler, str: []const u8) !u16 {
+        const duped = try self.allocator.dupe(u8, str);
+        const owned = try self.chunk.addAllocatedString(self.allocator, duped);
+        return try self.chunk.addConstant(self.allocator, eval.Value{ .string = owned });
+    }
+
     fn compileStringLiteral(self: *Compiler, str: ast.StringLiteral) anyerror!void {
         var val = str.value;
         if (std.mem.indexOfScalar(u8, val, '\\') != null) {
             const decoded = try self.unescapeString(val);
             val = try self.chunk.addAllocatedString(self.allocator, decoded);
+        } else {
+            const duped = try self.allocator.dupe(u8, val);
+            val = try self.chunk.addAllocatedString(self.allocator, duped);
         }
         const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = val });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
@@ -170,7 +179,7 @@ pub const Compiler = struct {
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.pop));
             self.local_count += 1;
         } else {
-            const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = decl.name });
+            const idx = try self.addStringConstant(decl.name);
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.set_global));
             try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
             try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
@@ -184,7 +193,7 @@ pub const Compiler = struct {
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.set_local));
             try self.chunk.writeChunk(self.allocator, slot);
         } else {
-            const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = assign.target.name });
+            const idx = try self.addStringConstant(assign.target.name);
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.set_global));
             try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
             try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
@@ -196,7 +205,7 @@ pub const Compiler = struct {
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.get_local));
             try self.chunk.writeChunk(self.allocator, slot);
         } else {
-            const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = ident.name });
+            const idx = try self.addStringConstant(ident.name);
             try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.get_global));
             try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
             try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
@@ -217,7 +226,7 @@ pub const Compiler = struct {
                 try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.get_local));
                 try self.chunk.writeChunk(self.allocator, slot);
             } else {
-                const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = call.callee });
+                const idx = try self.addStringConstant(call.callee);
                 try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.get_global));
                 try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
                 try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
@@ -308,14 +317,25 @@ pub const Compiler = struct {
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.return_op));
 
         try self.patchJump(jump_over);
+        try self.emitFunctionConstant(func, fn_local_count, fn_start);
+    }
 
-        const vm_func = eval.Function{ .name = func.name, .arity = func.params.len, .local_count = fn_local_count, .upvalue_count = 0, .ip_start = fn_start };
+    fn emitFunctionConstant(self: *Compiler, func: ast.FunctionDecl, fn_local_count: usize, fn_start: usize) !void {
+        const duped_name = try self.allocator.dupe(u8, func.name);
+        const owned_name = try self.chunk.addAllocatedString(self.allocator, duped_name);
+        const vm_func = eval.Function{
+            .name = owned_name,
+            .arity = func.params.len,
+            .local_count = fn_local_count,
+            .upvalue_count = 0,
+            .ip_start = fn_start,
+        };
         const fn_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .function = vm_func });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
         try self.chunk.writeChunk(self.allocator, @intCast((fn_idx >> 8) & 0xFF));
         try self.chunk.writeChunk(self.allocator, @intCast(fn_idx & 0xFF));
 
-        const name_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = func.name });
+        const name_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = owned_name });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.set_global));
         try self.chunk.writeChunk(self.allocator, @intCast((name_idx >> 8) & 0xFF));
         try self.chunk.writeChunk(self.allocator, @intCast(name_idx & 0xFF));

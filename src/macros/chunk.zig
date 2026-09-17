@@ -70,6 +70,16 @@ pub const Chunk = struct {
         try self.allocated_strings.append(allocator, str);
         return str;
     }
+
+    pub fn serialize(self: *const Chunk, allocator: std.mem.Allocator) ![]u8 {
+        const serializer = @import("serializer.zig");
+        return serializer.serializeChunk(allocator, self);
+    }
+
+    pub fn hashBlake3(self: *const Chunk, allocator: std.mem.Allocator) ![32]u8 {
+        const serializer = @import("serializer.zig");
+        return serializer.computeChunkHash(allocator, self);
+    }
 };
 
 test "chunk basic" {

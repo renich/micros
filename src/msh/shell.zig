@@ -133,6 +133,11 @@ pub const Shell = struct {
         if (std.fmt.bufPrint(&buf, "\x1b[31mmsh: eval error: {}\x1b[0m\n", .{err})) |msg| {
             self.writeOut(msg);
         } else |_| {}
+        if (self.vm.last_missing_symbol) |sym| {
+            self.writeOut("\x1b[31m  missing symbol: \x1b[0m");
+            self.writeOut(sym);
+            self.writeOut("\n");
+        }
     }
 
     fn writeEvalResult(self: *Shell, val: macros.eval.Value) void {
@@ -235,37 +240,10 @@ pub const Shell = struct {
             return;
         }
 
-        const func = eval_val.?.function;
-        self.vm.push(eval_val.?) catch return;
-
-        // Push the code string. We need to allocate a duplicate in the arena or GC heap.
-        // For simplicity in shell, we can just point to it.
         const code_dupe = self.allocator.dupe(u8, code) catch return;
-        self.vm.push(.{ .string = code_dupe }) catch return;
-
-        // Create an empty top-level closure wrapper for eval so pushFrame works
-        var wrapper = self.allocator.create(macros.eval.Closure) catch return;
-        const wrapper_func = self.allocator.create(macros.eval.Function) catch return;
-        wrapper_func.* = func;
-        wrapper.function = wrapper_func;
-        wrapper.upvalues = &[_]*macros.eval.Upvalue{};
-        self.vm.pushFrame(.{ .closure = wrapper }, 2) catch return;
-
-        const old_ip = self.vm.ip;
-        self.vm.ip = func.ip_start;
-
-        self.vm.run(self.vm.frame_count) catch |err| {
-            self.writeEvalError(err);
-        };
-
-        self.vm.ip = old_ip;
-
-        if (self.vm.sp > 0) {
-            const val = self.vm.pop() catch return;
-            if (val != .nil) {
-                self.writeEvalResult(val);
-            }
-        }
+        const key_dupe = self.allocator.dupe(u8, "__stream_input") catch return;
+        self.vm.globals.put(key_dupe, .{ .string = code_dupe }) catch return;
+        self.evalStage0("shell_eval(__stream_input);");
     }
 
     pub fn executeLine(self: *Shell, raw_line: []const u8) void {
@@ -358,4 +336,55 @@ test "MicroShell version and clear builtins" {
 
     sh.executeLine("clear");
     try testing.expect(sh.running);
+}
+
+test "Stage 1 compiler bootstrap execution" {
+    const read_fd = try sys.io.open("/dev/null", sys.io.OpenFlags.rdonly, 0);
+    const write_fd = try sys.io.open("/dev/null", sys.io.OpenFlags.wronly, 0);
+    defer {
+        sys.io.close(read_fd) catch {};
+        sys.io.close(write_fd) catch {};
+    }
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var sh = try Shell.init(arena.allocator(), read_fd, write_fd);
+    defer sh.deinit();
+
+    sh.loadStage1();
+    try testing.expect(sh.vm.globals.get("shell_eval") != null);
+
+    sh.evalStage0("toks = lex(\"1 + 2;\");");
+    const toks = sh.vm.globals.get("toks");
+    try testing.expect(toks != null);
+    try testing.expect(toks.? == .array);
+
+    sh.evalStage0("ast_tree = parse(toks);");
+    const ast_tree = sh.vm.globals.get("ast_tree");
+    try testing.expect(ast_tree != null);
+    try testing.expect(ast_tree.? == .array);
+
+    sh.evalStage0("bc_state = compile_program(ast_tree);");
+    const bc_state = sh.vm.globals.get("bc_state");
+    try testing.expect(bc_state != null);
+    try testing.expect(bc_state.? == .array);
+
+    sh.evalStage0("exec_chunk(bc_state[0], bc_state[1]);");
+
+    sh.evalMacrosStream("1 + 2;");
+
+    sh.evalStage0("fn_toks = lex(\"fn add(a, b) { return a + b; } x = add(15, 27);\");");
+    sh.evalStage0("fn_ast = parse(fn_toks);");
+    const fn_ast = sh.vm.globals.get("fn_ast");
+    try testing.expect(fn_ast != null);
+    try testing.expectEqual(@as(usize, 2), fn_ast.?.array[1].array.len);
+
+    sh.evalStage0("fn_bc = compile_program(fn_ast);");
+    const fn_bc = sh.vm.globals.get("fn_bc");
+    try testing.expect(fn_bc != null);
+    sh.evalStage0("exec_chunk(fn_bc[0], fn_bc[1]);");
+    const x_val = sh.vm.globals.get("x");
+    try testing.expect(x_val != null);
+    try testing.expectEqual(@as(i64, 42), x_val.?.integer);
 }

@@ -1,4 +1,5 @@
-// Macros Self-Hosted Bytecode Compiler (Phase 5)
+// Macros Stage 1 Self-Hosted Bytecode Compiler (compiler.mx)
+// Part of the MicrOS sovereign language self-hosting pipeline.
 
 fn op_constant() { return 0; }
 fn op_add() { return 1; }
@@ -15,10 +16,17 @@ fn op_jump() { return 11; }
 fn op_jump_if_false() { return 12; }
 fn op_loop() { return 13; }
 fn op_build_array() { return 14; }
+fn op_index_get() { return 15; }
+fn op_index_set() { return 16; }
+fn op_equal() { return 20; }
+fn op_not_equal() { return 21; }
+fn op_less() { return 22; }
+fn op_greater() { return 23; }
+fn op_less_equal() { return 24; }
+fn op_greater_equal() { return 25; }
 fn op_closure() { return 26; }
 
 fn init_compiler() {
-    // state: [chunk_code, chunk_constants, locals, scope_depth]
     return [[], [], [], 0];
 }
 
@@ -34,23 +42,33 @@ fn write_byte(state, byte) {
     return [[new_code, state[1], state[2], state[3]], state];
 }
 
-fn compile_number(state, num_str) {
-    num = str_to_int(num_str);
-    res = add_constant(state, num);
+fn emit_constant(state, val) {
+    res = add_constant(state, val);
     state = res[0];
     idx = res[1];
-    
     res = write_byte(state, op_constant());
     state = res[0];
-    
-    high_byte = bit_and(bit_shr(idx, 8), 255);
-    low_byte = bit_and(idx, 255);
-    
-    res = write_byte(state, high_byte);
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
     state = res[0];
-    res = write_byte(state, low_byte);
+    res = write_byte(state, bit_and(idx, 255));
+    return res[0];
+}
+
+fn emit_jump(state, instruction) {
+    res = write_byte(state, instruction);
     state = res[0];
-    
+    jump_idx = len(state[0]);
+    res = write_byte(state, 0);
+    state = res[0];
+    res = write_byte(state, 0);
+    return [res[0], jump_idx];
+}
+
+fn patch_jump(state, jump_idx) {
+    code = state[0];
+    diff = len(code) - jump_idx - 2;
+    code[jump_idx] = bit_and(bit_shr(diff, 8), 255);
+    code[jump_idx + 1] = bit_and(diff, 255);
     return state;
 }
 
@@ -67,155 +85,215 @@ fn resolve_local(state, name) {
     return 0 - 1;
 }
 
+fn emit_binary_op(state, op) {
+    if (op == "plus") { return write_byte(state, op_add())[0]; }
+    if (op == "minus") { return write_byte(state, op_sub())[0]; }
+    if (op == "equal") { return write_byte(state, op_equal())[0]; }
+    if (op == "not_equal") { return write_byte(state, op_not_equal())[0]; }
+    if (op == "less") { return write_byte(state, op_less())[0]; }
+    if (op == "greater") { return write_byte(state, op_greater())[0]; }
+    if (op == "less_equal") { return write_byte(state, op_less_equal())[0]; }
+    if (op == "greater_equal") { return write_byte(state, op_greater_equal())[0]; }
+    return state;
+}
+
+fn compile_identifier(state, name) {
+    local_idx = resolve_local(state, name);
+    if (local_idx >= 0) {
+        res = write_byte(state, op_get_local());
+        state = res[0];
+        res = write_byte(state, local_idx);
+        return res[0];
+    }
+    res = add_constant(state, name);
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_get_global());
+    state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+    state = res[0];
+    res = write_byte(state, bit_and(idx, 255));
+    return res[0];
+}
+
+fn compile_call_args(state, args, arg_i, args_len) {
+    while (arg_i < args_len) {
+        state = compile_expr(state, args[arg_i]);
+        arg_i = arg_i + 1;
+    }
+    return state;
+}
+
+fn compile_call(state, callee, args) {
+    state = compile_expr(state, callee);
+    args_len = len(args);
+    state = compile_call_args(state, args, 0, args_len);
+    res = write_byte(state, op_call());
+    state = res[0];
+    res = write_byte(state, args_len);
+    return res[0];
+}
+
+fn compile_array_elems(state, elements, elem_i, elem_len) {
+    while (elem_i < elem_len) {
+        state = compile_expr(state, elements[elem_i]);
+        elem_i = elem_i + 1;
+    }
+    return state;
+}
+
+fn compile_array(state, elements) {
+    elem_len = len(elements);
+    state = compile_array_elems(state, elements, 0, elem_len);
+    res = write_byte(state, op_build_array());
+    state = res[0];
+    res = write_byte(state, elem_len);
+    return res[0];
+}
+
 fn compile_expr(state, node) {
     if (len(node) == 0) { return state; }
     type = node[0];
-    
-    if (type == "number") {
-        return compile_number(state, node[1]);
+
+    if (type == "number") { return emit_constant(state, str_to_int(node[1])); }
+    if (type == "string") { return emit_constant(state, node[1]); }
+    if (type == "boolean") { return emit_constant(state, make_bool(node[1])); }
+    if (type == "nil") { return emit_constant(state, make_nil()); }
+    if (type == "identifier") { return compile_identifier(state, node[1]); }
+    if (type == "call") { return compile_call(state, node[1], node[2]); }
+    if (type == "array") { return compile_array(state, node[1]); }
+
+    if (type == "index_get") {
+        state = compile_expr(state, node[1]);
+        state = compile_expr(state, node[2]);
+        res = write_byte(state, op_index_get());
+        return res[0];
     }
-    if (type == "string") {
-        res = add_constant(state, node[1]);
+    if (type == "binary_expr") {
+        state = compile_expr(state, node[2]);
+        state = compile_expr(state, node[3]);
+        return emit_binary_op(state, node[1]);
+    }
+    return state;
+}
+
+fn compile_assign_statement(state, name, val_node) {
+    state = compile_expr(state, val_node);
+    local_idx = resolve_local(state, name);
+    if (local_idx >= 0) {
+        res = write_byte(state, op_set_local());
+        state = res[0];
+        res = write_byte(state, local_idx);
+        state = res[0];
+    } else {
+        res = add_constant(state, name);
         state = res[0];
         idx = res[1];
-        res = write_byte(state, op_constant());
+        res = write_byte(state, op_set_global());
         state = res[0];
         res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
         state = res[0];
         res = write_byte(state, bit_and(idx, 255));
         state = res[0];
-        return state;
     }
-    if (type == "identifier") {
-        name = node[1];
-        local_idx = resolve_local(state, name);
-        if (local_idx >= 0) {
-            res = write_byte(state, op_get_local());
-            state = res[0];
-            res = write_byte(state, local_idx);
-            state = res[0];
-            return state;
-        } else {
-            res = add_constant(state, name);
-            state = res[0];
-            idx = res[1];
-            res = write_byte(state, op_get_global());
-            state = res[0];
-            res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
-            state = res[0];
-            res = write_byte(state, bit_and(idx, 255));
-            state = res[0];
-            return state;
-        }
-    }
-    if (type == "call") {
-        state = compile_expr(state, node[1]); // callee
-        args = node[2];
-        args_len = len(args);
-        expr_i = 0;
-        while (expr_i < args_len) {
-            state = compile_expr(state, args[expr_i]);
-            expr_i = expr_i + 1;
-        }
-        res = write_byte(state, op_call());
+    res = write_byte(state, op_pop());
+    return res[0];
+}
+
+fn compile_index_assign_statement(state, name, idx_expr, val_expr) {
+    state = compile_expr(state, val_expr);
+    state = compile_expr(state, ["identifier", name]);
+    state = compile_expr(state, idx_expr);
+    res = write_byte(state, op_index_set());
+    state = res[0];
+    res = write_byte(state, op_pop());
+    return res[0];
+}
+
+fn compile_if_statement(state, cond, then_br, else_br) {
+    state = compile_expr(state, cond);
+    res = emit_jump(state, op_jump_if_false());
+    state = res[0];
+    then_jump = res[1];
+
+    state = compile_block(state, then_br[1]);
+
+    if (len(else_br) > 0) {
+        res = emit_jump(state, op_jump());
         state = res[0];
-        res = write_byte(state, args_len);
-        state = res[0];
-        return state;
+        else_jump = res[1];
+
+        state = patch_jump(state, then_jump);
+        state = compile_block(state, else_br[1]);
+        state = patch_jump(state, else_jump);
+    } else {
+        state = patch_jump(state, then_jump);
     }
-    
-    if (type == "binary_expr") {
-        op = node[1];
-        state = compile_expr(state, node[2]); // left
-        state = compile_expr(state, node[3]); // right
-        if (op == "plus") {
-            res = write_byte(state, op_add());
-            state = res[0];
-        } else if (op == "minus") {
-            res = write_byte(state, op_sub());
-            state = res[0];
-        }
-        return state;
-    }
-    
-    // Fallback for unhandled expressions
     return state;
+}
+
+fn compile_while_statement(state, cond, body) {
+    loop_start = len(state[0]);
+
+    state = compile_expr(state, cond);
+    res = emit_jump(state, op_jump_if_false());
+    state = res[0];
+    exit_jump = res[1];
+
+    state = compile_block(state, body[1]);
+
+    loop_offset = len(state[0]) + 3 - loop_start;
+    res = write_byte(state, op_loop());
+    state = res[0];
+    res = write_byte(state, bit_and(bit_shr(loop_offset, 8), 255));
+    state = res[0];
+    res = write_byte(state, bit_and(loop_offset, 255));
+    state = res[0];
+
+    return patch_jump(state, exit_jump);
 }
 
 fn compile_statement(state, node) {
     type = node[0];
-    
 
     if (type == "assign_statement") {
-        ident_name_assign = node[1];
-        state = compile_expr(state, node[2]);
-        
-        local_idx_assign = resolve_local(state, ident_name_assign);
-        if (local_idx_assign >= 0) {
-            res = write_byte(state, op_set_local());
-            state = res[0];
-            res = write_byte(state, local_idx_assign);
-            state = res[0];
-        } else {
-            // Because Macros doesn't have `push` natively mapped to array, wait... does it?
-            // The compiler uses `locals = state[2]`. We can just use `push`.
-            // Wait, does the compiler environment have `push`? 
-            // In vm.zig, we mapped `push` as a global native function!
-            locals_arr = state[2];
-            locals_arr = push(locals_arr, [ident_name_assign, state[3]]);
-            state[2] = locals_arr;
-            
-            // It's the last local
-            new_idx = len(locals_arr) - 1;
-            res = write_byte(state, op_set_local());
-            state = res[0];
-            res = write_byte(state, new_idx);
-            state = res[0];
-        }
-        return state;
+        return compile_assign_statement(state, node[1], node[2]);
     }
-
+    if (type == "index_assign_statement") {
+        return compile_index_assign_statement(state, node[1], node[2], node[3]);
+    }
+    if (type == "if_statement") {
+        return compile_if_statement(state, node[1], node[2], node[3]);
+    }
+    if (type == "while_statement") {
+        return compile_while_statement(state, node[1], node[2]);
+    }
     if (type == "return_statement") {
         state = compile_expr(state, node[1]);
         res = write_byte(state, op_return());
-        state = res[0];
-        return state;
+        return res[0];
     }
-    
     if (type == "expr_statement") {
         inner = node[1];
         if (inner[0] == "call") {
             callee = inner[1];
             if (callee[0] == "identifier") {
                 if (callee[1] == "print") {
-                    call_args = inner[2];
-                    state = compile_expr(state, call_args[0]);
+                    print_args = inner[2];
+                    state = compile_expr(state, print_args[0]);
                     res = write_byte(state, op_print());
-                    state = res[0];
-                    return state;
+                    return res[0];
                 }
             }
         }
-        
-        state = compile_expr(state, node[1]);
+        state = compile_expr(state, inner);
         res = write_byte(state, op_pop());
-        state = res[0];
-        return state;
+        return res[0];
     }
-    
-    if (type == "print") {
-        state = compile_expr(state, node[1]);
-        res = write_byte(state, op_print());
-        state = res[0];
-        return state;
-    }
-    
     return state;
 }
 
-fn compile_block(state, stmts) {
-    stmts_len = len(stmts);
-    block_i = 0;
+fn compile_block_stmts(state, stmts, block_i, stmts_len) {
     while (block_i < stmts_len) {
         state = compile_statement(state, stmts[block_i]);
         block_i = block_i + 1;
@@ -223,87 +301,79 @@ fn compile_block(state, stmts) {
     return state;
 }
 
-fn compile_function(state, name, args, body) {
-    res = emit_jump(state, op_jump());
-    state = res[0];
-    jump_idx = res[1];
+fn compile_block(state, stmts) {
+    return compile_block_stmts(state, stmts, 0, len(stmts));
+}
 
-    code_arr = state[0];
-    ip_start = len(code_arr);
-
-    // Compile body
-    stmts = body[1];
-    state = compile_block(state, stmts);
-    
-    // Add return nil
-    res = add_constant(state, []);
-    state = res[0];
-    idx = res[1];
-    res = write_byte(state, op_constant());
-    state = res[0];
-    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
-    state = res[0];
-    res = write_byte(state, bit_and(idx, 255));
-    state = res[0];
-    res = write_byte(state, op_return());
-    state = res[0];
-    
-    state = patch_jump(state, jump_idx);
-    
-    // Call build_function
+fn emit_call_build_function(state, name, args_len, ip_start) {
     res = add_constant(state, "build_function");
     state = res[0];
     idx = res[1];
     res = write_byte(state, op_get_global()); state = res[0];
     res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
     res = write_byte(state, bit_and(idx, 255)); state = res[0];
-    
+
+    state = emit_constant(state, name);
+    state = emit_constant(state, args_len);
+    state = emit_constant(state, args_len + 1);
+    state = emit_constant(state, 0);
+    state = emit_constant(state, ip_start);
+
+    res = write_byte(state, op_call()); state = res[0];
+    res = write_byte(state, 5); state = res[0];
+    res = write_byte(state, op_closure()); state = res[0];
+
     res = add_constant(state, name);
     state = res[0];
     name_idx = res[1];
-    res = write_byte(state, op_constant()); state = res[0];
-    res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
-    res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
-    
-    res = add_constant(state, len(args));
-    state = res[0];
-    idx = res[1];
-    res = write_byte(state, op_constant()); state = res[0];
-    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
-    res = write_byte(state, bit_and(idx, 255)); state = res[0];
-    
-    res = add_constant(state, 0);
-    state = res[0];
-    idx = res[1];
-    res = write_byte(state, op_constant()); state = res[0];
-    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
-    res = write_byte(state, bit_and(idx, 255)); state = res[0];
-    
-    res = add_constant(state, 0); // upvalue_count
-    state = res[0];
-    idx = res[1];
-    res = write_byte(state, op_constant()); state = res[0];
-    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
-    res = write_byte(state, bit_and(idx, 255)); state = res[0];
-    
-    res = add_constant(state, ip_start);
-    state = res[0];
-    idx = res[1];
-    res = write_byte(state, op_constant()); state = res[0];
-    res = write_byte(state, bit_and(bit_shr(idx, 8), 255)); state = res[0];
-    res = write_byte(state, bit_and(idx, 255)); state = res[0];
-    
-    res = write_byte(state, op_call()); state = res[0];
-    res = write_byte(state, 5); state = res[0];
-    
-    res = write_byte(state, op_closure()); state = res[0];
-    
     res = write_byte(state, op_set_global()); state = res[0];
     res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
     res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
-    
-    res = write_byte(state, op_pop()); state = res[0];
-    
+    res = write_byte(state, op_pop());
+    return res[0];
+}
+
+fn compile_function(state, name, args, body) {
+    res = emit_jump(state, op_jump());
+    state = res[0];
+    jump_idx = res[1];
+
+    ip_start = len(state[0]);
+
+    fn_locals = [[name, 1]];
+    args_len = len(args);
+    arg_i = 0;
+    while (arg_i < args_len) {
+        fn_locals = push(fn_locals, [args[arg_i], 1]);
+        arg_i = arg_i + 1;
+    }
+
+    old_locals = state[2];
+    old_scope = state[3];
+    state = [state[0], state[1], fn_locals, 1];
+
+    state = compile_block(state, body[1]);
+
+    state = emit_constant(state, make_nil());
+    res = write_byte(state, op_return());
+    state = res[0];
+
+    state = [state[0], state[1], old_locals, old_scope];
+    state = patch_jump(state, jump_idx);
+
+    return emit_call_build_function(state, name, args_len, ip_start);
+}
+
+fn compile_prog_decls(state, decls, prog_i, decls_len) {
+    while (prog_i < decls_len) {
+        decl = decls[prog_i];
+        if (decl[0] == "function_decl") {
+            state = compile_function(state, decl[1], decl[2], decl[3]);
+        } else {
+            state = compile_statement(state, decl);
+        }
+        prog_i = prog_i + 1;
+    }
     return state;
 }
 
@@ -311,102 +381,10 @@ fn compile_program(ast) {
     state = init_compiler();
     if (ast[0] == "program") {
         decls = ast[1];
-        decls_len = len(decls);
-        prog_i = 0;
-        while (prog_i < decls_len) {
-            decl = decls[prog_i];
-            if (decl[0] == "function_decl") {
-                state = compile_function(state, decl[1], decl[2], decl[3]);
-            } else if (decl[0] == "expr_statement") {
-                state = compile_statement(state, decl);
-            } else if (decl[0] == "print") {
-                state = compile_statement(state, decl);
-            }
-            prog_i = prog_i + 1;
-        }
+        state = compile_prog_decls(state, decls, 0, len(decls));
     }
-    
-    // Add return nil for the main chunk
-    res = add_constant(state, []);
-    state = res[0];
-    idx = res[1];
-    res = write_byte(state, op_constant());
-    state = res[0];
-    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
-    state = res[0];
-    res = write_byte(state, bit_and(idx, 255));
-    state = res[0];
+
+    state = emit_constant(state, make_nil());
     res = write_byte(state, op_return());
-    state = res[0];
-    
-    return state;
+    return res[0];
 }
-
-fn emit_jump(state, instruction) {
-    res = write_byte(state, instruction);
-    state = res[0];
-    
-    code = state[0];
-    jump_idx = len(code);
-    
-    res = write_byte(state, 0);
-    state = res[0];
-    res = write_byte(state, 0);
-    state = res[0];
-    
-    return [state, jump_idx];
-}
-
-fn patch_jump(state, jump_idx) {
-    code = state[0];
-    len_code = len(code);
-    diff = len_code - jump_idx - 2;
-    code[jump_idx] = bit_and(bit_shr(diff, 8), 255);
-    code[jump_idx + 1] = bit_and(diff, 255);
-    return state;
-}
-
-fn compile_if_expr(state, node) {
-    cond = node[1];
-    then_br = node[2];
-    else_br = node[3];
-    
-    state = compile_expr(state, cond);
-    
-    res = emit_jump(state, op_jump_if_false());
-    state = res[0];
-    then_jump = res[1];
-    
-    state = compile_expr(state, then_br);
-    
-    if (len(else_br) > 0) {
-        res = emit_jump(state, op_jump());
-        state = res[0];
-        else_jump = res[1];
-        
-        state = patch_jump(state, then_jump);
-        state = compile_expr(state, else_br);
-        state = patch_jump(state, else_jump);
-    } else {
-        res = emit_jump(state, op_jump());
-        state = res[0];
-        else_jump = res[1];
-        
-        state = patch_jump(state, then_jump);
-        
-        // Push nil
-        res = add_constant(state, make_nil());
-        state = res[0];
-        idx = res[1];
-        res = write_byte(state, op_constant());
-        state = res[0];
-        res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
-        state = res[0];
-        res = write_byte(state, bit_and(idx, 255));
-        state = res[0];
-        
-        state = patch_jump(state, else_jump);
-    }
-    return state;
-}
-

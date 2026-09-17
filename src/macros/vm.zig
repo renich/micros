@@ -132,6 +132,55 @@ fn nativeExecChunk(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return eval.Value{ .nil = {} };
 }
 
+fn nativeChunkSerialize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 2) return InterpretError.RuntimeError;
+    if (args[0] != .array or args[1] != .array) return InterpretError.RuntimeError;
+
+    var ch = chunk_mod.Chunk.init();
+    defer ch.deinit(vm.allocator);
+
+    for (args[0].array) |val| {
+        if (val != .integer) return InterpretError.RuntimeError;
+        try ch.writeChunk(vm.allocator, @intCast(val.integer & 0xFF));
+    }
+    for (args[1].array) |val| {
+        _ = try ch.addConstant(vm.allocator, val);
+    }
+
+    const serializer = @import("serializer.zig");
+    const bytes = try serializer.serializeChunk(vm.allocator, &ch);
+    return eval.Value{ .string = bytes };
+}
+
+fn nativeChunkHash(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 2) return InterpretError.RuntimeError;
+    if (args[0] != .array or args[1] != .array) return InterpretError.RuntimeError;
+
+    var ch = chunk_mod.Chunk.init();
+    defer ch.deinit(vm.allocator);
+
+    for (args[0].array) |val| {
+        if (val != .integer) return InterpretError.RuntimeError;
+        try ch.writeChunk(vm.allocator, @intCast(val.integer & 0xFF));
+    }
+    for (args[1].array) |val| {
+        _ = try ch.addConstant(vm.allocator, val);
+    }
+
+    const serializer = @import("serializer.zig");
+    const hash = try serializer.computeChunkHash(vm.allocator, &ch);
+    const hex_chars = "0123456789abcdef";
+    var hex_buf: [64]u8 = undefined;
+    for (hash, 0..) |b, i| {
+        hex_buf[i * 2] = hex_chars[(b >> 4) & 0x0F];
+        hex_buf[i * 2 + 1] = hex_chars[b & 0x0F];
+    }
+    const out_str = try vm.allocator.dupe(u8, &hex_buf);
+    return eval.Value{ .string = out_str };
+}
+
 fn nativePush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2) return InterpretError.RuntimeError;
@@ -184,6 +233,7 @@ pub const VM = struct {
     frames: [FRAMES_CAPACITY]CallFrame,
     frame_count: usize,
     globals: std.StringHashMap(Value),
+    allocated_keys: std.ArrayList([]const u8),
     open_upvalues: ?*eval.Upvalue = null,
     last_missing_symbol: ?[]const u8 = null,
 
@@ -196,6 +246,7 @@ pub const VM = struct {
         self.open_upvalues = null;
         self.last_missing_symbol = null;
         self.globals = std.StringHashMap(Value).init(allocator);
+        self.allocated_keys = .empty;
         try self.registerBuiltins();
     }
 
@@ -217,6 +268,8 @@ pub const VM = struct {
         try self.globals.put("sys_read", Value{ .native = nativeSysRead });
         try self.globals.put("sys_write", Value{ .native = nativeSysWrite });
         try self.globals.put("sys_close", Value{ .native = nativeSysClose });
+        try self.globals.put("chunk_serialize", Value{ .native = nativeChunkSerialize });
+        try self.globals.put("chunk_hash", Value{ .native = nativeChunkHash });
     }
 
     pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !VM {
@@ -226,6 +279,10 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *VM) void {
+        for (self.allocated_keys.items) |k| {
+            self.allocator.free(k);
+        }
+        self.allocated_keys.deinit(self.allocator);
         self.globals.deinit();
     }
 
@@ -574,6 +631,7 @@ pub const VM = struct {
 
     fn execGetGlobal(self: *VM) !void {
         const name_val = self.readConstant();
+        if (name_val != .string) return InterpretError.RuntimeError;
         if (self.globals.get(name_val.string)) |v| {
             try self.push(v);
         } else {
@@ -584,11 +642,14 @@ pub const VM = struct {
 
     fn execSetGlobal(self: *VM) !void {
         const name_val = self.readConstant();
+        if (name_val != .string) return InterpretError.RuntimeError;
         if (self.sp == 0) return InterpretError.StackUnderflow;
         const value = self.stack[self.sp - 1];
         const gop = try self.globals.getOrPut(name_val.string);
         if (!gop.found_existing) {
-            gop.key_ptr.* = try self.allocator.dupe(u8, name_val.string);
+            const k = try self.allocator.dupe(u8, name_val.string);
+            try self.allocated_keys.append(self.allocator, k);
+            gop.key_ptr.* = k;
         }
         gop.value_ptr.* = value;
     }

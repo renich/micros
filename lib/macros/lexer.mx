@@ -126,9 +126,19 @@ fn match_len_6(lexeme) {
     return 0;
 }
 
+fn match_len_3(lexeme) {
+    if (lexeme[0] == 110) {
+        if (lexeme[1] == 105) {
+            if (lexeme[2] == 108) { return 32; }
+        }
+    }
+    return 0;
+}
+
 fn match_keyword(lexeme) {
     len_lex = len(lexeme);
     if (len_lex == 2) { return match_len_2(lexeme); }
+    if (len_lex == 3) { return match_len_3(lexeme); }
     if (len_lex == 4) { return match_len_4(lexeme); }
     if (len_lex == 5) { return match_len_5(lexeme); }
     if (len_lex == 6) { return match_len_6(lexeme); }
