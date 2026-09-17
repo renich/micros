@@ -61,8 +61,58 @@ pub fn calculateRequiredSectors(payload_len: usize) u64 {
     return @as(u64, @intCast((total_bytes + (SECTOR_SIZE - 1)) / SECTOR_SIZE));
 }
 
+pub const SYSTEM_MANIFEST_MAGIC: u32 = 0x4D49434D; // "MICM"
+pub const SYSTEM_MANIFEST_ABI_VERSION: u32 = 1;
+pub const MAX_MANIFEST_DEPENDENCIES: usize = 8;
+pub const SYSTEM_MANIFEST_SIZE: usize = 448;
+
+pub const SystemManifest = extern struct {
+    magic: u32 = SYSTEM_MANIFEST_MAGIC,
+    abi_version: u32 = SYSTEM_MANIFEST_ABI_VERSION,
+    required_capabilities: u64,
+    entry_hash: [HASH_SIZE]u8,
+    source_hash: [HASH_SIZE]u8,
+    dependency_count: u32,
+    reserved: u32 = 0,
+    dependencies: [MAX_MANIFEST_DEPENDENCIES][HASH_SIZE]u8 = [_][HASH_SIZE]u8{[_]u8{0} ** HASH_SIZE} ** MAX_MANIFEST_DEPENDENCIES,
+    padding: [104]u8 = [_]u8{0} ** 104,
+
+    pub fn validate(self: *const SystemManifest) !void {
+        if (self.magic != SYSTEM_MANIFEST_MAGIC) return error.InvalidManifestMagic;
+        if (self.abi_version != SYSTEM_MANIFEST_ABI_VERSION) return error.UnsupportedManifestAbiVersion;
+        if (self.dependency_count > MAX_MANIFEST_DEPENDENCIES) return error.ExcessiveDependencies;
+    }
+};
+
 test "chunk header size invariant" {
     try std.testing.expectEqual(CHUNK_HEADER_SIZE, @sizeOf(CasChunkHeader));
+}
+
+test "system manifest size and sector invariant" {
+    try std.testing.expectEqual(SYSTEM_MANIFEST_SIZE, @sizeOf(SystemManifest));
+    try std.testing.expectEqual(SECTOR_SIZE, CHUNK_HEADER_SIZE + SYSTEM_MANIFEST_SIZE);
+    try std.testing.expectEqual(@as(u64, 1), calculateRequiredSectors(SYSTEM_MANIFEST_SIZE));
+}
+
+test "system manifest validation" {
+    var manifest = SystemManifest{
+        .required_capabilities = 0x7,
+        .entry_hash = [_]u8{0xAA} ** HASH_SIZE,
+        .source_hash = [_]u8{0xBB} ** HASH_SIZE,
+        .dependency_count = 2,
+    };
+    try manifest.validate();
+
+    manifest.magic = 0xDEADBEEF;
+    try std.testing.expectError(error.InvalidManifestMagic, manifest.validate());
+
+    manifest.magic = SYSTEM_MANIFEST_MAGIC;
+    manifest.abi_version = 99;
+    try std.testing.expectError(error.UnsupportedManifestAbiVersion, manifest.validate());
+
+    manifest.abi_version = SYSTEM_MANIFEST_ABI_VERSION;
+    manifest.dependency_count = 10;
+    try std.testing.expectError(error.ExcessiveDependencies, manifest.validate());
 }
 
 test "blake3 hash calculation and hex round-trip" {

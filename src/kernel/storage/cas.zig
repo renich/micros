@@ -97,6 +97,29 @@ pub const CasEngine = struct {
         return error.ChunkNotFound;
     }
 
+    pub fn putManifest(
+        self: *CasEngine,
+        manifest: *const chunk_mod.SystemManifest,
+        dev: ?*virtio_blk.VirtioBlkDevice,
+    ) ![chunk_mod.HASH_SIZE]u8 {
+        try manifest.validate();
+        const raw_bytes: [*]const u8 = @ptrCast(manifest);
+        return self.putChunk(.system_manifest, raw_bytes[0..chunk_mod.SYSTEM_MANIFEST_SIZE], dev);
+    }
+
+    pub fn getManifest(
+        self: *CasEngine,
+        hash: *const [chunk_mod.HASH_SIZE]u8,
+        dev: ?*virtio_blk.VirtioBlkDevice,
+    ) !chunk_mod.SystemManifest {
+        var buf align(@alignOf(chunk_mod.SystemManifest)) = [_]u8{0} ** chunk_mod.SYSTEM_MANIFEST_SIZE;
+        const read_len = try self.getChunk(hash, &buf, dev);
+        if (read_len != chunk_mod.SYSTEM_MANIFEST_SIZE) return error.CorruptManifestSize;
+        const manifest_ptr: *const chunk_mod.SystemManifest = @ptrCast(@alignCast(&buf));
+        try manifest_ptr.validate();
+        return manifest_ptr.*;
+    }
+
     pub fn setRootHash(
         self: *CasEngine,
         root: *const [chunk_mod.HASH_SIZE]u8,
@@ -223,4 +246,29 @@ test "cas engine put and get round trip" {
 
     try std.testing.expectEqual(test_payload.len, read_len);
     try std.testing.expectEqualStrings(test_payload, read_buf[0..read_len]);
+}
+
+test "cas engine put and get manifest round trip" {
+    var cache = try block_cache.BlockCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    var cas = try CasEngine.init(&cache, null, 1000);
+    var manifest = chunk_mod.SystemManifest{
+        .required_capabilities = 0x1F,
+        .entry_hash = [_]u8{0x11} ** chunk_mod.HASH_SIZE,
+        .source_hash = [_]u8{0x22} ** chunk_mod.HASH_SIZE,
+        .dependency_count = 1,
+    };
+    manifest.dependencies[0] = [_]u8{0x33} ** chunk_mod.HASH_SIZE;
+
+    const hash = try cas.putManifest(&manifest, null);
+    const retrieved = try cas.getManifest(&hash, null);
+
+    try std.testing.expectEqual(manifest.magic, retrieved.magic);
+    try std.testing.expectEqual(manifest.abi_version, retrieved.abi_version);
+    try std.testing.expectEqual(manifest.required_capabilities, retrieved.required_capabilities);
+    try std.testing.expectEqualSlices(u8, &manifest.entry_hash, &retrieved.entry_hash);
+    try std.testing.expectEqualSlices(u8, &manifest.source_hash, &retrieved.source_hash);
+    try std.testing.expectEqual(manifest.dependency_count, retrieved.dependency_count);
+    try std.testing.expectEqualSlices(u8, &manifest.dependencies[0], &retrieved.dependencies[0]);
 }
