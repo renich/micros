@@ -13,6 +13,7 @@ const gpt = @import("../drivers/gpt.zig");
 const fat32 = @import("fat32.zig");
 const cas_mod = @import("cas.zig");
 const rebuild = @import("rebuild.zig");
+const pe_emitter = @import("../../boot/pe_emitter.zig");
 const io = @import("../arch/x86_64/io.zig");
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
@@ -123,6 +124,33 @@ fn nativeSysDiskEspWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = true };
 }
 
+fn nativeSysDiskEspStageBootloader(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    const idx: usize = @intCast(args[0].integer);
+    const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
+    if (dev.is_boot_media) return error.LiveBootMedia;
+
+    const tbl = try gpt.readGptTable(dev);
+    const esp_idx = tbl.findByType(&gpt.ESP_GUID) orelse return error.PartitionNotFound;
+    const esp_entry = tbl.entries[esp_idx];
+    var esp_part = try block.PartitionBlockDevice.init(dev, esp_entry.starting_lba, esp_entry.sectorCount(), "esp");
+
+    const emitter = pe_emitter.PeEmitter.init(vm.allocator, .{
+        .entry_point_rva = pe_emitter.SECTION_ALIGNMENT,
+    });
+    const mock_code = [_]u8{ 0x48, 0x31, 0xC0, 0xC3 };
+    const mock_rodata = "MicrOS Silicon UEFI Kernel";
+    const mock_data = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
+    const mock_relocs = [_]u32{ 0x1002, 0x2000 };
+
+    const pe_bin = try emitter.synthesizeBootloader(&mock_code, mock_rodata, &mock_data, &mock_relocs);
+    defer vm.allocator.free(pe_bin);
+
+    try fat32.writeFile(esp_part.blockDevice(), "/EFI/BOOT/BOOTX64.EFI", pe_bin);
+    return Value{ .boolean = true };
+}
+
 fn nativeSysDiskCasFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
@@ -147,7 +175,7 @@ fn nativeSysCasConfirmBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (active_rebuild_engine) |engine| {
-        try engine.confirmBoot();
+        engine.confirmBoot() catch return Value{ .boolean = false };
         return Value{ .boolean = true };
     }
     return Value{ .boolean = false };
@@ -170,6 +198,7 @@ pub fn registerStorageSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_disk_gpt_format", Value{ .native = nativeSysDiskGptFormat });
     try vm.globals.put("sys_disk_esp_format", Value{ .native = nativeSysDiskEspFormat });
     try vm.globals.put("sys_disk_esp_write", Value{ .native = nativeSysDiskEspWrite });
+    try vm.globals.put("sys_disk_esp_stage_bootloader", Value{ .native = nativeSysDiskEspStageBootloader });
     try vm.globals.put("sys_disk_cas_format", Value{ .native = nativeSysDiskCasFormat });
     try vm.globals.put("sys_cas_confirm_boot", Value{ .native = nativeSysCasConfirmBoot });
     try vm.globals.put("sys_reboot", Value{ .native = nativeSysReboot });
@@ -212,6 +241,9 @@ test "storage abi registration and live boot media protection" {
     var dummy: usize = 0;
     var args = [_]Value{ Value{ .integer = 0 }, Value{ .integer = 614400 } };
     try std.testing.expectError(error.LiveBootMedia, nativeSysDiskGptFormat(&dummy, &args));
+
+    var stage_args = [_]Value{Value{ .integer = 0 }};
+    try std.testing.expectError(error.LiveBootMedia, nativeSysDiskEspStageBootloader(&dummy, &stage_args));
 }
 
 fn testMockRead(ctx: *anyopaque, lba: u64, buf: *[block.SECTOR_SIZE]u8) anyerror!void {

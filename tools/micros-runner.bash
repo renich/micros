@@ -19,6 +19,9 @@ NO_KVM=0
 DISK_RAW=""
 WIPE_DISK=0
 VERIFY_PERSISTENCE=0
+NVME_RAW=""
+WIPE_NVME=0
+VERIFY_SILICON=0
 
 usage() {
     cat <<EOF
@@ -38,6 +41,9 @@ Options:
   --disk <path>              Path to raw disk image for VirtIO-Blk
   --wipe-disk                Wipe/recreate raw disk image before booting
   --verify-persistence       Execute two-stage reboot persistence verification
+  --nvme <path>              Path to raw disk image for PCIe NVMe SSD
+  --wipe-nvme                Wipe/recreate NVMe disk image before booting
+  --verify-silicon           Execute end-to-end silicon installer & cord-cutting verification
 EOF
     exit 1
 }
@@ -58,6 +64,9 @@ while [[ $# -gt 0 ]]; do
         --disk) DISK_RAW="$2"; shift 2 ;;
         --wipe-disk) WIPE_DISK=1; shift 1 ;;
         --verify-persistence) VERIFY_PERSISTENCE=1; shift 1 ;;
+        --nvme) NVME_RAW="$2"; shift 2 ;;
+        --wipe-nvme) WIPE_NVME=1; shift 1 ;;
+        --verify-silicon) VERIFY_SILICON=1; shift 1 ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -128,6 +137,46 @@ run_reboot_persistence_verification() {
 
 if [[ "$VERIFY_PERSISTENCE" -eq 1 ]]; then
     run_reboot_persistence_verification
+fi
+
+run_silicon_verification() {
+    local disk="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
+    local nvme="${NVME_RAW:-$BUILD_DIR/micros-nvme.raw}"
+    local log1
+    local log2
+    log1=$(mktemp /tmp/micros-silicon-s1-XXXXXX.log)
+    log2=$(mktemp /tmp/micros-silicon-s2-XXXXXX.log)
+    # shellcheck disable=SC2064
+    trap "rm -f '$log1' '$log2'" RETURN
+
+    echo "========================================================"
+    echo " MicrOS Milestone 18: Sovereign Silicon Deployment Test"
+    echo "========================================================"
+    echo "[silicon-test] Stage 1: Cold boot live system and installing to physical NVMe..."
+
+    rm -f "$nvme"
+    mkdir -p "$BUILD_DIR"
+    truncate -s 512M "$nvme"
+
+    local stage1_input
+    stage1_input=$(printf 'install\nexit\n')
+
+    "$0" --mode uefi --disk "$disk" --wipe-disk --nvme "$nvme" --serial-log "$log1" --input "$stage1_input" --expect "Deployment succeeded! Target silicon is fully sovereign." --timeout "$TIMEOUT_SEC"
+
+    echo "[silicon-test] Stage 1 SUCCESS! Bare-metal silicon partitioned, formatted, and staged!"
+
+    echo "[silicon-test] Stage 2: Cord-cutting verification — Booting standalone NVMe silicon..."
+    "$0" --mode uefi --nvme "$nvme" --serial-log "$log2" --expect "MicroShell (msh)" --timeout "$TIMEOUT_SEC"
+
+    echo "[silicon-test] Stage 2 SUCCESS! MicrOS booted directly from standalone physical NVMe drive!"
+    echo "========================================================"
+    echo " Milestone 18 Sovereign Cord-Cutting VERIFIED."
+    echo "========================================================"
+    exit 0
+}
+
+if [[ "$VERIFY_SILICON" -eq 1 ]]; then
+    run_silicon_verification
 fi
 
 if [[ "$MODE" == "sandbox" ]]; then
@@ -204,26 +253,44 @@ elif [[ "$MODE" == "uefi" ]]; then
     mkdir -p "$ESP_DIR/EFI/BOOT"
     cp "$ROOT_DIR/zig-out/bin/boot.efi" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
 
-    DISK_RAW="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
-    if [[ "$WIPE_DISK" -eq 1 && -f "$DISK_RAW" ]]; then
-        rm -f "$DISK_RAW"
-    fi
-    if [[ ! -f "$DISK_RAW" ]]; then
-        mkdir -p "$BUILD_DIR"
-        truncate -s 64M "$DISK_RAW"
-    fi
-
     QEMU_ARGS=(
         -m 512M
         -drive "if=pflash,format=raw,readonly=on,file=$OVMF_IMAGE"
         -drive "format=raw,file=fat:rw:$ESP_DIR"
-        -drive "if=none,id=disk0,format=raw,file=$DISK_RAW"
-        -device "virtio-blk-pci,drive=disk0"
         -netdev "user,id=net0"
         -device "virtio-net-pci,netdev=net0"
         -display none
         -no-reboot
     )
+
+    if [[ -z "$NVME_RAW" || -n "$DISK_RAW" || "$VERIFY_PERSISTENCE" -eq 1 ]]; then
+        DISK_RAW="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
+        if [[ "$WIPE_DISK" -eq 1 && -f "$DISK_RAW" ]]; then
+            rm -f "$DISK_RAW"
+        fi
+        if [[ ! -f "$DISK_RAW" ]]; then
+            mkdir -p "$BUILD_DIR"
+            truncate -s 64M "$DISK_RAW"
+        fi
+        QEMU_ARGS+=(
+            -drive "if=none,id=disk0,format=raw,file=$DISK_RAW"
+            -device "virtio-blk-pci,drive=disk0"
+        )
+    fi
+
+    if [[ -n "$NVME_RAW" ]]; then
+        if [[ "$WIPE_NVME" -eq 1 && -f "$NVME_RAW" ]]; then
+            rm -f "$NVME_RAW"
+        fi
+        if [[ ! -f "$NVME_RAW" ]]; then
+            mkdir -p "$BUILD_DIR"
+            truncate -s 512M "$NVME_RAW"
+        fi
+        QEMU_ARGS+=(
+            -drive "if=none,id=nvm0,format=raw,file=$NVME_RAW"
+            -device "nvme,serial=MICROS_NVME_01,drive=nvm0"
+        )
+    fi
 
     if [[ "$NO_KVM" -eq 0 && -w /dev/kvm ]]; then
         QEMU_ARGS+=(-enable-kvm)

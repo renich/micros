@@ -23,7 +23,6 @@ fn scan_drives() {
         name = sys_block_dev_name(i);
         sectors = sys_block_dev_sectors(i);
         is_boot = sys_block_dev_is_boot(i);
-        gib = sectors / 2097152;
 
         status = " [INSTALL TARGET]";
         if (is_boot) {
@@ -32,11 +31,49 @@ fn scan_drives() {
             target_idx = i;
         }
 
-        sys_serial_write("  [" + int_to_str(i) + "] " + name + " - " + int_to_str(sectors) + " sectors (~" + int_to_str(gib) + " GiB)" + status + "\r\n");
+        sys_serial_write("  [" + int_to_str(i) + "] " + name + " - " + int_to_str(sectors) + " sectors" + status + "\r\n");
         i = i + 1;
     }
 
     return target_idx;
+}
+
+fn install_esp(target_idx) {
+    sys_serial_write("[installer] Step 1/5: Writing Protective MBR & GUID Partition Table...\r\n");
+    gpt_ok = sys_disk_gpt_format(target_idx, 614400);
+    if (gpt_ok == false) {
+        sys_serial_write("[installer] Error: GPT partition table write failed.\r\n");
+        return false;
+    }
+
+    sys_serial_write("[installer] Step 2/5: Formatting minimal 8.3 FAT32 EFI System Partition...\r\n");
+    esp_ok = sys_disk_esp_format(target_idx);
+    if (esp_ok == false) {
+        sys_serial_write("[installer] Error: FAT32 ESP formatting failed.\r\n");
+        return false;
+    }
+
+    sys_serial_write("[installer] Step 3/5: Synthesizing and staging PE/COFF BOOTX64.EFI...\r\n");
+    stage_ok = sys_disk_esp_stage_bootloader(target_idx);
+    if (stage_ok == false) {
+        sys_serial_write("[installer] Error: Failed to synthesize and stage bootloader.\r\n");
+        return false;
+    }
+    return true;
+}
+
+fn install_cas(target_idx) {
+    sys_serial_write("[installer] Step 4/5: Initializing Content-Addressed Storage partition...\r\n");
+    cas_ok = sys_disk_cas_format(target_idx);
+    if (cas_ok == false) {
+        sys_serial_write("[installer] Error: CAS partition initialization failed.\r\n");
+        return false;
+    }
+
+    sys_serial_write("[installer] Step 5/5: Staging Genesis MCB bundle & committing Generation 1...\r\n");
+    sys_serial_write("[installer] Deployment succeeded! Target silicon is fully sovereign.\r\n");
+    sys_serial_write("[installer] Ready for activation.\r\n");
+    return true;
 }
 
 fn install_to_disk(target_idx) {
@@ -47,49 +84,10 @@ fn install_to_disk(target_idx) {
 
     name = sys_block_dev_name(target_idx);
     sys_serial_write("[installer] Selected target: [" + int_to_str(target_idx) + "] " + name + "\r\n");
-
-    // 1. Partition with GPT (300 MiB ESP = 614,400 sectors)
-    sys_serial_write("[installer] Step 1/5: Writing Protective MBR & GUID Partition Table...\r\n");
-    gpt_ok = sys_disk_gpt_format(target_idx, 614400);
-    if (gpt_ok == false) {
-        sys_serial_write("[installer] Error: GPT partition table write failed.\r\n");
+    if (install_esp(target_idx) == false) {
         return false;
     }
-
-    // 2. Format FAT32 ESP
-    sys_serial_write("[installer] Step 2/5: Formatting minimal 8.3 FAT32 EFI System Partition...\r\n");
-    esp_ok = sys_disk_esp_format(target_idx);
-    if (esp_ok == false) {
-        sys_serial_write("[installer] Error: FAT32 ESP formatting failed.\r\n");
-        return false;
-    }
-
-    // 3. Stage BOOTX64.EFI into ESP
-    sys_serial_write("[installer] Step 3/5: Staging bootloader to /EFI/BOOT/BOOTX64.EFI...\r\n");
-    boot_payload = sys_bundle_read("boot.efi");
-    if (len(boot_payload) == 0) {
-        boot_payload = "MICROS_UEFI_BOOTLOADER_PAYLOAD";
-    }
-    write_ok = sys_disk_esp_write(target_idx, "/EFI/BOOT/BOOTX64.EFI", boot_payload);
-    if (write_ok == false) {
-        sys_serial_write("[installer] Error: Failed to write bootloader to ESP.\r\n");
-        return false;
-    }
-
-    // 4. Format CAS storage partition slice
-    sys_serial_write("[installer] Step 4/5: Initializing Content-Addressed Storage partition...\r\n");
-    cas_ok = sys_disk_cas_format(target_idx);
-    if (cas_ok == false) {
-        sys_serial_write("[installer] Error: CAS partition initialization failed.\r\n");
-        return false;
-    }
-
-    // 5. Stage genesis bundle and commit initial generation
-    sys_serial_write("[installer] Step 5/5: Staging Genesis MCB bundle & committing Generation 1...\r\n");
-    sys_serial_write("[installer] Deployment succeeded! Target silicon is fully sovereign.\r\n");
-    sys_serial_write("[installer] Ready for activation.\r\n");
-
-    return true;
+    return install_cas(target_idx);
 }
 
 fn run_installer() {

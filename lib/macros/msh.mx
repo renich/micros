@@ -41,6 +41,7 @@ fn cmd_help() {
     console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
     console_writeln("  ai <prompt>   - Dispatch natural language task to AI");
     console_writeln("  harness       - Launch full-screen visual studio (App 1)");
+    console_writeln("  install       - Launch sovereign silicon installer");
     console_writeln("  exit          - Terminate MicroShell session");
 }
 
@@ -137,6 +138,23 @@ fn cmd_harness() {
     return 0;
 }
 
+fn cmd_install() {
+    inst_src = sys_bundle_read("installer.mx");
+    if (len(inst_src) == 0) {
+        console_writeln("Error: installer.mx not found in genesis bundle.");
+        return 0;
+    }
+    console_writeln("Launching Sovereign Installer...");
+    inst_id = sys_actor_spawn_code("installer", inst_src);
+    if (inst_id < 0) {
+        console_writeln("Error: Failed to spawn installer actor.");
+        return 0;
+    }
+    sys_actor_wait(inst_id);
+    console_writeln("Installer terminated. Returned to msh.");
+    return 0;
+}
+
 fn cmd_ai(prompt) {
     console_writeln("[ai] Querying resident AI: " + prompt + "...");
     resp = sys_ai_prompt(prompt);
@@ -173,6 +191,7 @@ fn eval_command(cmd) {
         return 0;
     }
     if (cmd == "harness") { return cmd_harness(); }
+    if (cmd == "install") { return cmd_install(); }
     if (is_prefix(cmd, "ai ")) { return cmd_ai(substr(cmd, 3, len(cmd))); }
     if (is_prefix(cmd, "spawn ")) { return cmd_spawn(substr(cmd, 6, len(cmd))); }
     if (is_prefix(cmd, "store ")) { return cmd_store(substr(cmd, 6, len(cmd))); }

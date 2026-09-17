@@ -33,6 +33,7 @@ const block_mod = @import("drivers/block.zig");
 const block_cache_mod = @import("storage/block_cache.zig");
 const cas_mod = @import("storage/cas.zig");
 const cas_chunk_mod = @import("storage/chunk.zig");
+const rebuild_mod = @import("storage/rebuild.zig");
 const net_mod = @import("net.zig");
 const ai_mod = @import("ai.zig");
 const compositor_mod = @import("compositor.zig");
@@ -69,10 +70,13 @@ var global_net_stack: ?net_mod.stack.NetworkStack = null;
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
 var global_sched: ?*fiber_mod.Scheduler = null;
 var global_virtio_blk: ?virtio_blk_mod.VirtioBlkDevice = null;
+var global_virtio_blk_dev: ?block_mod.BlockDevice = null;
 var global_nvme: ?nvme_mod.NvmeDevice = null;
+var global_nvme_blk_dev: ?block_mod.BlockDevice = null;
 var global_block_device: ?block_mod.BlockDevice = null;
 var global_block_cache: ?block_cache_mod.BlockCache = null;
 var global_cas: ?cas_mod.CasEngine = null;
+var global_rebuild: ?rebuild_mod.RebuildEngine = null;
 var global_actor_sources: [actor_mod.MAX_ACTORS]?[]const u8 = [_]?[]const u8{null} ** actor_mod.MAX_ACTORS;
 var global_bundle_data: ?[]const u8 = null;
 
@@ -550,7 +554,12 @@ fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
         serial.writeString("\n");
         return false;
     };
-    global_block_device = global_virtio_blk.?.blockDevice();
+    global_virtio_blk_dev = global_virtio_blk.?.blockDevice();
+    global_virtio_blk_dev.?.is_boot_media = (global_block_device == null);
+    if (global_block_device == null) {
+        global_block_device = global_virtio_blk_dev.?;
+    }
+    abi_mod.registerBlockDevice(&global_virtio_blk_dev.?);
 
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mblk \x1b[90m: \x1b[97mVirtIO-Blk persistent drive (capacity: \x1b[0m");
     serial.writeDec(global_virtio_blk.?.capacity_sectors);
@@ -579,12 +588,10 @@ fn initStorageEngines(allocator: std.mem.Allocator) void {
         return;
     };
 
-    serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
-}
+    global_rebuild = rebuild_mod.RebuildEngine.init(&global_cas.?, null, null);
+    abi_mod.setRebuildEngine(&global_rebuild.?);
 
-fn initVirtioBlk(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
-    if (!initBlkDevice(blk_pci, boot_info)) return;
-    initStorageEngines(allocator);
+    serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
 }
 
 const NvmeDmaPages = struct {
@@ -630,7 +637,13 @@ fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool 
         serial.writeString("\n");
         return false;
     };
-    global_block_device = global_nvme.?.blockDevice();
+    global_nvme_blk_dev = global_nvme.?.blockDevice();
+    global_nvme_blk_dev.?.is_boot_media = (global_block_device == null);
+    if (global_block_device == null) {
+        global_block_device = global_nvme_blk_dev.?;
+    }
+    abi_mod.registerBlockDevice(&global_nvme_blk_dev.?);
+
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mnvme\x1b[90m: \x1b[97mPCIe NVMe 1.4 persistent drive (capacity: \x1b[0m");
     serial.writeDec(global_nvme.?.total_sectors);
     serial.writeString("\x1b[97m sectors)\x1b[0m\n");
@@ -638,17 +651,14 @@ fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool 
 }
 
 fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
-    if (pci_mod.findNvmeDevice()) |nvme_dev| {
-        if (initNvmeDevice(nvme_dev, boot_info)) {
-            initStorageEngines(allocator);
-            return;
-        }
+    if (pci_mod.findVirtioBlkDevice()) |blk_dev| {
+        _ = initBlkDevice(blk_dev, boot_info);
     }
-    const maybe_blk = pci_mod.findBlockDevice();
-    if (maybe_blk) |blk_dev| {
-        if (blk_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
-            initVirtioBlk(blk_dev, boot_info, allocator);
-        }
+    if (pci_mod.findNvmeDevice()) |nvme_dev| {
+        _ = initNvmeDevice(nvme_dev, boot_info);
+    }
+    if (global_block_device != null) {
+        initStorageEngines(allocator);
     }
 }
 

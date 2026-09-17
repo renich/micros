@@ -126,7 +126,10 @@ pub const RebuildEngine = struct {
     }
 
     pub fn confirmBoot(self: *RebuildEngine) !void {
-        var manifest = try self.getActiveManifest();
+        var manifest = self.getActiveManifest() catch |err| switch (err) {
+            error.NoActiveManifest => return,
+            else => return err,
+        };
         if (!manifest.isTrial()) return;
 
         manifest.flags = (manifest.flags & ~MANIFEST_FLAG_TRIAL_CANARY) | MANIFEST_FLAG_STABLE;

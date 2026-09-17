@@ -207,7 +207,7 @@ pub fn findNetworkDevice() ?PciDevice {
     return null;
 }
 
-pub fn findBlockDevice() ?PciDevice {
+pub fn findVirtioBlkDevice() ?PciDevice {
     var devices: [32]PciDevice = undefined;
     const count = scanAll(&devices);
     for (devices[0..count]) |dev| {
@@ -215,12 +215,11 @@ pub fn findBlockDevice() ?PciDevice {
             return dev;
         }
     }
-    for (devices[0..count]) |dev| {
-        if (dev.class_code == CLASS_STORAGE) {
-            return dev;
-        }
-    }
     return null;
+}
+
+pub fn findBlockDevice() ?PciDevice {
+    return findVirtioBlkDevice();
 }
 
 pub fn findNvmeDevice() ?PciDevice {
