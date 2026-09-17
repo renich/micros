@@ -239,17 +239,17 @@ elif [[ "$MODE" == "uefi" ]]; then
     send_qemu_monitor_cmd() {
         local cmd="$1"
         if [[ ! -S "$MON_SOCK" ]]; then return 0; fi
-        if command -v socat >/dev/null 2>&1; then
-            printf "%s\n" "$cmd" | socat - "UNIX-CONNECT:$MON_SOCK" >/dev/null 2>&1 || true
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "import socket, sys, time; s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.connect(sys.argv[1]); time.sleep(0.1); s.sendall((sys.argv[2] + '\n').encode()); time.sleep(0.3); s.close()" "$MON_SOCK" "$cmd" >/dev/null 2>&1 || true
         elif command -v nc >/dev/null 2>&1; then
-            printf "%s\n" "$cmd" | nc -U "$MON_SOCK" >/dev/null 2>&1 || true
+            printf "%s\n" "$cmd" | nc -w 1 -U "$MON_SOCK" >/dev/null 2>&1 || true
         fi
     }
 
     capture_screendump() {
         if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 && -S "$MON_SOCK" ]]; then
             send_qemu_monitor_cmd "screendump $SCREENDUMP"
-            sleep 0.2
+            sleep 0.5
             if [[ -f "$SCREENDUMP" && -s "$SCREENDUMP" ]]; then
                 DUMP_CAPTURED=1
                 echo "[micros-runner] Captured framebuffer screendump: $SCREENDUMP"
@@ -295,7 +295,14 @@ elif [[ "$MODE" == "uefi" ]]; then
         ELAPSED=$((NOW - START_TIME))
 
         if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 ]]; then
-            if grep -F "Visual canvas and vector status rendered successfully" "$TMP_SERIAL" >/dev/null 2>&1 || grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
+            if [[ -n "$SERIAL_INPUT" ]]; then
+                if grep -E "(Interactive Studio|µOS macros>)" "$TMP_SERIAL" >/dev/null 2>&1; then
+                    sleep 0.5
+                    capture_screendump
+                fi
+            elif grep -F "Visual canvas and vector status rendered successfully" "$TMP_SERIAL" >/dev/null 2>&1 || \
+                 grep -E "(msh>|µOS macros>)" "$TMP_SERIAL" >/dev/null 2>&1 || \
+                 grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
                 capture_screendump
             fi
         fi
@@ -306,6 +313,7 @@ elif [[ "$MODE" == "uefi" ]]; then
         fi
 
         if [[ "$ELAPSED" -ge "$TIMEOUT_SEC" ]]; then
+            capture_screendump
             echo "[micros-runner] Timeout reached (${TIMEOUT_SEC}s)."
             break
         fi

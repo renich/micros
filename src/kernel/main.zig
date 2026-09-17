@@ -33,6 +33,7 @@ const cas_mod = @import("storage/cas.zig");
 const cas_chunk_mod = @import("storage/chunk.zig");
 const net_mod = @import("net.zig");
 const ai_mod = @import("ai.zig");
+const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
@@ -56,6 +57,9 @@ const GENESIS_PAGE_TABLE_ROOT: u64 = 0;
 
 var global_registry: actor_mod.ActorRegistry = actor_mod.ActorRegistry.init();
 var global_fb: ?fb_mod.Framebuffer = null;
+var global_canvas: ?compositor_mod.Canvas = null;
+var global_wm: ?compositor_mod.WindowManager = null;
+var global_pointer: ?compositor_mod.PointerState = null;
 var global_supervisor: ?supervisor_mod.Supervisor = null;
 var global_abi_ctx: ?abi_mod.AbiContext = null;
 var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
@@ -511,7 +515,9 @@ fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerro
 }
 
 fn drawCanvasBridge(x: u32, y: u32, w: u32, h: u32, color: u32) void {
-    if (global_fb) |*fb| {
+    if (global_canvas) |*canvas| {
+        canvas.drawRect(x, y, w, h, color);
+    } else if (global_fb) |*fb| {
         fb.drawRect(x, y, w, h, color);
     }
 }
@@ -736,20 +742,36 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*
     return try buildFallbackGenesisChunk(allocator);
 }
 
+fn initCompositor(allocator: std.mem.Allocator, fb_info: boot_info_mod.FramebufferInfo) void {
+    if (fb_info.base_addr == 0) return;
+    global_fb = fb_mod.Framebuffer.init(fb_info);
+    const canvas = compositor_mod.Canvas.init(
+        allocator,
+        fb_info.width,
+        fb_info.height,
+        fb_info.format,
+    ) catch null;
+    if (canvas) |c| {
+        global_canvas = c;
+        global_wm = compositor_mod.WindowManager.init(allocator, fb_info.width, fb_info.height);
+        global_pointer = compositor_mod.PointerState.init(fb_info.width, fb_info.height);
+        serial.writeStatusOk("comp", "Double-buffered reactive compositor active (1280x800x32)");
+    }
+}
+
 fn setupAbiEnvironment(
     genesis: *actor_mod.Actor,
     boot_info: *const BootInfo,
     ipc_ring: *ipc_mod.RingBuffer,
     vm: *vm_mod.VM,
+    allocator: std.mem.Allocator,
 ) void {
     initAiClient();
     idt.setInputRing(ipc_ring);
     global_registry.register(genesis) catch kernelPanic("register_genesis");
     global_supervisor = supervisor_mod.Supervisor.init(&global_registry, .restart_immediate);
 
-    if (boot_info.framebuffer.base_addr != 0) {
-        global_fb = fb_mod.Framebuffer.init(boot_info.framebuffer);
-    }
+    initCompositor(allocator, boot_info.framebuffer);
 
     global_abi_ctx = abi_mod.AbiContext{
         .registry = &global_registry,
@@ -758,6 +780,9 @@ fn setupAbiEnvironment(
         .ipc_ring = ipc_ring,
         .supervisor_ctrl = if (global_supervisor != null) &global_supervisor.? else null,
         .kbd_ctrl = &global_kbd,
+        .wm = if (global_wm != null) &global_wm.? else null,
+        .canvas = if (global_canvas != null) &global_canvas.? else null,
+        .pointer = if (global_pointer != null) &global_pointer.? else null,
         .ai_inference_fn = aiInferenceBridge,
         .spawn_code_fn = spawnActorFromCode,
         .cas_put_fn = casPutBridge,
@@ -810,7 +835,7 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
 
     const ipc_ring = ipc_mod.RingBuffer.init(allocator, ipc_mod.DEFAULT_RING_CAPACITY) catch kernelPanic("ipc_ring_init");
     const genesis_vm = initGenesisVm(boot_info, allocator, genesis, ipc_ring);
-    setupAbiEnvironment(genesis, boot_info, ipc_ring, genesis_vm);
+    setupAbiEnvironment(genesis, boot_info, ipc_ring, genesis_vm, allocator);
 
     serial.writeStatusOk("act ", "Genesis Actor 0 online (cooperative fiber scheduler)");
 

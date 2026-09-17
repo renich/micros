@@ -20,6 +20,11 @@ const supervisor_mod = @import("supervisor.zig");
 const ps2_mod = @import("drivers/ps2_kbd.zig");
 const fiber_mod = @import("../macros/fiber.zig");
 const ai_mod = @import("ai.zig");
+const compositor_mod = @import("compositor.zig");
+const WindowManager = compositor_mod.WindowManager;
+const WindowMode = compositor_mod.WindowMode;
+const Canvas = compositor_mod.Canvas;
+const PointerState = compositor_mod.PointerState;
 
 pub const AbiContext = struct {
     registry: *ActorRegistry,
@@ -28,6 +33,9 @@ pub const AbiContext = struct {
     ipc_ring: ?*RingBuffer = null,
     supervisor_ctrl: ?*supervisor_mod.Supervisor = null,
     kbd_ctrl: ?*ps2_mod.Ps2Keyboard = null,
+    wm: ?*WindowManager = null,
+    canvas: ?*Canvas = null,
+    pointer: ?*PointerState = null,
     ai_inference_fn: ?*const fn (prompt: []const u8, out_text: []u8) usize = null,
     spawn_code_fn: ?*const fn (allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 = null,
     cas_put_fn: ?*const fn (data: []const u8, out_hex: *[64]u8) anyerror!void = null,
@@ -130,6 +138,120 @@ fn nativeSysFbDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         );
     }
     return Value{ .nil = {} };
+}
+
+fn nativeSysWindowCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 4 or args[0] != .string or args[1] != .integer or
+        args[2] != .integer or args[3] != .integer)
+    {
+        return error.InvalidArgs;
+    }
+    const ctx = active_ctx orelse return Value{ .integer = -1 };
+    const wm = ctx.wm orelse return Value{ .integer = -1 };
+
+    const w: u32 = @intCast(@max(0, args[1].integer));
+    const h: u32 = @intCast(@max(0, args[2].integer));
+    const mode: WindowMode = if (args[3].integer == 1) .floating else .tiled;
+
+    const win = wm.createWindow(ctx.supervisor.id, args[0].string, w, h, mode) catch {
+        return Value{ .integer = -1 };
+    };
+    return Value{ .integer = @intCast(win.id) };
+}
+
+fn nativeSysWindowClose(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    const ctx = active_ctx orelse return Value{ .boolean = false };
+    const wm = ctx.wm orelse return Value{ .boolean = false };
+
+    wm.closeWindow(@intCast(args[0].integer));
+    return Value{ .boolean = true };
+}
+
+fn nativeSysWindowFocus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    const ctx = active_ctx orelse return Value{ .boolean = false };
+    const wm = ctx.wm orelse return Value{ .boolean = false };
+
+    wm.focusWindow(@intCast(args[0].integer));
+    return Value{ .boolean = true };
+}
+
+fn nativeSysWindowDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 6 or args[0] != .integer or args[1] != .integer or
+        args[2] != .integer or args[3] != .integer or args[4] != .integer or
+        args[5] != .integer)
+    {
+        return error.InvalidArgs;
+    }
+    const ctx = active_ctx orelse return Value{ .nil = {} };
+    const wm = ctx.wm orelse return Value{ .nil = {} };
+
+    const win_id: u32 = @intCast(args[0].integer);
+    const idx = wm.findWindowIndex(win_id) orelse return Value{ .nil = {} };
+    const win = wm.windows[idx] orelse return Value{ .nil = {} };
+
+    const x: u32 = @intCast(@max(0, args[1].integer));
+    const y: u32 = @intCast(@max(0, args[2].integer));
+    const w: u32 = @intCast(@max(0, args[3].integer));
+    const h: u32 = @intCast(@max(0, args[4].integer));
+    const color: u32 = @intCast(args[5].integer);
+
+    win.surface.drawRect(x, y, w, h, color);
+    return Value{ .nil = {} };
+}
+
+fn nativeSysWindowDrawString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 6 or args[0] != .integer or args[1] != .integer or
+        args[2] != .integer or args[3] != .string or args[4] != .integer or
+        args[5] != .integer)
+    {
+        return error.InvalidArgs;
+    }
+    const ctx = active_ctx orelse return Value{ .nil = {} };
+    const wm = ctx.wm orelse return Value{ .nil = {} };
+
+    const win_id: u32 = @intCast(args[0].integer);
+    const idx = wm.findWindowIndex(win_id) orelse return Value{ .nil = {} };
+    const win = wm.windows[idx] orelse return Value{ .nil = {} };
+
+    const x: u32 = @intCast(@max(0, args[1].integer));
+    const y: u32 = @intCast(@max(0, args[2].integer));
+    const fg: u32 = @intCast(args[4].integer);
+    const bg: u32 = @intCast(args[5].integer);
+
+    win.surface.drawString(x, y, args[3].string, fg, bg);
+    return Value{ .nil = {} };
+}
+
+fn nativeSysCompositorFlush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    _ = args;
+    const ctx = active_ctx orelse return Value{ .boolean = false };
+    const wm = ctx.wm orelse return Value{ .boolean = false };
+    const canvas = ctx.canvas orelse return Value{ .boolean = false };
+
+    wm.compose(canvas);
+    if (ctx.framebuffer) |fb| {
+        canvas.flush(fb);
+    }
+    return Value{ .boolean = true };
+}
+
+fn nativeSysPointerRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    _ = args;
+    const ctx = active_ctx orelse return Value{ .integer = -1 };
+    const ptr = ctx.pointer orelse return Value{ .integer = -1 };
+    const px: i64 = @as(u16, @bitCast(@as(i16, @truncate(ptr.x))));
+    const py: i64 = @as(u16, @bitCast(@as(i16, @truncate(ptr.y))));
+    const packed_coords = px | (py << 16);
+    return Value{ .integer = packed_coords };
 }
 
 fn nativeSysIpcRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -398,6 +520,13 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_actor_spawn_cas", Value{ .native = nativeSysActorSpawnCas });
     try vm.globals.put("sys_bundle_read", Value{ .native = nativeSysBundleRead });
     try vm.globals.put("sys_actor_wait", Value{ .native = nativeSysActorWait });
+    try vm.globals.put("sys_window_create", Value{ .native = nativeSysWindowCreate });
+    try vm.globals.put("sys_window_close", Value{ .native = nativeSysWindowClose });
+    try vm.globals.put("sys_window_focus", Value{ .native = nativeSysWindowFocus });
+    try vm.globals.put("sys_window_draw_rect", Value{ .native = nativeSysWindowDrawRect });
+    try vm.globals.put("sys_window_draw_string", Value{ .native = nativeSysWindowDrawString });
+    try vm.globals.put("sys_compositor_flush", Value{ .native = nativeSysCompositorFlush });
+    try vm.globals.put("sys_pointer_read", Value{ .native = nativeSysPointerRead });
 }
 
 pub const registerBindings = registerSyscalls;
@@ -634,4 +763,81 @@ test "ABI native AI tool call execution" {
     var no_tool_args = [_]Value{Value{ .string = "Plain prose" }};
     const empty_val = try nativeSysAiToolCall(&vm, &no_tool_args);
     try std.testing.expectEqualStrings("", empty_val.string);
+}
+
+test "ABI window and compositor native bindings" {
+    const allocator = std.testing.allocator;
+    var chunk = @import("../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var registry = ActorRegistry.init();
+    var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
+    defer supervisor.deinit(allocator);
+
+    var wm = WindowManager.init(allocator, 640, 480);
+    defer wm.deinit();
+
+    var canvas = try Canvas.init(allocator, 640, 480, .rgb_888);
+    defer canvas.deinit();
+
+    var ptr = PointerState.init(640, 480);
+
+    var ctx = AbiContext{
+        .registry = &registry,
+        .supervisor = supervisor,
+        .wm = &wm,
+        .canvas = &canvas,
+        .pointer = &ptr,
+    };
+    setContext(&ctx);
+    defer clearContext();
+
+    try registerSyscalls(&vm);
+
+    var create_args = [_]Value{
+        Value{ .string = "Terminal" },
+        Value{ .integer = 320 },
+        Value{ .integer = 240 },
+        Value{ .integer = 0 },
+    };
+    const win_id_val = try nativeSysWindowCreate(&vm, &create_args);
+    try std.testing.expectEqual(@as(i64, 1), win_id_val.integer);
+
+    var drect_args = [_]Value{
+        Value{ .integer = 1 },
+        Value{ .integer = 0 },
+        Value{ .integer = 0 },
+        Value{ .integer = 50 },
+        Value{ .integer = 50 },
+        Value{ .integer = 0x00FF_0000 },
+    };
+    _ = try nativeSysWindowDrawRect(&vm, &drect_args);
+
+    var dstr_args = [_]Value{
+        Value{ .integer = 1 },
+        Value{ .integer = 5 },
+        Value{ .integer = 5 },
+        Value{ .string = "OK" },
+        Value{ .integer = 0x00FF_FFFF },
+        Value{ .integer = 0x0000_0000 },
+    };
+    _ = try nativeSysWindowDrawString(&vm, &dstr_args);
+
+    var flush_args = [_]Value{};
+    const flush_val = try nativeSysCompositorFlush(&vm, &flush_args);
+    try std.testing.expect(flush_val.boolean);
+
+    const ptr_val = try nativeSysPointerRead(&vm, &flush_args);
+    try std.testing.expect(ptr_val.integer != -1);
+
+    var focus_args = [_]Value{Value{ .integer = 1 }};
+    const focus_val = try nativeSysWindowFocus(&vm, &focus_args);
+    try std.testing.expect(focus_val.boolean);
+
+    var close_args = [_]Value{Value{ .integer = 1 }};
+    const close_val = try nativeSysWindowClose(&vm, &close_args);
+    try std.testing.expect(close_val.boolean);
 }

@@ -19,6 +19,7 @@ pub const cas_chunk = @import("kernel/storage/chunk.zig");
 pub const cas = @import("kernel/storage/cas.zig");
 pub const net = @import("kernel/net.zig");
 pub const ai = @import("kernel/ai.zig");
+pub const compositor = @import("kernel/compositor.zig");
 
 test "kernel module tests" {
     _ = @import("kernel/cap/capability.zig");
@@ -41,6 +42,7 @@ test "kernel module tests" {
     _ = @import("kernel/storage/cas.zig");
     _ = @import("kernel/net.zig");
     _ = @import("kernel/ai.zig");
+    _ = @import("kernel/compositor.zig");
 }
 
 test "Genesis Bundle contains and compiles init.mx" {
