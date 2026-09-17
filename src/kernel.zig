@@ -14,6 +14,8 @@ pub const io = @import("kernel/arch/x86_64/io.zig");
 pub const pci = @import("kernel/drivers/pci.zig");
 pub const virtio_net = @import("kernel/drivers/virtio_net.zig");
 pub const virtio_blk = @import("kernel/drivers/virtio_blk.zig");
+pub const block = @import("kernel/drivers/block.zig");
+pub const gpt = @import("kernel/drivers/gpt.zig");
 pub const block_cache = @import("kernel/storage/block_cache.zig");
 pub const cas_chunk = @import("kernel/storage/chunk.zig");
 pub const cas = @import("kernel/storage/cas.zig");
@@ -37,6 +39,8 @@ test "kernel module tests" {
     _ = @import("kernel/drivers/pci.zig");
     _ = @import("kernel/drivers/virtio_net.zig");
     _ = @import("kernel/drivers/virtio_blk.zig");
+    _ = @import("kernel/drivers/block.zig");
+    _ = @import("kernel/drivers/gpt.zig");
     _ = @import("kernel/storage/block_cache.zig");
     _ = @import("kernel/storage/chunk.zig");
     _ = @import("kernel/storage/cas.zig");
