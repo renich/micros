@@ -3,13 +3,13 @@ Guía Técnica de Código para MicrOS
 ==================================
 
 :Status: Aprobado
-:Version: 1.0.0
+:Version: 1.1.0
 :Author: Rénich Bon Ćirić & Antigravity
 :Date: 2026-09-17
 :Language: Español (ES/MX)
 :Translations: :doc:`code-guide`
 
-Este documento define los estándares autorizados de ingeniería, arquitectura y calidad de código para el sistema operativo MicrOS (µOS), el substrato del lenguaje de programación Macros y la cadena de herramientas de verificación en el host. Todo ingeniero, arquitecto humano o agente autónomo de IA que interactúe con esta base de código DEBE cumplir con estas normas sin excepción.
+Este documento define el modelo mental arquitectónico, la distribución del código, los puntos de entrada, las canalizaciones de ejecución y los estándares rigurosos de calidad para el sistema operativo MicrOS (µOS), el entorno del lenguaje Macros y la cadena de herramientas de verificación. Todo ingeniero, arquitecto humano o agente autónomo de IA que modifique esta base de código DEBE cumplir con estas normas sin excepción.
 
 Soberanía Computacional y Filosofía Central
 ===========================================
@@ -22,6 +22,186 @@ Directivas Filosóficas Principales:
 * **Inmutabilidad Direccionada por Contenido**: Las entidades persistentes, los módulos y los manifiestos de ejecución se direccionan mediante hashes criptográficos BLAKE3 de 256 bits, reemplazando las abstracciones mutables de inodos jerárquicos POSIX.
 * **Cero Adulación y Colaboración Directa**: La revisión de ingeniería prioriza la exactitud matemática y la seguridad de memoria sobre el consenso complaciente. La lógica defectuosa, los casos de esquina no manejados y las regresiones arquitectónicas deben señalarse y corregirse sin vacilación.
 
+Arquitectura del Sistema y Modelo Mental
+========================================
+MicrOS es un sistema operativo nativo para IA, post-POSIX, estructurado sobre un estricto modelo computacional de dos capas que separa la imposición de hardware de la orquestación superior.
+
+Arquitectura de Dos Capas (Substrato y Aplicaciones):
+-----------------------------------------------------
+1. **Capa 0: Microkernel Soberano y Substrato (Zig)**:
+   Un microkernel independiente y capa directa de llamadas al sistema escrito en Zig puro. La Capa 0 administra estructuras de CPU (GDT/IDT), asignación de marcos de página (PMM/VMM), controladores de dispositivos VirtIO (red, almacenamiento), validación de tokens de acceso en el Espacio de Capacidades (CSpace), búferes circulares en memoria compartida estructurada y la máquina virtual de código de bytes con recolector Immix. La Capa 0 jamás enlaza librerías externas y opera con alineación matemática estricta.
+
+2. **Capa 1: Aplicaciones Soberanas y Orquestación (Macros)**:
+   El espacio de usuario de alto nivel escrito exclusivamente en el lenguaje Macros (``.mx``, ``.macros``). La Capa 1 abarca la inicialización del sistema (``init.mx``), el intérprete de comandos interactivo (``msh.mx``), el compilador autohospedado y los orquestadores residentes de agentes de IA. Los programas de Capa 1 se ejecutan como actores aislados dentro de fibras cooperativas en espacio de usuario, comunicándose a través de búferes circulares en memoria compartida y capacidades CSpace.
+
+Entornos Duales de Ejecución (UEFI vs Sandbox):
+-----------------------------------------------
+MicrOS opera en dos entornos distintos y complementarios:
+
+* **Bare-Metal x86_64 UEFI (Producción/Emulación)**:
+   El sistema operativo completo arranca desde firmware UEFI (OVMF en QEMU o hardware físico) a través de ``src/boot/uefi_main.zig``. El kernel inicializa el hardware directamente, descubre dispositivos PCI, opera almacenamiento y red VirtIO, monta el Almacenamiento Direccionado por Contenido (CAS), renderiza un lienzo vectorial gráfico de 1280x800 vía UEFI GOP y ejecuta el paquete Génesis dentro de fibras cooperativas.
+
+* **Sandbox de Llamadas Directas en Linux (TDD/CI Rápido)**:
+   Para ciclos de desarrollo de sub-segundo, ``src/main.zig`` compila como un ejecutable independiente de Linux (``zig-out/bin/micros-init``) actuando como PID 1 dentro de un sandbox aislado de QEMU o contenedor. Invoca directamente llamadas al sistema de Linux vía ``src/sys/linux.zig`` (cero libc), ejecuta autoverificaciones del substrato, procesa comandos de MicroShell y apaga el sistema limpiamente mediante ACPI S5.
+
+Puntos de Entrada del Sistema y Secuencia de Arranque
+=====================================================
+Comprender en dónde inicia la ejecución y cómo fluye el control a través de las fronteras es fundamental para navegar por la base de código.
+
+1. Punto de Entrada del Cargador UEFI (src/boot/uefi_main.zig):
+   La ejecución arranca en ``pub fn main() uefi.Status`` dentro del cargador Stage 1 UEFI (``boot.efi``):
+   * Conecta con la Tabla del Sistema UEFI e inicializa la salida a consola.
+   * Descubre el búfer de cuadros de hardware mediante el protocolo UEFI GOP, capturando dirección base, resolución (1280x800) y formato de píxeles en ``FramebufferInfo``.
+   * Consulta el mapa de memoria UEFI en un arreglo contiguo de descriptores ``MemoryDescriptor``.
+   * Empaqueta límites de memoria física, desplazamientos HHDM y parámetros de video en la estructura verificada ``BootInfo`` (firma mágica ``0x4D494352_4F534249``).
+   * Invoca ``uefi.boot_services.exitBootServices`` para finalizar el tiempo de ejecución del firmware UEFI.
+   * Salta directamente al punto de entrada del microkernel: ``kernel_main.kmain(&global_boot_info)``.
+
+2. Punto de Entrada del Microkernel (src/kernel/main.zig):
+   La ejecución entra al microkernel en ``pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn``:
+   * Deshabilita interrupciones de CPU (``cli``) e inicializa el puerto serie UART 16550 para depuración temprana.
+   * Valida la firma mágica de ``BootInfo`` e instala la contención de fallas de CPU: Tabla Global de Descriptores (``gdt.init()``) y Tabla de Descriptores de Interrupción (``idt.init()``).
+   * Activa el Administrador de Memoria Física (``pmm.init()``) y la paginación virtual de 4 niveles (``vmm.init()``).
+   * Escanea el bus PCI en busca de dispositivos VirtIO (VirtIO-Net para paquetes de red, VirtIO-Blk para almacenamiento persistente en bloques).
+   * Asigna un montículo de kernel alineado a páginas de 8 MiB mediante ``std.heap.FixedBufferAllocator``.
+   * Instancia el Actor Génesis 0 (``actor_mod.Actor.init``) y crea el Espacio de Capacidades raíz (CSpace) con 64 ranuras.
+   * Monta el motor de almacenamiento CAS, la caché de bloques y el lienzo vectorial GOP directo.
+   * Desempaqueta el paquete Génesis embebido (``genesis.mcb``), extrae ``init.mx``, compila su AST a código de bytes mediante el compilador Stage 0 e inicializa la Máquina Virtual Génesis (``vm_mod.VM``).
+   * Enlaza las funciones ABI del microkernel en el ámbito global de la máquina virtual.
+   * Inicializa el planificador cooperativo de fibras (``fiber_mod.Scheduler``), engendra el hilo ``vmThread`` y entra al bucle ``sched.run()``.
+
+3. Punto de Entrada de Inicialización y Supervisión (lib/macros/init.mx):
+   El primer código de alto nivel en ejecutarse en espacio de usuario corre como Actor Génesis 0/PID 1:
+   * Extrae la Aplicación 0 (``msh.mx``) desde el paquete Génesis mediante ``sys_bundle_read("msh.mx")``.
+   * Engendra el actor hijo de MicroShell mediante ``sys_actor_spawn_code("msh", msh_src)``.
+   * Entra al bucle de supervisión (``supervisor_loop``), consultando periódicamente el estado de los actores hijos (``sys_actor_state``), reviviendo automáticamente actores con fallas y cediendo tiempo de CPU con ``sys_yield()``.
+
+4. Punto de Entrada del Sandbox de Linux (src/main.zig):
+   Para pruebas rápidas fuera de la emulación bare-metal, ``pub fn main() !void`` funge como PID 1:
+   * Imprime el banner inicial directamente en el descriptor 1 vía ``src/sys/io.zig``.
+   * Ejecuta una autoverificación del substrato: compila y evalúa ``boot_check = 20 + 22`` en una instancia limpia de la VM de Macros, asegurando que el resultado sea 42.
+   * Instancia ``msh.Shell`` conectado a la entrada estándar (0) y salida estándar (1).
+   * Ejecuta comandos iniciales, registra la finalización y apaga el sistema mediante ``sys.process.poweroff()`` (con el valor mágico de reinicio ACPI ``0x4321fedc``).
+
+5. Ejecutores Independientes de Línea de Comandos:
+   * ``src/macros_main.zig``: Ejecutor CLI para compilar y correr archivos de script ``.mx`` directamente en el host.
+   * ``src/msh_main.zig``: CLI interactivo para iniciar la consola interactiva (REPL) de MicroShell en pruebas locales.
+
+Anatomía del Repositorio: Qué Está en Dónde
+===========================================
+La base de código se organiza rigurosamente en directorios delimitados por dominio con responsabilidades bien definidas:
+
+Capa del Substrato y Kernel (src/):
+-----------------------------------
+* ``src/boot/``: Implementación del cargador Stage 1 UEFI (``uefi_main.zig``) y cabeceras de protocolo.
+* ``src/kernel/``: Núcleo del microkernel soberano:
+   * ``arch/x86_64/``: Conmutación de contexto en ensamblador, GDT, IDT, I/O de puertos, definiciones de paginación.
+   * ``mem/``: Asignador de marcos de página física (``pmm.zig``) y Administrador de Memoria Virtual (``vmm.zig``).
+   * ``drivers/``: VirtIO-Net 1.0, VirtIO-Blk 1.0, enumeración PCI y teclado PS/2.
+   * ``cap/``: Control de acceso basado en capacidades (``capability.zig``, ``cspace.zig``).
+   * ``storage/``: Motor de Almacenamiento Direccionado por Contenido (``cas.zig``, ``chunk.zig``, ``block_cache.zig``, ``superblock.zig``).
+   * ``ipc/``: Búferes circulares sin cerrojos (``ring.zig``) y canales de eventos fuertemente tipados (``events.zig``).
+   * ``compositor/``: Motor de gráficos vectoriales, lienzo de 1280x800, tipografía, puntero de ratón, gestor de ventanas en mosaico BSP.
+   * ``net/``: Pila de red integrada en el kernel (cliente DHCP, resolución DNS, máquina de estados TCP, adaptador TLS 1.3).
+   * ``ai.zig``: Cliente orquestador de IA residente (streaming HTTP 1.1, generación de prompts, invocación estructurada de herramientas).
+   * ``actor.zig`` y ``supervisor.zig``: Ciclo de vida de actores y árboles de supervisión de fallas.
+   * ``abi.zig``: Enlaces de funciones ABI y llamadas al sistema expuestas a la máquina virtual Macros.
+   * ``main.zig``: Inicialización raíz del microkernel y flujo de ejecución de ``kmain``.
+* ``src/sys/``: Librería de llamadas al sistema de Linux independiente de libc (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``).
+* ``src/msh/``: Motor de MicroShell (``shell.zig``, ``builtins.zig``) para análisis y tuberías de ejecución de comandos.
+
+Motor de Ejecución del Lenguaje (src/macros/):
+----------------------------------------------
+La implementación Stage 0 de Macros escrita en Zig independiente:
+* ``lexer.zig``: Analiza flujos fuente UTF-8 generando secuencias de tokens tipados.
+* ``parser.zig`` y ``ast.zig``: Genera y valida Árboles de Sintaxis Abstracta descendentes recursivos.
+* ``compiler.zig`` y ``chunk.zig``: Compila nodos AST en arreglos serializados de instrucciones de código de bytes.
+* ``vm.zig``: Intérprete de código de bytes basado en pila de alto rendimiento.
+* ``eval.zig``: Intérprete por recorrido de AST empleado durante fases iniciales de bootstrap.
+* ``gc.zig`` y ``immix.zig``: Recolector de basura por regiones y marcas Immix (bloques de 32 KiB, mapas de líneas, asignación en huecos).
+* ``fiber.zig`` y ``context_switch.s``: Fibras cooperativas en espacio de usuario y conmutación de contexto en ensamblador con preservación de registros.
+* ``codegen_x86_64.zig``: Generador independiente de código máquina nativo con protección de páginas W^X.
+* ``module.zig`` y ``serializer.zig``: Cargador de módulos CAS (``b3:...`` y ``bundle:...``) y serialización binaria canónica.
+
+Compilador Autohospedado y Aplicaciones (lib/macros/):
+------------------------------------------------------
+La implementación Stage 1 de Macros escrita íntegramente en Macros puro:
+* ``init.mx``: Supervisor del sistema y script de inicialización del Actor 0.
+* ``msh.mx``: Implementación soberana de MicroShell escrita en Macros puro.
+* ``harness.mx``: Ejecutor autónomo de pruebas y suite de verificación.
+* ``ast.mx``, ``lexer.mx``, ``parser.mx``: Frontend del compilador autohospedado.
+* ``compiler.mx``, ``compiler_main.mx``: Compilador de código de bytes autohospedado.
+
+Cadena de Herramientas de Verificación (tools/):
+------------------------------------------------
+Herramientas del host que proporcionan compuertas de calidad automatizadas y verificación diagnóstica:
+* ``micros-runner.bash``: Entorno de ejecución desatendido en QEMU dirigido por eventos con detección de centinelas por puerto serie.
+* ``src/fb_verify.zig`` (``micros-fb-verify``): Validador visual submilimétrico de varianza cromática en búferes gráficos.
+* ``src/lint.zig`` (``micros-lint``): Linter nativo sobre el AST de Zig que hace cumplir los Diez Mandamientos.
+* ``src/sym.zig`` (``micros-sym``): Desenredador independiente de tablas de símbolos ELF de 64 bits y traductor de direcciones a líneas.
+* ``micros-inspect.bash``: Inspector no interactivo del monitor de QEMU para desensamblado de registros de CPU durante pánicos.
+* ``src/telem.zig`` (``micros-telem``): Decodificador binario nativo de telemetría de 64 bytes.
+* ``micros-spec-trace.bash``: Auditor de trazabilidad bidireccional entre las 4 capas de especificaciones.
+* ``src/virtio_bench.zig`` (``micros-virtio-bench``): Validador de geometría VirtIO split-virtqueue y microbanco de pruebas DMA vía RDTSC.
+* ``src/bundle.zig`` (``micros-bundle``): Empaqueta archivos fuente Stage 1 ``.mx`` dentro del paquete binario ``genesis.mcb``.
+
+Cómo se Ensambla Todo: Canalización del Ciclo de Vida
+=====================================================
+El ciclo de vida de MicrOS enlaza la generación de artefactos en compilación con la ejecución directa en el hardware al arrancar.
+
+Canalización de Ensamblado en Tiempo de Compilación:
+----------------------------------------------------
+1. **Compilación de Herramientas**: ``make tools`` compila las utilidades nativas de Zig en ``zig-out/bin/``.
+2. **Empaquetado del Paquete Génesis**: ``tools/micros-bundle`` lee los scripts fuente Stage 1 desde ``lib/macros/`` (``init.mx``, ``msh.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) y los serializa en un único archivo binario: ``src/kernel/genesis.mcb``.
+3. **Compilación del Microkernel y Cargador**: ``zig build`` compila ``src/boot.zig`` en ``zig-out/bin/boot.efi`` y ``src/kernel.zig`` en ``zig-out/bin/micros-kernel.elf`` (incrustando ``genesis.mcb`` mediante ``@embedFile``).
+4. **Compilación del Sandbox**: ``zig build`` compila ``src/main.zig`` en el binario independiente ``zig-out/bin/micros-init``.
+
+Flujo del Ciclo de Vida de Ejecución:
+-------------------------------------
+La secuencia completa de ejecución desde el encendido en frío hasta la consola interactiva:
+
+.. code-block:: text
+
+   +-------------------------------------------------------------------------+
+   | Firmware UEFI (OVMF en QEMU/Hardware Físico)                            |
+   +-------------------------------------------------------------------------+
+                                      |
+                                      v
+   +-------------------------------------------------------------------------+
+   | Cargador Stage 1: src/boot/uefi_main.zig                                |
+   | - Localiza Búfer de Cuadros GOP (1280x800x32)                           |
+   | - Captura Descriptores de Memoria en BootInfo (0x4D494352_4F534249)     |
+   | - Invoca exitBootServices y salta a kmain                               |
+   +-------------------------------------------------------------------------+
+                                      |
+                                      v
+   +-------------------------------------------------------------------------+
+   | Raíz del Microkernel: src/kernel/main.zig (kmain)                       |
+   | - Inicializa UART serie, GDT, IDT, PMM, VMM (paginación de 4 niveles)    |
+   | - Descubre controladores PCI VirtIO-Net y VirtIO-Blk                    |
+   | - Monta Almacenamiento CAS y Caché de Bloques                           |
+   | - Inicializa CSpace Génesis (64 ranuras) y Lienzo GOP                   |
+   | - Desempaqueta genesis.mcb, compila init.mx con compilador Stage 0      |
+   | - Enlaza funciones ABI del Microkernel en la VM Génesis                 |
+   | - Inicia Planificador de Fibras (fiber_mod.Scheduler.run)               |
+   +-------------------------------------------------------------------------+
+                                      |
+                                      v
+   +-------------------------------------------------------------------------+
+   | Supervisor del Sistema: lib/macros/init.mx (Actor 0/PID 1 en Macros)    |
+   | - Lee msh.mx desde el paquete génesis                                   |
+   | - Engendra la Aplicación 0 (msh) vía sys_actor_spawn_code               |
+   | - Ejecuta bucle de supervisión monitoreando estados y cediendo CPU      |
+   +-------------------------------------------------------------------------+
+                                      |
+                                      v
+   +-------------------------------------------------------------------------+
+   | MicroShell y Gestor de Ventanas: lib/macros/msh.mx + kernel/compositor/ |
+   | - Renderiza ventanas vectoriales en el lienzo GOP de 1280x800           |
+   | - Procesa entrada de teclado PS/2 y eventos del puntero de ratón        |
+   | - Orquesta comandos, agentes de IA residentes y módulos CAS             |
+   +-------------------------------------------------------------------------+
+
 Los Diez Mandamientos de Calidad de Código
 ==========================================
 Los Diez Mandamientos representan la base innegociable de la artesanía de código en MicrOS. Estas reglas son impuestas de manera determinista mediante el linter nativo de AST (``tools/micros-lint``) y las compuertas automatizadas de integración continua.
@@ -30,7 +210,7 @@ Los Diez Mandamientos representan la base innegociable de la artesanía de códi
    :widths: auto
 
    +----+--------------------------+-------------------------------------------------------------+
-   | #  | Mandamiento              | Restricción Obligatoria                                     |
+   | No | Mandamiento              | Restricción Obligatoria                                     |
    +====+==========================+=============================================================+
    | 1  | Tamaño Máximo de Archivo | Los archivos no deben exceder 1,000 líneas de código.       |
    +----+--------------------------+-------------------------------------------------------------+
@@ -199,8 +379,8 @@ Regla de Nombres Prohibidos:
 ----------------------------
 Queda estrictamente prohibida la creación de archivos genéricos comodín como ``utils.zig``, ``common.zig`` o ``helpers.zig``. El linter de AST (``tools/micros-lint``) rechaza de inmediato cualquier archivo con dichos nombres. El código debe residir en módulos descriptivos propios de su dominio:
 
-* En lugar de ``utils.zig`` -> ``src/kernel/memory/page_table.zig`` o ``src/kernel/storage/crc32.zig``.
-* En lugar de ``common.zig`` -> ``src/sys/constants.zig`` o ``src/macros/types.zig``.
+* En lugar de ``utils.zig`` -> ``src/kernel/mem/page_table.zig`` o ``src/kernel/storage/crc32.zig``.
+* En lugar de ``common.zig`` -> ``src/sys/constants.zig`` o ``src/macros/chunk.zig``.
 * En lugar de ``helpers.zig`` -> ``src/macros/token_stream.zig`` o ``src/kernel/compositor/color.zig``.
 
 Principios de Diseño Arquitectónico:
@@ -341,6 +521,7 @@ Catálogo de Herramientas del Substrato:
 * **micros-telem**: Decodificador nativo de tramas binarias de telemetría de 64 bytes y analizador de fallas.
 * **micros-spec-trace**: Auditor de trazabilidad bidireccional entre especificaciones de negocio, funcionales, técnicas y tareas de ruta.
 * **micros-virtio-bench**: Validador geométrico de colas divididas VirtIO 1.0 y microbanco de pruebas RDTSC para transferencias DMA.
+* **micros-bundle**: Empaquetador binario del paquete génesis que serializa archivos Stage 1 de Macros en ``genesis.mcb``.
 
 Lista de Verificación Obligatoria Pre-Commit:
 ---------------------------------------------
