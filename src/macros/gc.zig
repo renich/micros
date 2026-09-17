@@ -10,6 +10,9 @@ pub const LINE_SIZE: usize = 256; // 256 bytes
 pub const LINES_PER_BLOCK: usize = BLOCK_SIZE / LINE_SIZE; // 128 lines
 pub const LARGE_OBJECT_THRESHOLD: usize = 4096; // 4 KiB
 pub const PAGE_ALIGNMENT = std.mem.Alignment.fromByteUnits(4096);
+pub const DEFAULT_GC_THRESHOLD: usize = 64 * 1024; // 64 KiB
+pub const MAX_HEAP_BLOCKS: usize = 512; // 16 MiB max heap safety limit
+pub const GC_GROWTH_FACTOR: usize = 2;
 
 pub const LineState = enum(u8) {
     free = 0,
@@ -40,16 +43,23 @@ pub const Block = struct {
         allocator.destroy(self);
     }
 
+    fn findHoleEnd(self: *const Block, start: usize) usize {
+        var end = start;
+        while (end < LINES_PER_BLOCK and self.line_marks[end] == .free) : (end += 1) {}
+        return end;
+    }
+
     pub fn resetHoles(self: *Block) void {
-        self.cursor = 0;
-        self.limit = BLOCK_SIZE;
         var i: usize = 0;
         while (i < LINES_PER_BLOCK) : (i += 1) {
             if (self.line_marks[i] == .free) {
                 self.cursor = i * LINE_SIZE;
-                break;
+                self.limit = self.findHoleEnd(i) * LINE_SIZE;
+                return;
             }
         }
+        self.cursor = BLOCK_SIZE;
+        self.limit = BLOCK_SIZE;
     }
 };
 
@@ -59,6 +69,11 @@ pub const Heap = struct {
     los: std.ArrayList(struct { mem: []align(4096) u8, marked: bool }),
     active_block: ?*Block,
     bytes_allocated: usize,
+    gc_threshold: usize = DEFAULT_GC_THRESHOLD,
+    gc_callback: ?*const fn (ctx: *anyopaque) void = null,
+    gc_ctx: ?*anyopaque = null,
+    in_gc: bool = false,
+    max_blocks: usize = MAX_HEAP_BLOCKS,
 
     pub fn init(base_allocator: Allocator) Heap {
         return .{
@@ -67,6 +82,11 @@ pub const Heap = struct {
             .los = .empty,
             .active_block = null,
             .bytes_allocated = 0,
+            .gc_threshold = DEFAULT_GC_THRESHOLD,
+            .gc_callback = null,
+            .gc_ctx = null,
+            .in_gc = false,
+            .max_blocks = MAX_HEAP_BLOCKS,
         };
     }
 
@@ -126,23 +146,38 @@ pub const Heap = struct {
         _ = ret_addr;
     }
 
-    pub fn alloc(self: *Heap, size: usize) ![]u8 {
-        const alloc_size = std.mem.alignForward(usize, size, 8);
-        if (alloc_size >= LARGE_OBJECT_THRESHOLD) {
-            return self.allocLarge(alloc_size, size);
+    fn maybeTriggerGc(self: *Heap, needed: usize) void {
+        if ((self.bytes_allocated + needed) >= self.gc_threshold and !self.in_gc) {
+            if (self.gc_callback) |cb| {
+                self.in_gc = true;
+                cb(self.gc_ctx orelse @ptrCast(self));
+                self.in_gc = false;
+                self.gc_threshold = @max(self.bytes_allocated * GC_GROWTH_FACTOR, DEFAULT_GC_THRESHOLD);
+            }
         }
+    }
 
-        if (self.active_block) |block| {
-            if (self.allocInBlock(block, alloc_size, size)) |ptr| return ptr;
-        }
-
+    fn findHoleInBlocks(self: *Heap, alloc_size: usize, size: usize) ?[]u8 {
         for (self.blocks.items) |block| {
-            if (block == self.active_block) continue;
             if (self.findHoleAndAlloc(block, alloc_size, size)) |ptr| {
                 self.active_block = block;
                 return ptr;
             }
         }
+        return null;
+    }
+
+    pub fn alloc(self: *Heap, size: usize) ![]u8 {
+        const alloc_size = std.mem.alignForward(usize, size, LINE_SIZE);
+        if (alloc_size >= LARGE_OBJECT_THRESHOLD) return self.allocLarge(alloc_size, size);
+
+        self.maybeTriggerGc(alloc_size);
+
+        if (self.active_block) |block| {
+            if (self.allocInBlock(block, alloc_size, size)) |ptr| return ptr;
+        }
+
+        if (self.findHoleInBlocks(alloc_size, size)) |ptr| return ptr;
 
         try self.allocateNewBlock();
         const block = self.active_block.?;
@@ -151,6 +186,7 @@ pub const Heap = struct {
     }
 
     fn allocLarge(self: *Heap, alloc_size: usize, orig_size: usize) ![]u8 {
+        self.maybeTriggerGc(alloc_size);
         const mem_len = std.mem.alignForward(usize, alloc_size, 4096);
         const ptr = try self.base_allocator.alignedAlloc(u8, PAGE_ALIGNMENT, mem_len);
         @memset(ptr, 0);
@@ -163,6 +199,7 @@ pub const Heap = struct {
         const next_cursor = block.cursor + alloc_size;
         if (next_cursor <= block.limit) {
             const ptr = block.memory[block.cursor..next_cursor];
+            @memset(ptr, 0);
             self.markLines(block, block.cursor, alloc_size, .allocated);
             block.cursor = next_cursor;
             self.bytes_allocated += orig_size;
@@ -253,36 +290,40 @@ pub const Heap = struct {
         }
     }
 
-    fn sweepBlockLines(block: *Block) bool {
-        var all_free = true;
+    fn sweepBlockLines(block: *Block) usize {
+        var allocated_lines: usize = 0;
         for (&block.line_marks) |*m| {
             if (m.* == .marked) {
                 m.* = .allocated;
-                all_free = false;
+                allocated_lines += 1;
             } else if (m.* == .allocated) {
                 m.* = .free;
             }
         }
-        return all_free;
+        return allocated_lines;
     }
 
     pub fn sweep(self: *Heap) void {
+        var surviving_bytes: usize = 0;
         var i: usize = 0;
         while (i < self.blocks.items.len) {
             const block = self.blocks.items[i];
-            const all_free = sweepBlockLines(block);
-            if (all_free and block != self.active_block) {
+            const allocated_lines = sweepBlockLines(block);
+            if (allocated_lines == 0 and block != self.active_block) {
                 _ = self.blocks.orderedRemove(i);
                 block.deinit(self.base_allocator);
                 continue;
             }
+            surviving_bytes += allocated_lines * LINE_SIZE;
             block.resetHoles();
             i += 1;
         }
-        self.sweepLos();
+        surviving_bytes += self.sweepLos();
+        self.bytes_allocated = surviving_bytes;
     }
 
-    fn sweepLos(self: *Heap) void {
+    fn sweepLos(self: *Heap) usize {
+        var surviving: usize = 0;
         var j: usize = 0;
         while (j < self.los.items.len) {
             var lo = &self.los.items[j];
@@ -291,12 +332,15 @@ pub const Heap = struct {
                 _ = self.los.orderedRemove(j);
                 continue;
             }
+            surviving += lo.mem.len;
             lo.marked = false;
             j += 1;
         }
+        return surviving;
     }
 
     fn allocateNewBlock(self: *Heap) !void {
+        if (self.blocks.items.len >= self.max_blocks) return error.OutOfMemory;
         const new_block = try Block.init(self.base_allocator);
         try self.blocks.append(self.base_allocator, new_block);
         self.active_block = new_block;
@@ -348,4 +392,39 @@ test "Heap large object allocation" {
 
     heap.sweep(); // Unmarked, should be freed
     try testing.expect(heap.los.items.len == 0);
+}
+
+var gc_test_counter: usize = 0;
+fn testGcCallback(ctx: *anyopaque) void {
+    _ = ctx;
+    gc_test_counter += 1;
+}
+
+test "Heap adaptive GC callback and block limits" {
+    const testing = std.testing;
+    var heap = Heap.init(testing.allocator);
+    defer heap.deinit();
+
+    gc_test_counter = 0;
+    heap.gc_threshold = 1024;
+    heap.gc_callback = testGcCallback;
+
+    _ = try heap.alloc(512);
+    try testing.expectEqual(@as(usize, 0), gc_test_counter);
+
+    _ = try heap.alloc(600); // Exceeds threshold
+    try testing.expectEqual(@as(usize, 1), gc_test_counter);
+
+    heap.max_blocks = 2;
+    var oom_triggered = false;
+    for (0..40) |_| {
+        _ = heap.alloc(2048) catch |err| {
+            if (err == error.OutOfMemory) {
+                oom_triggered = true;
+                break;
+            }
+            return err;
+        };
+    }
+    try testing.expect(oom_triggered);
 }

@@ -28,6 +28,7 @@ pub const Function = struct {
     local_count: usize,
     upvalue_count: usize,
     ip_start: usize,
+    chunk: ?*anyopaque = null,
 };
 
 pub const NativeFn = *const fn (vm: *anyopaque, args: []Value) anyerror!Value;

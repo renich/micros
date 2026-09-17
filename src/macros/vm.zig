@@ -8,6 +8,9 @@ const Chunk = chunk_mod.Chunk;
 const OpCode = chunk_mod.OpCode;
 const gc = @import("gc.zig");
 const tracer = @import("tracer.zig");
+const fiber = @import("fiber.zig");
+
+pub const PREEMPTION_QUANTUM: usize = 1024;
 
 pub const InterpretError = error{
     CompileError,
@@ -62,13 +65,12 @@ fn nativeBitAnd(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 fn nativeBuildFunction(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 5) return InterpretError.RuntimeError;
     if (args[0] != .string) return InterpretError.RuntimeError;
-    if (args[1] != .integer) return InterpretError.RuntimeError;
-    if (args[2] != .integer) return InterpretError.RuntimeError;
-    if (args[3] != .integer) return InterpretError.RuntimeError;
-    if (args[4] != .integer) return InterpretError.RuntimeError;
+    if (args[1] != .integer or args[2] != .integer or args[3] != .integer or args[4] != .integer) {
+        return InterpretError.RuntimeError;
+    }
 
     const vm_func = eval.Function{
         .name = args[0].string,
@@ -76,6 +78,7 @@ fn nativeBuildFunction(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .local_count = @intCast(args[2].integer),
         .upvalue_count = @intCast(args[3].integer),
         .ip_start = @intCast(args[4].integer),
+        .chunk = @ptrCast(vm.chunk),
     };
     return eval.Value{ .function = vm_func };
 }
@@ -98,10 +101,13 @@ fn nativeExecChunk(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 2) return InterpretError.RuntimeError;
     if (args[0] != .array or args[1] != .array) return InterpretError.RuntimeError;
 
-    var new_chunk = chunk_mod.Chunk.init();
-    // We should not defer deinit here because constants might be referenced.
-    // In a real GC language, this chunk should be GC allocated.
-    // For now we just leak the ArrayLists of the chunk since we don't have tracing GC yet.
+    const new_chunk = try vm.allocator.create(chunk_mod.Chunk);
+    new_chunk.* = chunk_mod.Chunk.init();
+    errdefer {
+        new_chunk.deinit(vm.allocator);
+        vm.allocator.destroy(new_chunk);
+    }
+    try vm.dynamic_chunks.append(vm.allocator, new_chunk);
 
     for (args[0].array) |val| {
         if (val != .integer) return InterpretError.RuntimeError;
@@ -111,24 +117,7 @@ fn nativeExecChunk(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         _ = try new_chunk.addConstant(vm.allocator, val);
     }
 
-    const old_chunk = vm.chunk;
-    const old_ip = vm.ip;
-    const old_sp = vm.sp;
-
-    vm.chunk = &new_chunk;
-    vm.ip = 0;
-
-    vm.run(vm.frame_count) catch {
-        vm.chunk = old_chunk;
-        vm.ip = old_ip;
-        vm.sp = old_sp;
-        return InterpretError.RuntimeError;
-    };
-
-    vm.chunk = old_chunk;
-    vm.ip = old_ip;
-    vm.sp = old_sp;
-
+    try vm.executeChunk(new_chunk);
     return eval.Value{ .nil = {} };
 }
 
@@ -219,6 +208,7 @@ pub const CallFrame = struct {
     function: eval.Function,
     ip: usize,
     slots_offset: usize,
+    chunk: *chunk_mod.Chunk,
 };
 
 pub const VM = struct {
@@ -227,6 +217,7 @@ pub const VM = struct {
 
     allocator: std.mem.Allocator,
     chunk: *chunk_mod.Chunk,
+    dynamic_chunks: std.ArrayList(*chunk_mod.Chunk),
     ip: usize,
     stack: [STACK_CAPACITY]Value,
     sp: usize,
@@ -236,15 +227,20 @@ pub const VM = struct {
     allocated_keys: std.ArrayList([]const u8),
     open_upvalues: ?*eval.Upvalue = null,
     last_missing_symbol: ?[]const u8 = null,
+    instruction_count: usize = 0,
+    yield_hook: ?*const fn (vm: *VM) anyerror!void = null,
 
     pub fn initInPlace(self: *VM, allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !void {
         self.allocator = allocator;
         self.chunk = ch;
+        self.dynamic_chunks = .empty;
         self.ip = 0;
         self.sp = 0;
         self.frame_count = 0;
         self.open_upvalues = null;
         self.last_missing_symbol = null;
+        self.instruction_count = 0;
+        self.yield_hook = null;
         self.globals = std.StringHashMap(Value).init(allocator);
         self.allocated_keys = .empty;
         try self.registerBuiltins();
@@ -279,6 +275,11 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *VM) void {
+        for (self.dynamic_chunks.items) |ch| {
+            ch.deinit(self.allocator);
+            self.allocator.destroy(ch);
+        }
+        self.dynamic_chunks.deinit(self.allocator);
         for (self.allocated_keys.items) |k| {
             self.allocator.free(k);
         }
@@ -287,6 +288,7 @@ pub const VM = struct {
     }
 
     pub fn executeChunk(self: *VM, new_chunk: *chunk_mod.Chunk) !void {
+        const old_frame_count = self.frame_count;
         const old_chunk = self.chunk;
         const old_ip = self.ip;
         const old_sp = self.sp;
@@ -299,6 +301,7 @@ pub const VM = struct {
         self.chunk = old_chunk;
         self.ip = old_ip;
         self.sp = old_sp;
+        while (self.frame_count > old_frame_count) self.popFrame();
 
         try res;
     }
@@ -309,6 +312,12 @@ pub const VM = struct {
         // Trace constants
         for (self.chunk.constants.items) |constant| {
             tracer.traceValue(heap, constant);
+        }
+        for (self.dynamic_chunks.items) |ch| {
+            if (ch == self.chunk) continue;
+            for (ch.constants.items) |constant| {
+                tracer.traceValue(heap, constant);
+            }
         }
 
         // Trace globals
@@ -391,20 +400,17 @@ pub const VM = struct {
 
     pub fn pushFrame(self: *VM, callee: eval.Value, arg_count: usize) !void {
         if (self.frame_count >= VM.FRAMES_CAPACITY) return InterpretError.StackOverflow;
-        if (callee == .function) {
-            self.frames[self.frame_count] = CallFrame{
-                .closure = null,
-                .function = callee.function,
-                .ip = self.ip,
-                .slots_offset = self.sp - arg_count,
-            };
-        } else {
-            self.frames[self.frame_count] = CallFrame{
-                .closure = callee.closure,
-                .function = callee.closure.function.*,
-                .ip = self.ip,
-                .slots_offset = self.sp - arg_count,
-            };
+        const func = if (callee == .function) callee.function else callee.closure.function.*;
+        const closure_ptr = if (callee == .function) null else callee.closure;
+        self.frames[self.frame_count] = CallFrame{
+            .closure = closure_ptr,
+            .function = func,
+            .ip = self.ip,
+            .slots_offset = self.sp - arg_count,
+            .chunk = self.chunk,
+        };
+        if (func.chunk) |c| {
+            self.chunk = @ptrCast(@alignCast(c));
         }
         self.frame_count += 1;
     }
@@ -415,6 +421,7 @@ pub const VM = struct {
         self.closeUpvalues(&self.stack[frame.slots_offset]);
         self.ip = frame.ip;
         self.sp = frame.slots_offset;
+        self.chunk = frame.chunk;
     }
 
     fn traceRuntimeError(self: *VM) InterpretError {
@@ -458,8 +465,17 @@ pub const VM = struct {
         return false;
     }
 
+    fn checkPreemption(self: *VM) !void {
+        self.instruction_count +%= 1;
+        if (self.instruction_count < PREEMPTION_QUANTUM) return;
+        self.instruction_count = 0;
+        fiber.yield();
+        if (self.yield_hook) |hook| try hook(self);
+    }
+
     pub fn run(self: *VM, base_frame_count: usize) !void {
         while (true) {
+            try self.checkPreemption();
             if (self.ip >= self.chunk.code.items.len) break;
             const byte = self.readByte();
             const instruction: OpCode = @enumFromInt(byte);
@@ -906,4 +922,55 @@ fn nativeBundleGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const reader = bundle_mod.BundleReader.init(bundle_bytes) catch return eval.Value{ .string = "" };
     const content = reader.findData(args[0].string) orelse return eval.Value{ .string = "" };
     return eval.Value{ .string = content };
+}
+
+var test_yield_counter: usize = 0;
+fn testYieldHook(vm: *VM) anyerror!void {
+    test_yield_counter += 1;
+    if (test_yield_counter >= 3) {
+        vm.ip = vm.chunk.code.items.len;
+    }
+}
+
+test "vm instruction preemption quantum and yield hook" {
+    var chunk = Chunk.init();
+    defer chunk.deinit(std.testing.allocator);
+
+    // Infinite loop: loop 3 bytes back
+    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.loop));
+    try chunk.writeChunk(std.testing.allocator, 0);
+    try chunk.writeChunk(std.testing.allocator, 3);
+
+    var vm = try VM.init(std.testing.allocator, &chunk);
+    defer vm.deinit();
+
+    test_yield_counter = 0;
+    vm.yield_hook = testYieldHook;
+    try vm.run(0);
+
+    try std.testing.expectEqual(@as(usize, 3), test_yield_counter);
+}
+
+test "vm dynamic chunk lifecycle and cross-chunk execution" {
+    var main_chunk = Chunk.init();
+    defer main_chunk.deinit(std.testing.allocator);
+    try main_chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
+
+    var vm = try VM.init(std.testing.allocator, &main_chunk);
+    defer vm.deinit();
+
+    var code_vals = [_]Value{
+        .{ .integer = @intFromEnum(OpCode.constant) },
+        .{ .integer = 0 },
+        .{ .integer = 0 },
+        .{ .integer = @intFromEnum(OpCode.return_op) },
+    };
+    var const_vals = [_]Value{.{ .integer = 99 }};
+    var args = [_]Value{
+        .{ .array = &code_vals },
+        .{ .array = &const_vals },
+    };
+    _ = try nativeExecChunk(&vm, &args);
+
+    try std.testing.expectEqual(@as(usize, 1), vm.dynamic_chunks.items.len);
 }
