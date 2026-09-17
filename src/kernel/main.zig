@@ -24,6 +24,7 @@ const parser_mod = @import("../macros/parser.zig");
 const compiler_mod = @import("../macros/compiler.zig");
 const supervisor_mod = @import("supervisor.zig");
 const harness_bindings_mod = @import("harness_bindings.zig");
+const ps2_kbd_mod = @import("drivers/ps2_kbd.zig");
 const pci_mod = @import("drivers/pci.zig");
 const virtio_net_mod = @import("drivers/virtio_net.zig");
 const net_mod = @import("net.zig");
@@ -53,6 +54,8 @@ var global_supervisor: ?supervisor_mod.Supervisor = null;
 var global_harness_ctx: ?harness_bindings_mod.HarnessContext = null;
 var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
 var global_net_stack: ?net_mod.stack.NetworkStack = null;
+var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
+var global_sched: ?*fiber_mod.Scheduler = null;
 
 fn kernelPanic(stage: []const u8) noreturn {
     serial.writeString("\n[KERNEL PANIC] Fatal error at stage: ");
@@ -343,80 +346,81 @@ fn attemptEstablishSession() bool {
     return global_tls_ready;
 }
 
-fn compileAndRunMacros(allocator: std.mem.Allocator, vm: *vm_mod.VM, source: []const u8) !void {
-    var chunk = chunk_mod.Chunk.init();
-    defer chunk.deinit(allocator);
+fn aiInferenceBridge(prompt: []const u8, out_text: []u8) usize {
+    if (global_ai_client.config.provider_type != .mock) {
+        if (!ensureTlsConnection()) return 0;
+    }
+    return executeAiInference(prompt, out_text);
+}
 
-    var compiler = compiler_mod.Compiler.init(allocator, &chunk);
+fn actorThread(ctx: ?*anyopaque) void {
+    var vm = @as(*vm_mod.VM, @ptrCast(@alignCast(ctx.?)));
+    vm.run(0) catch |err| {
+        serial.writeString("[kernel] Spawned Actor crashed: ");
+        serial.writeString(@errorName(err));
+        if (vm.last_missing_symbol) |sym| {
+            serial.writeString(" [Undefined symbol: '");
+            serial.writeString(sym);
+            serial.writeString("']");
+        }
+        serial.writeString(" ip=");
+        serial.writeHex(vm.ip);
+        serial.writeString(" sp=");
+        serial.writeHex(vm.sp);
+        serial.writeString("\n");
+    };
+}
+
+fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
+    const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, 0);
+    errdefer global_registry.terminate(allocator, child.id) catch {};
+
+    if (global_fb) |*fb| {
+        _ = try child.insertCap(cap_mod.Capability{
+            .cap_type = .framebuffer,
+            .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+            .object_id = CAP_OBJ_FRAMEBUFFER,
+            .data_addr = @intFromPtr(fb),
+            .data_size = @sizeOf(fb_mod.Framebuffer),
+        });
+    }
+
+    const chunk = try allocator.create(chunk_mod.Chunk);
+    chunk.* = chunk_mod.Chunk.init();
+    errdefer {
+        chunk.deinit(allocator);
+        allocator.destroy(chunk);
+    }
+
+    var compiler = compiler_mod.Compiler.init(allocator, chunk);
     var p = parser_mod.Parser.init(allocator, source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         try compiler.compile(stmt);
     }
     try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
-    try vm.executeChunk(&chunk);
-}
 
-fn dispatchSovereignTurn(allocator: std.mem.Allocator, vm: *vm_mod.VM, prompt: []const u8) usize {
-    if (global_ai_client.config.provider_type != .mock) {
-        if (!ensureTlsConnection()) return 0;
+    const child_vm = try allocator.create(vm_mod.VM);
+    try child_vm.initInPlace(allocator, chunk);
+    errdefer {
+        child_vm.deinit();
+        allocator.destroy(child_vm);
     }
 
-    const tlen = executeAiInference(prompt, &ai_text_buf);
-    if (tlen == 0) return 0;
+    try harness_bindings_mod.registerBindings(child_vm);
 
-    if (ai_mod.client.AiClient.extractCodeBlock(ai_text_buf[0..tlen], &ai_code_buf)) |code_len| {
-        const code = ai_code_buf[0..code_len];
-        serial.writeString("[kernel] Executing Sovereign Macros code in Genesis Actor...\n");
-        compileAndRunMacros(allocator, vm, code) catch |err| {
-            serial.writeString("[kernel] Sovereign Macros execution failed: ");
-            serial.writeString(@errorName(err));
-            serial.writeString("\n");
-            return tlen;
-        };
-        serial.writeString("[kernel] Sovereign Macros execution SUCCESS.\n");
-    }
-    return tlen;
-}
-
-fn runSovereignEventLoop(allocator: std.mem.Allocator, vm: *vm_mod.VM) void {
-    initAiClient();
-
-    if (global_virtio_net == null and global_ai_client.config.provider_type != .mock) return;
-    if (global_ai_client.config.api_key.len == 0 and global_ai_client.config.provider_type != .mock and global_ai_client.config.provider_type != .local_http) {
-        serial.writeString("[ai] Standalone AI substrate online. Ready for API key or local provider.\n");
-        return;
+    if (global_sched) |sched| {
+        const fib = try sched.spawn(actorThread, child_vm);
+        child.fiber_ctx = @ptrCast(fib);
     }
 
-    serial.writeString("[kernel] Engaging Bidirectional Sovereign Event Loop with Resident AI (");
-    serial.writeString(global_ai_client.config.model);
-    serial.writeString(")...\n");
+    serial.writeString("[kernel] Spawned dynamic Actor ");
+    serial.writeHex(child.id);
+    serial.writeString(" (");
+    serial.writeString(name);
+    serial.writeString(") successfully.\n");
 
-    serial.writeString("[kernel] === Sovereign Turn 1: Initialization & Ingress ===\n");
-    const turn1_len = dispatchSovereignTurn(
-        allocator,
-        vm,
-        "Initialize MicrOS Sovereign Root session. Report status, declare operating policies, and emit an executable ```macros code block invoking sys_fb_draw_string or sys_serial_write to take control of hardware.",
-    );
-    if (turn1_len == 0) {
-        serial.writeString("[kernel] Turn 1 yielded 0 bytes. Aborting loop.\n");
-        return;
-    }
-
-    serial.writeString("[kernel] === Sovereign Turn 2: Hardware Telemetry & Feedback ===\n");
-    var feedback_buf: [512]u8 = undefined;
-    const feedback = std.fmt.bufPrint(
-        &feedback_buf,
-        "Hardware state verified. Active actors: {d}. Faults: {d}. GOP 1280x800 canvas updated. Emit your next sovereign directive and executable ```macros block.",
-        .{ global_registry.active_count, if (global_supervisor) |s| s.total_faults else 0 },
-    ) catch "Hardware status nominal. Ready.";
-
-    const turn2_len = dispatchSovereignTurn(allocator, vm, feedback);
-    if (turn2_len > 0) {
-        serial.writeString("[kernel] Turn 2 Sovereign execution completed successfully.\n");
-    } else {
-        serial.writeString("[kernel] Turn 2 yielded 0 bytes.\n");
-    }
+    return child.id;
 }
 
 fn initNetwork(boot_info: *const BootInfo) void {
@@ -547,6 +551,7 @@ fn setupHarnessEnvironment(
     ipc_ring: *ipc_mod.RingBuffer,
     vm: *vm_mod.VM,
 ) void {
+    initAiClient();
     idt.setInputRing(ipc_ring);
     global_registry.register(genesis) catch kernelPanic("register_genesis");
     global_supervisor = supervisor_mod.Supervisor.init(&global_registry, .restart_immediate);
@@ -561,6 +566,9 @@ fn setupHarnessEnvironment(
         .framebuffer = if (global_fb != null) &global_fb.? else null,
         .ipc_ring = ipc_ring,
         .supervisor_ctrl = if (global_supervisor != null) &global_supervisor.? else null,
+        .kbd_ctrl = &global_kbd,
+        .ai_inference_fn = aiInferenceBridge,
+        .spawn_code_fn = spawnActorFromCode,
     };
     harness_bindings_mod.setContext(&global_harness_ctx.?);
     harness_bindings_mod.registerBindings(vm) catch kernelPanic("harness_bindings");
@@ -568,6 +576,9 @@ fn setupHarnessEnvironment(
 
 pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     initHardware(boot_info);
+    serial.writeString("[kernel] kmain at 0x");
+    serial.writeHex(@intFromPtr(&kmain));
+    serial.writeString("\n");
 
     var fba = std.heap.FixedBufferAllocator.init(&kernel_heap);
     const allocator = fba.allocator();
@@ -594,20 +605,19 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     var chunk = loadGenesisChunk(allocator, boot_info) catch kernelPanic("load_genesis_chunk");
 
     serial.writeString("[kernel] Step 6: Initializing VM...\n");
-    var vm = vm_mod.VM.init(allocator, &chunk) catch kernelPanic("vm_init");
+    const genesis_vm = allocator.create(vm_mod.VM) catch kernelPanic("vm_alloc");
+    genesis_vm.initInPlace(allocator, &chunk) catch kernelPanic("vm_init");
 
     serial.writeString("[kernel] Step 7: Configuring Sovereign Harness...\n");
-    setupHarnessEnvironment(genesis, boot_info, ipc_ring, &vm);
+    setupHarnessEnvironment(genesis, boot_info, ipc_ring, genesis_vm);
 
     serial.writeString("[kernel] Step 8: Starting cooperative event loop in Genesis Actor...\n");
     var sched = fiber_mod.Scheduler.init(allocator);
-    _ = sched.spawn(vmThread, &vm) catch kernelPanic("fiber_spawn");
+    global_sched = &sched;
+    _ = sched.spawn(vmThread, genesis_vm) catch kernelPanic("fiber_spawn");
     sched.run();
 
-    serial.writeString("[kernel] Step 9: Engaging Sovereign Event Loop with Gemini 3.8 Flash...\n");
-    runSovereignEventLoop(allocator, &vm);
-
-    serial.writeString("[kernel] Sovereign Event loop completed. Halting.\n");
+    serial.writeString("[kernel] Event loop terminated. Halting.\n");
     haltLoop();
 }
 

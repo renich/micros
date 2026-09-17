@@ -38,15 +38,21 @@ pub const OpCode = enum(u8) {
 pub const Chunk = struct {
     code: std.ArrayList(u8),
     constants: std.ArrayList(Value),
+    allocated_strings: std.ArrayList([]const u8),
 
     pub fn init() Chunk {
         return Chunk{
             .code = .empty,
             .constants = .empty,
+            .allocated_strings = .empty,
         };
     }
 
     pub fn deinit(self: *Chunk, allocator: std.mem.Allocator) void {
+        for (self.allocated_strings.items) |s| {
+            allocator.free(s);
+        }
+        self.allocated_strings.deinit(allocator);
         self.code.deinit(allocator);
         self.constants.deinit(allocator);
     }
@@ -58,6 +64,11 @@ pub const Chunk = struct {
     pub fn addConstant(self: *Chunk, allocator: std.mem.Allocator, value: Value) !u16 {
         try self.constants.append(allocator, value);
         return @intCast(self.constants.items.len - 1);
+    }
+
+    pub fn addAllocatedString(self: *Chunk, allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
+        try self.allocated_strings.append(allocator, str);
+        return str;
     }
 };
 

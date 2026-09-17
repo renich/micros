@@ -61,12 +61,18 @@ export fn childFaultTrampoline() void {
     fiber.yield();
 }
 
-fn handleRootPanic(rip: u64, cr2: u64) noreturn {
+fn handleRootPanic(cr2: u64, stack_ptr: [*]u64) noreturn {
     serial.writeString("\n[FATAL CPU EXCEPTION IN ACTOR 0]\n");
     serial.writeString("[exception] CR2: 0x");
     serial.writeHex(cr2);
-    serial.writeString("\n[exception] RIP: 0x");
-    serial.writeHex(rip);
+    serial.writeString("\n[exception] frame[0]: 0x");
+    serial.writeHex(stack_ptr[0]);
+    serial.writeString("\n[exception] frame[1]: 0x");
+    serial.writeHex(stack_ptr[1]);
+    serial.writeString("\n[exception] frame[2]: 0x");
+    serial.writeHex(stack_ptr[2]);
+    serial.writeString("\n[exception] frame[3]: 0x");
+    serial.writeHex(stack_ptr[3]);
     serial.writeString("\n");
     while (true) {
         asm volatile ("hlt");
@@ -80,7 +86,7 @@ export fn exceptionHandlerZig(saved_rip_ptr: *u64) void {
     );
 
     if (current_actor_id == 0) {
-        handleRootPanic(rip, cr2);
+        handleRootPanic(cr2, @ptrCast(saved_rip_ptr));
     }
 
     serial.writeString("\n[SUPERVISOR TRAP] Intercepted fault in Child Actor ");

@@ -19,28 +19,270 @@ fn draw_panels() {
     sys_fb_draw_string(850, 68, "Actor & Capability Inspector", 16777215, 131614);
 }
 
-fn render_status() {
-    sys_fb_draw_string(30, 100, "[SOVEREIGN HARNESS ACTIVE]", 5306999, 65822);
-    sys_fb_draw_string(30, 120, "Interactive construction environment online.", 16777215, 65822);
-    sys_fb_draw_string(30, 140, "Hardware input: PS/2 Keyboard and COM1 Serial.", 16777215, 65822);
-    sys_fb_draw_string(30, 160, "Erlang-style bare-metal supervisor active.", 16777215, 65822);
+cur_x = 30;
+cur_y = 100;
 
-    sys_fb_draw_string(850, 100, "Active Actors: 1", 57599, 65822);
-    sys_fb_draw_string(850, 120, "  Actor 0: Genesis Harness (Supervisor)", 16777215, 65822);
-    sys_fb_draw_string(850, 140, "Total Faults Intercepted: 0", 5306999, 65822);
-    sys_fb_draw_string(850, 160, "Substrate Health: Sovereign (Zero Defects)", 5306999, 65822);
+fn cmd_clear() {
+    sys_fb_draw_rect(22, 90, 796, 646, 65822);
+    cur_x = 30;
+    cur_y = 100;
+}
 
-    sys_fb_draw_string(30, 220, "Prompt: macros> ready for commands", 57599, 65822);
+fn console_write(text, color) {
+    sys_fb_draw_string(cur_x, cur_y, text, color, 65822);
+    cur_x = cur_x + len(text) * 8;
+    sys_serial_write(text);
+}
+
+fn console_newline() {
+    cur_x = 30;
+    cur_y = cur_y + 16;
+    sys_serial_write("\n");
+    if (cur_y > 680) {
+        cmd_clear();
+    }
+}
+
+fn console_writeln(text, color) {
+    console_write(text, color);
+    console_newline();
+}
+
+fn render_inspector() {
+    sys_fb_draw_rect(842, 90, 416, 646, 65822);
+    sys_fb_draw_string(850, 100, "Active Actors: " + int_to_str(sys_actor_count()), 57599, 65822);
+    
+    var_y = 124;
+    var_id = 0;
+    while (var_id < 8) {
+        st = sys_actor_state(var_id);
+        if (st >= 0) {
+            nm = sys_actor_name(var_id);
+            sys_fb_draw_string(850, var_y, "Actor " + int_to_str(var_id) + ": " + nm, 16777215, 65822);
+            var_y = var_y + 16;
+        }
+        var_id = var_id + 1;
+    }
+
+    var_y = var_y + 16;
+    sys_fb_draw_string(850, var_y, "Total Faults: " + int_to_str(sys_fault_count()), 5306999, 65822);
+    var_y = var_y + 16;
+    sys_fb_draw_string(850, var_y, "Health: Sovereign", 5306999, 65822);
+}
+
+fn find_str(haystack, needle) {
+    hlen = len(haystack);
+    nlen = len(needle);
+    if (nlen > hlen) { return 0 - 1; }
+    i = 0;
+    while (i <= hlen - nlen) {
+        if (substr(haystack, i, i + nlen) == needle) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn extract_code(resp) {
+    p1 = find_str(resp, "```");
+    if (p1 >= 0) {
+        rest = substr(resp, p1 + 3, len(resp));
+        nl = find_str(rest, "\n");
+        if (nl >= 0) {
+            rest = substr(rest, nl + 1, len(rest));
+        }
+        p2 = find_str(rest, "```");
+        if (p2 >= 0) {
+            return substr(rest, 0, p2);
+        }
+        return rest;
+    }
+    p_rst = find_str(resp, ".. code-block::");
+    dir_len = 15;
+    if (p_rst < 0) {
+        p_rst = find_str(resp, ".. code::");
+        dir_len = 9;
+    }
+    if (p_rst >= 0) {
+        rest_rst = substr(resp, p_rst + dir_len, len(resp));
+        nl_rst = find_str(rest_rst, "\n");
+        if (nl_rst >= 0) {
+            return substr(rest_rst, nl_rst + 1, len(rest_rst));
+        }
+        return rest_rst;
+    }
+    return "";
+}
+
+fn is_prefix(str, pre) {
+    sl = len(str);
+    pl = len(pre);
+    if (pl > sl) { return false; }
+    return substr(str, 0, pl) == pre;
+}
+
+fn cmd_help() {
+    console_writeln("Supported commands:", 57599);
+    console_writeln("  help          - Show this reference menu", 16777215);
+    console_writeln("  status        - Show active actors and substrate telemetry", 16777215);
+    console_writeln("  actors        - Enumerate all registered actors", 16777215);
+    console_writeln("  clear         - Clear the Console viewport", 16777215);
+    console_writeln("  kill <id>     - Terminate actor by ID", 16777215);
+    console_writeln("  ai <prompt>   - Dispatch natural language task to Resident AI", 16777215);
+    console_writeln("  exit          - Terminate harness event loop and halt", 16777215);
+}
+
+fn cmd_status() {
+    console_writeln("Active Actors: " + int_to_str(sys_actor_count()), 5306999);
+    console_writeln("Supervisor Faults: " + int_to_str(sys_fault_count()), 5306999);
+    console_writeln("Substrate Status: Sovereign (Zero Defects)", 5306999);
+}
+
+fn cmd_actors() {
+    console_writeln("--- Registered Actors ---", 57599);
+    aid = 0;
+    while (aid < 8) {
+        ast = sys_actor_state(aid);
+        if (ast >= 0) {
+            console_writeln("  Actor " + int_to_str(aid) + ": " + sys_actor_name(aid) + " (state: " + int_to_str(ast) + ")", 16777215);
+        }
+        aid = aid + 1;
+    }
+}
+
+fn cmd_ai(prompt) {
+    console_writeln("[ai] Querying Resident AI...", 57599);
+    resp = sys_ai_prompt(prompt);
+    if (len(resp) == 0) {
+        console_writeln("[ai] No response or connection timeout.", 16777215);
+        return 0;
+    }
+    console_writeln("*** AI COGNITIVE STREAM ***", 57599);
+    console_writeln(resp, 57599);
+    code = extract_code(resp);
+    if (len(code) > 0) {
+        console_writeln("[ai] Executable code block detected. Spawning...", 5306999);
+        actor_id = sys_actor_spawn_code("child_worker", code);
+        console_writeln("[kernel] Spawned dynamic Actor " + int_to_str(actor_id), 5306999);
+        render_inspector();
+    }
+    return 0;
+}
+
+fn eval_command(cmd) {
+    if (cmd == "help") { return cmd_help(); }
+    if (cmd == "status") { return cmd_status(); }
+    if (cmd == "actors") { return cmd_actors(); }
+    if (cmd == "clear") { return cmd_clear(); }
+    if (is_prefix(cmd, "ai ")) {
+        prompt = substr(cmd, 3, len(cmd));
+        return cmd_ai(prompt);
+    }
+    if (is_prefix(cmd, "kill ")) {
+        target = substr(cmd, 5, len(cmd));
+        sys_actor_terminate(str_to_int(target));
+        console_writeln("Terminated Actor " + target, 57599);
+        render_inspector();
+        return 0;
+    }
+    console_writeln("Unknown command: " + cmd + " (type 'help')", 16777215);
+    return 0;
+}
+
+fn draw_prompt() {
+    console_write("macros> ", 57599);
+}
+
+fn poll_char() {
+    c = sys_serial_read();
+    if (c >= 0) { return c; }
+    return sys_kbd_read();
+}
+
+fn harness_loop() {
+    line_buf = "";
+    running = true;
+    draw_prompt();
+    while (running) {
+        c = poll_char();
+        if (c < 0) {
+            sys_yield();
+        } else if (c == 13) {
+            console_newline();
+            if (len(line_buf) > 0) {
+                if (line_buf == "exit") {
+                    console_writeln("Halting Sovereign Harness.", 57599);
+                    running = false;
+                } else if (line_buf == "quit") {
+                    console_writeln("Halting Sovereign Harness.", 57599);
+                    running = false;
+                } else {
+                    eval_command(line_buf);
+                }
+                line_buf = "";
+            }
+            if (running) {
+                draw_prompt();
+            }
+        } else if (c == 10) {
+            console_newline();
+            if (len(line_buf) > 0) {
+                if (line_buf == "exit") {
+                    console_writeln("Halting Sovereign Harness.", 57599);
+                    running = false;
+                } else if (line_buf == "quit") {
+                    console_writeln("Halting Sovereign Harness.", 57599);
+                    running = false;
+                } else {
+                    eval_command(line_buf);
+                }
+                line_buf = "";
+            }
+            if (running) {
+                draw_prompt();
+            }
+        } else if (c == 8) {
+            if (len(line_buf) > 0) {
+                line_buf = substr(line_buf, 0, len(line_buf) - 1);
+                cur_x = cur_x - 8;
+                sys_fb_draw_rect(cur_x, cur_y, 8, 16, 65822);
+                sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+            }
+            0;
+        } else if (c == 127) {
+            if (len(line_buf) > 0) {
+                line_buf = substr(line_buf, 0, len(line_buf) - 1);
+                cur_x = cur_x - 8;
+                sys_fb_draw_rect(cur_x, cur_y, 8, 16, 65822);
+                sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+            }
+            0;
+        } else if (c >= 32) {
+            if (c <= 126) {
+                line_buf = line_buf + char_to_str(c);
+                sys_fb_draw_string(cur_x, cur_y, char_to_str(c), 16777215, 65822);
+                cur_x = cur_x + 8;
+                sys_serial_write(char_to_str(c));
+            }
+            0;
+        }
+    }
 }
 
 fn harness_main() {
     sys_serial_write("[harness] Initializing Sovereign Actor Harness in Actor 0...\n");
     draw_header();
     draw_panels();
-    render_status();
+    render_inspector();
+    console_writeln("[SOVEREIGN HARNESS ACTIVE]", 5306999);
+    console_writeln("Interactive construction environment online.", 16777215);
+    console_writeln("Hardware input: PS/2 Keyboard and COM1 Serial.", 16777215);
+    console_writeln("Type 'help' for command reference, or 'ai <prompt>' to create.", 16777215);
     sys_serial_write("[harness] Visual canvas and vector status rendered successfully.\n");
     sys_serial_write("[harness] MicrOS (uOS) Sovereign Genesis Actor Online\n");
     sys_serial_write("[harness] Ready for interactive execution and actor supervision.\n");
+    harness_loop();
 }
 
 harness_main();

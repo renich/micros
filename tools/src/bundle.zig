@@ -155,3 +155,25 @@ pub fn main(init: std.process.Init) !void {
     try buildBundle(init.io, out_path, specs.items);
     std.debug.print("[micros-bundle] Successfully packed {d} entries into {s}\n", .{ specs.items.len, out_path });
 }
+
+test "bundle helpers computeHash align64 and computeTotalSize" {
+    const test_data = "Hello, MicrOS Bundle!";
+    const hash = computeHash(test_data);
+    try std.testing.expect(hash.len == 32);
+
+    try std.testing.expectEqual(@as(u64, 64), align64(1));
+    try std.testing.expectEqual(@as(u64, 64), align64(64));
+    try std.testing.expectEqual(@as(u64, 128), align64(65));
+
+    const specs = [_]FileSpec{
+        .{
+            .tag = "test.txt",
+            .path = "test.txt",
+            .data = test_data,
+            .hash = hash,
+        },
+    };
+    const total = computeTotalSize(&specs);
+    try std.testing.expect(total >= 64);
+    try std.testing.expectEqual(@as(u64, 0), total % 64);
+}

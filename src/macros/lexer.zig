@@ -105,10 +105,23 @@ pub const Lexer = struct {
         return Token{ .token_type = .number, .lexeme = self.source[start..self.position] };
     }
 
+    fn skipEscapedChar(self: *Lexer) void {
+        if (self.position < self.source.len) {
+            self.advance();
+        }
+    }
+
     fn parseString(self: *Lexer) Token {
         self.advance(); // Skip opening quote
         const start = self.position;
-        while (self.position < self.source.len and self.peek() != '"') {
+        while (self.position < self.source.len) {
+            const c = self.peek();
+            if (c == '"') break;
+            if (c == '\\') {
+                self.advance();
+                self.skipEscapedChar();
+                continue;
+            }
             self.advance();
         }
         const str = self.source[start..self.position];

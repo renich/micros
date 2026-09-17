@@ -24,6 +24,25 @@ fn nativeStrToInt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return eval.Value{ .integer = val };
 }
 
+fn nativeCharToStr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .integer) return InterpretError.RuntimeError;
+    const c: u8 = @intCast(args[0].integer & 0xFF);
+    const str = try vm.allocator.alloc(u8, 1);
+    str[0] = c;
+    return eval.Value{ .string = str };
+}
+
+fn nativeIntToStr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .integer) return InterpretError.RuntimeError;
+    var buf: [32]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{args[0].integer}) catch return InterpretError.RuntimeError;
+    const str = try vm.allocator.alloc(u8, s.len);
+    @memcpy(str, s);
+    return eval.Value{ .string = str };
+}
+
 fn nativeBitShr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 2) return InterpretError.RuntimeError;
@@ -154,7 +173,7 @@ pub const CallFrame = struct {
 };
 
 pub const VM = struct {
-    pub const STACK_CAPACITY: usize = 256;
+    pub const STACK_CAPACITY: usize = 1024;
     pub const FRAMES_CAPACITY: usize = 64;
 
     allocator: std.mem.Allocator,
@@ -166,33 +185,43 @@ pub const VM = struct {
     frame_count: usize,
     globals: std.StringHashMap(Value),
     open_upvalues: ?*eval.Upvalue = null,
+    last_missing_symbol: ?[]const u8 = null,
+
+    pub fn initInPlace(self: *VM, allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !void {
+        self.allocator = allocator;
+        self.chunk = ch;
+        self.ip = 0;
+        self.sp = 0;
+        self.frame_count = 0;
+        self.open_upvalues = null;
+        self.last_missing_symbol = null;
+        self.globals = std.StringHashMap(Value).init(allocator);
+        try self.registerBuiltins();
+    }
+
+    fn registerBuiltins(self: *VM) !void {
+        try self.globals.put("push", Value{ .native = nativePush });
+        try self.globals.put("len", Value{ .native = nativeLen });
+        try self.globals.put("substr", Value{ .native = nativeSubstr });
+        try self.globals.put("str_to_int", Value{ .native = nativeStrToInt });
+        try self.globals.put("char_to_str", Value{ .native = nativeCharToStr });
+        try self.globals.put("int_to_str", Value{ .native = nativeIntToStr });
+        try self.globals.put("bit_shr", Value{ .native = nativeBitShr });
+        try self.globals.put("bit_and", Value{ .native = nativeBitAnd });
+        try self.globals.put("build_function", Value{ .native = nativeBuildFunction });
+        try self.globals.put("make_nil", Value{ .native = nativeMakeNil });
+        try self.globals.put("make_bool", Value{ .native = nativeMakeBool });
+        try self.globals.put("exec_chunk", Value{ .native = nativeExecChunk });
+        try self.globals.put("bundle_get", Value{ .native = nativeBundleGet });
+        try self.globals.put("sys_open", Value{ .native = nativeSysOpen });
+        try self.globals.put("sys_read", Value{ .native = nativeSysRead });
+        try self.globals.put("sys_write", Value{ .native = nativeSysWrite });
+        try self.globals.put("sys_close", Value{ .native = nativeSysClose });
+    }
 
     pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !VM {
-        var vm = VM{
-            .allocator = allocator,
-            .chunk = ch,
-            .ip = 0,
-            .sp = 0,
-            .frames = undefined,
-            .frame_count = 0,
-            .stack = undefined,
-            .globals = std.StringHashMap(Value).init(allocator),
-        };
-        try vm.globals.put("push", Value{ .native = nativePush });
-        try vm.globals.put("len", Value{ .native = nativeLen });
-        try vm.globals.put("substr", Value{ .native = nativeSubstr });
-        try vm.globals.put("str_to_int", Value{ .native = nativeStrToInt });
-        try vm.globals.put("bit_shr", Value{ .native = nativeBitShr });
-        try vm.globals.put("bit_and", Value{ .native = nativeBitAnd });
-        try vm.globals.put("build_function", Value{ .native = nativeBuildFunction });
-        try vm.globals.put("make_nil", Value{ .native = nativeMakeNil });
-        try vm.globals.put("make_bool", Value{ .native = nativeMakeBool });
-        try vm.globals.put("exec_chunk", Value{ .native = nativeExecChunk });
-        try vm.globals.put("bundle_get", Value{ .native = nativeBundleGet });
-        try vm.globals.put("sys_open", Value{ .native = nativeSysOpen });
-        try vm.globals.put("sys_read", Value{ .native = nativeSysRead });
-        try vm.globals.put("sys_write", Value{ .native = nativeSysWrite });
-        try vm.globals.put("sys_close", Value{ .native = nativeSysClose });
+        var vm: VM = undefined;
+        try vm.initInPlace(allocator, ch);
         return vm;
     }
 
@@ -548,6 +577,7 @@ pub const VM = struct {
         if (self.globals.get(name_val.string)) |v| {
             try self.push(v);
         } else {
+            self.last_missing_symbol = name_val.string;
             return InterpretError.RuntimeError;
         }
     }
@@ -728,6 +758,23 @@ test "vm basic math" {
 
     const result = try vm.pop();
     try std.testing.expectEqual(Value{ .integer = 30 }, result);
+}
+
+test "vm char_to_str and int_to_str builtins" {
+    var chunk = Chunk.init();
+    defer chunk.deinit(std.testing.allocator);
+    var vm = try VM.init(std.testing.allocator, &chunk);
+    defer vm.deinit();
+
+    var args1 = [_]Value{Value{ .integer = 65 }};
+    const res1 = try nativeCharToStr(&vm, &args1);
+    try std.testing.expectEqualStrings("A", res1.string);
+    std.testing.allocator.free(res1.string);
+
+    var args2 = [_]Value{Value{ .integer = 42 }};
+    const res2 = try nativeIntToStr(&vm, &args2);
+    try std.testing.expectEqualStrings("42", res2.string);
+    std.testing.allocator.free(res2.string);
 }
 
 fn nativeSysOpen(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

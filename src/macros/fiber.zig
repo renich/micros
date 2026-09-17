@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const STACK_SIZE: usize = 64 * 1024; // 64 KB stack per fiber
+pub const STACK_SIZE: usize = 128 * 1024; // 128 KB stack per fiber
 
 pub const FiberState = enum {
     ready,

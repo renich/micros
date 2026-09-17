@@ -13,11 +13,14 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 .. rubric:: Added
 
 - **Milestone 13 (Interactive Human-AI Construction Loop)**:
-  - Authored Master Technical Specification (``docs/technical/specs/sovereign-interactive-harness.rst``, ``SPEC-TECH-HARNESS-002``) defining the transition of MicrOS from a batch-execution pipeline into an interactive, living operating system.
-  - Defined hardware input unification ABI for COM1 UART serial (``sys_serial_read_char``) and PS/2 8042 keyboard (``sys_kbd_read_char``).
-  - Specified interactive line editor, console viewport scrolling, and command evaluator grammar in ``harness.mx``.
-  - Designed native VM prompt binding (``sys_ai_prompt``) and live actor compilation/spawning primitive (``sys_actor_spawn_code``) with dynamic Actor Inspector UI updates.
-  - Published Milestone 13 execution roadmap (``docs/project/roadmaps/milestone-13-interactive-harness.rst``) detailing sub-milestones 13.1 through 13.5.
+  - Implemented interactive line editor and command loop in ``lib/macros/harness.mx`` supporting ``status``, ``actors``, ``clear``, ``kill <id>``, ``ai <prompt>``, and ``exit``.
+  - Unified hardware input across COM1 UART serial (``sys_serial_read``) and PS/2 keyboard (``sys_kbd_read``) with open-bus floating bus detection in ``src/kernel/drivers/ps2_kbd.zig``.
+  - Implemented native VM bindings in ``src/kernel/harness_bindings.zig`` for cognitive prompts (``sys_ai_prompt``), dynamic actor compilation/spawning (``sys_actor_spawn_code``), and actor state/name inspection.
+  - Implemented zero-leak string literal escape sequence decoding (``\n``, ``\r``, ``\t``, ``\\``, ``\"``) in ``src/macros/compiler.zig`` and ``src/macros/lexer.zig`` with ``Chunk.allocated_strings`` lifecycle management.
+  - Added missing symbol diagnostic tracking in ``src/macros/vm.zig`` (``last_missing_symbol``) and microkernel actor thread crash reporting.
+  - Upgraded fiber stack allocation to 128KB in ``src/macros/fiber.zig`` and added zero-copy ``initInPlace`` to eliminate stack overflow hazards on bare-metal.
+  - Added automated interactive QEMU verification in ``tools/micros-runner.bash`` using standard POSIX FIFOs and zero inline Python.
+  - Authored Master Technical Specification (``docs/technical/specs/sovereign-interactive-harness.rst``, ``SPEC-TECH-HARNESS-002``) and roadmap (``docs/project/roadmaps/milestone-13-interactive-harness.rst``).
 
 - **Comprehensive Documentation Review & Sphinx Build System**:
   - Harmonized the entire ``docs/`` tree under Sphinx and Docutils, resolving all syntax warnings, title length mismatches, and forward slash formatting.

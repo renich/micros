@@ -85,8 +85,39 @@ pub const Compiler = struct {
         try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
     }
 
+    fn unescapeString(self: *Compiler, raw: []const u8) ![]const u8 {
+        var buf = try self.allocator.alloc(u8, raw.len);
+        errdefer self.allocator.free(buf);
+        var src_i: usize = 0;
+        var dst_i: usize = 0;
+        while (src_i < raw.len) {
+            if (raw[src_i] == '\\' and src_i + 1 < raw.len) {
+                buf[dst_i] = switch (raw[src_i + 1]) {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '\\' => '\\',
+                    '"' => '"',
+                    '0' => 0,
+                    else => raw[src_i + 1],
+                };
+                src_i += 2;
+            } else {
+                buf[dst_i] = raw[src_i];
+                src_i += 1;
+            }
+            dst_i += 1;
+        }
+        return try self.allocator.realloc(buf, dst_i);
+    }
+
     fn compileStringLiteral(self: *Compiler, str: ast.StringLiteral) anyerror!void {
-        const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = str.value });
+        var val = str.value;
+        if (std.mem.indexOfScalar(u8, val, '\\') != null) {
+            const decoded = try self.unescapeString(val);
+            val = try self.chunk.addAllocatedString(self.allocator, decoded);
+        }
+        const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = val });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
         try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
         try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
@@ -340,4 +371,22 @@ test "compiler basic" {
     try comp.compile(bin);
 
     try std.testing.expectEqual(@as(usize, 7), ch.code.items.len);
+}
+
+test "compiler unescapes string literals" {
+    const allocator = std.testing.allocator;
+    var ch = chunk.Chunk.init();
+    defer ch.deinit(allocator);
+
+    var comp = Compiler.init(allocator, &ch);
+
+    const str_node = try allocator.create(ast.Node);
+    defer allocator.destroy(str_node);
+    str_node.* = .{ .string_literal = .{ .value = "hello\\nworld\\t\\\"quotes\\\"" } };
+
+    try comp.compile(str_node);
+    try std.testing.expectEqual(@as(usize, 1), ch.constants.items.len);
+    const val = ch.constants.items[0];
+    try std.testing.expect(val == .string);
+    try std.testing.expectEqualStrings("hello\nworld\t\"quotes\"", val.string);
 }

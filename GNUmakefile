@@ -31,9 +31,13 @@ CACHE_DIR := .zig-cache
 .PHONY: all clean test help run run-msh qemu-msh uefi-boot qemu-uefi tools fmt fmt-check lint spec-trace check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
-all: tools
-	@echo "=> Building MicrOS (Phase 0)..."
+all: tools src/kernel/genesis.mcb
+	@echo "=> Building MicrOS..."
 	$(ZIG) build $(ZIG_BUILD_FLAGS)
+
+src/kernel/genesis.mcb: lib/macros/harness.mx lib/macros/init.mx | tools
+	@echo "=> Packaging Genesis MCB bundle..."
+	./tools/micros-bundle $@ harness.mx=lib/macros/harness.mx init.mx=lib/macros/init.mx
 
 ## test: Execute the unit and integration test suite
 test:

@@ -41,7 +41,10 @@ const UNPRINTABLE_MAP = [_]struct { scan: u8, code: u16, ascii: u8 }{
 const LOWER_MAP: []const u8 = "??1234567890-=\x08\tqwertyuiop[]\n?asdfghjkl;'`?\\zxcvbnm,./?*? ?";
 const UPPER_MAP: []const u8 = "??!@#$%^&*()_+\x08\tQWERTYUIOP{}\n?ASDFGHJKL:\"~?|ZXCVBNM<>??*? ?";
 
+const builtin = @import("builtin");
+
 pub fn inb(port: u16) u8 {
+    if (builtin.is_test) return 0;
     return asm volatile ("inb %[port], %[ret]"
         : [ret] "={al}" (-> u8),
         : [port] "{dx}" (port),
@@ -49,6 +52,7 @@ pub fn inb(port: u16) u8 {
 }
 
 pub fn outb(port: u16, val: u8) void {
+    if (builtin.is_test) return;
     asm volatile ("outb %[val], %[port]"
         :
         : [val] "{al}" (val),
@@ -57,7 +61,9 @@ pub fn outb(port: u16, val: u8) void {
 }
 
 pub fn hasData() bool {
-    return (inb(PORT_STATUS) & STATUS_OUTPUT_FULL) != 0;
+    const status = inb(PORT_STATUS);
+    if (status == 0xFF) return false;
+    return (status & STATUS_OUTPUT_FULL) != 0;
 }
 
 pub fn readScancode() u8 {

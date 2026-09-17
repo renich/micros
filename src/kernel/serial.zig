@@ -1,8 +1,11 @@
 // UART 16550 Serial Driver for x86_64 Kernel Early Boot & Telemetry
 
+const builtin = @import("builtin");
+
 pub const COM1: u16 = 0x3F8;
 
 pub inline fn outb(port: u16, val: u8) void {
+    if (builtin.is_test) return;
     asm volatile ("outb %[val], %[port]"
         :
         : [val] "{al}" (val),
@@ -11,6 +14,7 @@ pub inline fn outb(port: u16, val: u8) void {
 }
 
 pub inline fn inb(port: u16) u8 {
+    if (builtin.is_test) return 0;
     return asm volatile ("inb %[port], %[ret]"
         : [ret] "={al}" (-> u8),
         : [port] "{dx}" (port),
@@ -23,7 +27,7 @@ pub fn init() void {
     outb(COM1 + 0, 0x01); // Set divisor to 1 (low byte) -> 115200 baud
     outb(COM1 + 1, 0x00); //                  (high byte)
     outb(COM1 + 3, 0x03); // 8 bits, no parity, one stop bit
-    outb(COM1 + 2, 0xC7); // Enable FIFO, clear them, with 14-byte threshold
+    outb(COM1 + 2, 0x07); // Enable FIFO, clear them, with 1-byte threshold
     outb(COM1 + 4, 0x0B); // IRQs enabled, RTS/DSR set
 }
 

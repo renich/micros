@@ -17,6 +17,8 @@ const RingBuffer = ring_mod.RingBuffer;
 const events_mod = @import("ipc/events.zig");
 const serial = @import("serial.zig");
 const supervisor_mod = @import("supervisor.zig");
+const ps2_mod = @import("drivers/ps2_kbd.zig");
+const fiber_mod = @import("../macros/fiber.zig");
 
 pub const HarnessContext = struct {
     registry: *ActorRegistry,
@@ -24,6 +26,9 @@ pub const HarnessContext = struct {
     framebuffer: ?*Framebuffer = null,
     ipc_ring: ?*RingBuffer = null,
     supervisor_ctrl: ?*supervisor_mod.Supervisor = null,
+    kbd_ctrl: ?*ps2_mod.Ps2Keyboard = null,
+    ai_inference_fn: ?*const fn (prompt: []const u8, out_text: []u8) usize = null,
+    spawn_code_fn: ?*const fn (allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 = null,
 };
 
 var active_ctx: ?*HarnessContext = null;
@@ -157,6 +162,85 @@ fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .integer = 0 };
 }
 
+var ai_prompt_resp_buf: [4096]u8 = undefined;
+
+fn nativeSysSerialRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    _ = args;
+    if (serial.readChar()) |c| {
+        return Value{ .integer = @as(i64, c) };
+    }
+    return Value{ .integer = -1 };
+}
+
+fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    _ = args;
+    const ctx = active_ctx orelse return Value{ .integer = -1 };
+    const kbd = ctx.kbd_ctrl orelse return Value{ .integer = -1 };
+    if (!ps2_mod.hasData()) return Value{ .integer = -1 };
+    const scan = ps2_mod.readScancode();
+    if (scan == 0 or scan == 0xFF) return Value{ .integer = -1 };
+    const ev = kbd.processScancode(scan) orelse return Value{ .integer = -1 };
+    if (ev.action == .press and ev.ascii != 0) {
+        return Value{ .integer = @as(i64, ev.ascii) };
+    }
+    return Value{ .integer = -1 };
+}
+
+fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    const ctx = active_ctx orelse return error.NoContext;
+    const infer_fn = ctx.ai_inference_fn orelse return error.NoAiProvider;
+    const prompt = args[0].string;
+    const len = infer_fn(prompt, &ai_prompt_resp_buf);
+    if (len == 0) return Value{ .string = "" };
+    return Value{ .string = ai_prompt_resp_buf[0..len] };
+}
+
+fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
+    const ctx = active_ctx orelse return error.NoContext;
+    const spawn_fn = ctx.spawn_code_fn orelse return error.NoSpawnHandler;
+    const name = args[0].string;
+    const src = args[1].string;
+    const child_id = try spawn_fn(vm.allocator, name, src);
+    return Value{ .integer = @as(i64, child_id) };
+}
+
+fn nativeSysYield(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    _ = args;
+    fiber_mod.yield();
+    return Value{ .integer = 0 };
+}
+
+fn nativeSysActorName(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    const ctx = active_ctx orelse return error.NoContext;
+    const reg = ctx.registry;
+    const id: u32 = @intCast(args[0].integer);
+    if (reg.get(id)) |actor| {
+        return Value{ .string = actor.getName() };
+    }
+    return Value{ .string = "" };
+}
+
+fn nativeSysActorState(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    const ctx = active_ctx orelse return error.NoContext;
+    const reg = ctx.registry;
+    const id: u32 = @intCast(args[0].integer);
+    if (reg.get(id)) |actor| {
+        return Value{ .integer = @as(i64, @intFromEnum(actor.state)) };
+    }
+    return Value{ .integer = -1 };
+}
+
 pub fn registerBindings(vm: *VM) !void {
     try vm.globals.put("sys_actor_count", Value{ .native = nativeSysActorCount });
     try vm.globals.put("sys_actor_spawn", Value{ .native = nativeSysActorSpawn });
@@ -167,6 +251,13 @@ pub fn registerBindings(vm: *VM) !void {
     try vm.globals.put("sys_ipc_recv", Value{ .native = nativeSysIpcRecv });
     try vm.globals.put("sys_serial_write", Value{ .native = nativeSysSerialWrite });
     try vm.globals.put("sys_fault_count", Value{ .native = nativeSysFaultCount });
+    try vm.globals.put("sys_serial_read", Value{ .native = nativeSysSerialRead });
+    try vm.globals.put("sys_kbd_read", Value{ .native = nativeSysKbdRead });
+    try vm.globals.put("sys_ai_prompt", Value{ .native = nativeSysAiPrompt });
+    try vm.globals.put("sys_actor_spawn_code", Value{ .native = nativeSysActorSpawnCode });
+    try vm.globals.put("sys_yield", Value{ .native = nativeSysYield });
+    try vm.globals.put("sys_actor_name", Value{ .native = nativeSysActorName });
+    try vm.globals.put("sys_actor_state", Value{ .native = nativeSysActorState });
 }
 
 test "Harness native bindings registration and execution" {
@@ -213,4 +304,43 @@ test "Harness native bindings registration and execution" {
     const term_val = try nativeSysActorTerminate(&vm, &term_args);
     try std.testing.expect(term_val.boolean);
     try std.testing.expectEqual(@as(usize, 0), registry.active_count);
+
+    // Test new Milestone 13 bindings
+    ctx.ai_inference_fn = testMockInfer;
+    ctx.spawn_code_fn = testMockSpawn;
+
+    const sread = try nativeSysSerialRead(&vm, &empty_args);
+    try std.testing.expect(sread.integer >= -1);
+
+    var prompt_args = [_]Value{Value{ .string = "test prompt" }};
+    const prompt_val = try nativeSysAiPrompt(&vm, &prompt_args);
+    try std.testing.expectEqualStrings("Mock AI response", prompt_val.string);
+
+    var sc_args = [_]Value{ Value{ .string = "child_worker" }, Value{ .string = "fn run() {}" } };
+    const sc_val = try nativeSysActorSpawnCode(&vm, &sc_args);
+    try std.testing.expectEqual(@as(i64, 7), sc_val.integer);
+
+    const yld = try nativeSysYield(&vm, &empty_args);
+    try std.testing.expectEqual(@as(i64, 0), yld.integer);
+
+    var an_args = [_]Value{Value{ .integer = 999 }};
+    const an_val = try nativeSysActorName(&vm, &an_args);
+    try std.testing.expectEqualStrings("", an_val.string);
+
+    const as_val = try nativeSysActorState(&vm, &an_args);
+    try std.testing.expectEqual(@as(i64, -1), as_val.integer);
+}
+
+fn testMockInfer(prompt: []const u8, out_text: []u8) usize {
+    _ = prompt;
+    const resp = "Mock AI response";
+    @memcpy(out_text[0..resp.len], resp);
+    return resp.len;
+}
+
+fn testMockSpawn(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
+    _ = allocator;
+    _ = name;
+    _ = source;
+    return 7;
 }

@@ -17,6 +17,7 @@ CACHE_DIR := .zig-cache
 
 # Native Zig binaries
 BINARIES := \
+	$(BIN_DIR)/micros-bundle \
 	$(BIN_DIR)/micros-fb-verify \
 	$(BIN_DIR)/micros-lint \
 	$(BIN_DIR)/micros-sym \
@@ -30,6 +31,7 @@ SCRIPTS := \
 
 # Symlink launchers
 SYMLINKS := \
+	micros-bundle \
 	micros-inspect \
 	micros-runner \
 	micros-spec-trace \
@@ -59,6 +61,9 @@ $(BIN_DIR)/micros-%: $(SRC_DIR)/%.zig | $(BIN_DIR)
 	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
 
 # Launcher symlinks
+micros-bundle: $(BIN_DIR)/micros-bundle
+	ln -sf $< $@
+
 micros-inspect: micros-inspect.bash
 	ln -sf $< $@
 
@@ -90,6 +95,7 @@ test: all
 	$(ZIG) test $(SRC_DIR)/fb_verify.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/sym.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/telem.zig --cache-dir $(CACHE_DIR)
+	$(ZIG) test $(SRC_DIR)/bundle.zig --cache-dir $(CACHE_DIR)
 	./micros-spec-trace.bash --check
 	@echo "=> Tools test suite passed."
 
@@ -117,7 +123,7 @@ fmt-check:
 ## clean: Remove tool binaries, caches, and binary symlinks
 clean:
 	@echo "=> Cleaning tools workspace..."
-	rm -rf $(BIN_DIR) $(CACHE_DIR) micros-fb-verify micros-lint micros-sym micros-addr2line micros-telem
+	rm -rf $(BIN_DIR) $(CACHE_DIR) micros-bundle micros-fb-verify micros-lint micros-sym micros-addr2line micros-telem
 	@echo "=> Tools clean complete."
 
 ## help: Print this help message

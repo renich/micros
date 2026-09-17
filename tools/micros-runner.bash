@@ -11,6 +11,7 @@ FAIL_PATTERN="KERNEL FATAL|CPU Exception|Kernel Panic|panic:"
 SCREENDUMP=""
 SCREENSHOT=""
 SERIAL_LOG=""
+SERIAL_INPUT=""
 TIMEOUT_SEC=10
 MON_SOCK="/tmp/micros-qemu-mon.sock"
 ISA_DEBUG=0
@@ -26,6 +27,7 @@ Options:
   --screendump <path.ppm>    Capture GOP framebuffer to PPM
   --screenshot <path.png>    Convert PPM to PNG
   --serial-log <path>        Output serial log
+  --input <string>           Delayed interactive input sent to serial console
   --timeout <seconds>        Timeout in seconds (default: 10)
   --monitor-sock <path>      QEMU monitor socket (default: /tmp/micros-qemu-mon.sock)
   --isa-debug-exit           Enable QEMU isa-debug-exit on port 0xf4
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --screendump) SCREENDUMP="$2"; shift 2 ;;
         --screenshot) SCREENSHOT="$2"; shift 2 ;;
         --serial-log) SERIAL_LOG="$2"; shift 2 ;;
+        --input) SERIAL_INPUT="$2"; shift 2 ;;
         --timeout) TIMEOUT_SEC="$2"; shift 2 ;;
         --monitor-sock) MON_SOCK="$2"; shift 2 ;;
         --isa-debug-exit) ISA_DEBUG=1; shift 1 ;;
@@ -153,7 +156,6 @@ elif [[ "$MODE" == "uefi" ]]; then
         -drive "format=raw,file=fat:rw:$ESP_DIR"
         -netdev "user,id=net0"
         -device "virtio-net-pci,netdev=net0"
-        -serial "file:$TMP_SERIAL"
         -display none
         -no-reboot
     )
@@ -169,9 +171,57 @@ elif [[ "$MODE" == "uefi" ]]; then
         QEMU_ARGS+=(-monitor "unix:$MON_SOCK,server,nowait")
     fi
 
-    echo "[micros-runner] Launching QEMU UEFI harness (timeout: ${TIMEOUT_SEC}s)..."
-    qemu-system-x86_64 "${QEMU_ARGS[@]}" &
-    QEMU_PID=$!
+    send_qemu_monitor_cmd() {
+        local cmd="$1"
+        if [[ ! -S "$MON_SOCK" ]]; then return 0; fi
+        if command -v socat >/dev/null 2>&1; then
+            printf "%s\n" "$cmd" | socat - "UNIX-CONNECT:$MON_SOCK" >/dev/null 2>&1 || true
+        elif command -v nc >/dev/null 2>&1; then
+            printf "%s\n" "$cmd" | nc -U "$MON_SOCK" >/dev/null 2>&1 || true
+        fi
+    }
+
+    capture_screendump() {
+        if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 && -S "$MON_SOCK" ]]; then
+            send_qemu_monitor_cmd "screendump $SCREENDUMP"
+            sleep 0.2
+            if [[ -f "$SCREENDUMP" && -s "$SCREENDUMP" ]]; then
+                DUMP_CAPTURED=1
+                echo "[micros-runner] Captured framebuffer screendump: $SCREENDUMP"
+            fi
+        fi
+    }
+
+    FIFO_IN=""
+    FEEDER_PID=""
+    if [[ -n "$SERIAL_INPUT" ]]; then
+        FIFO_IN=$(mktemp -u "${BUILD_DIR}/qemu-in-XXXXXX.fifo")
+        mkfifo "$FIFO_IN"
+        (
+            while ! grep -F "macros>" "$TMP_SERIAL" >/dev/null 2>&1; do
+                sleep 0.1
+            done
+            sleep 0.2
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                if [[ -n "$line" ]]; then
+                    printf "%s\n" "$line"
+                    sleep 1.0
+                fi
+            done <<< "$(printf '%b\n' "$SERIAL_INPUT")"
+            sleep 10
+        ) > "$FIFO_IN" &
+        FEEDER_PID=$!
+
+        QEMU_ARGS+=(-serial stdio)
+        echo "[micros-runner] Launching QEMU UEFI harness with interactive input (timeout: ${TIMEOUT_SEC}s)..."
+        qemu-system-x86_64 "${QEMU_ARGS[@]}" < "$FIFO_IN" > "$TMP_SERIAL" 2>&1 &
+        QEMU_PID=$!
+    else
+        QEMU_ARGS+=(-serial "file:$TMP_SERIAL")
+        echo "[micros-runner] Launching QEMU UEFI harness (timeout: ${TIMEOUT_SEC}s)..."
+        qemu-system-x86_64 "${QEMU_ARGS[@]}" &
+        QEMU_PID=$!
+    fi
 
     START_TIME=$(date +%s)
     DUMP_CAPTURED=0
@@ -179,46 +229,14 @@ elif [[ "$MODE" == "uefi" ]]; then
         NOW=$(date +%s)
         ELAPSED=$((NOW - START_TIME))
 
-        if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 && -S "$MON_SOCK" ]]; then
+        if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 ]]; then
             if grep -F "Visual canvas and vector status rendered successfully" "$TMP_SERIAL" >/dev/null 2>&1 || grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
-                python3 -c "
-import socket, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-try:
-    s.connect('$MON_SOCK')
-    time.sleep(0.1)
-    s.sendall(b'screendump $SCREENDUMP\n')
-    time.sleep(0.3)
-    s.close()
-except Exception:
-    pass
-" || true
-                if [[ -f "$SCREENDUMP" && -s "$SCREENDUMP" ]]; then
-                    DUMP_CAPTURED=1
-                    echo "[micros-runner] Captured framebuffer screendump: $SCREENDUMP"
-                fi
+                capture_screendump
             fi
         fi
 
         if grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
-            if [[ -n "$SCREENDUMP" && "$DUMP_CAPTURED" -eq 0 && -S "$MON_SOCK" ]]; then
-                python3 -c "
-import socket, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-try:
-    s.connect('$MON_SOCK')
-    time.sleep(0.1)
-    s.sendall(b'screendump $SCREENDUMP\n')
-    time.sleep(0.3)
-    s.close()
-except Exception:
-    pass
-" || true
-                if [[ -f "$SCREENDUMP" && -s "$SCREENDUMP" ]]; then
-                    DUMP_CAPTURED=1
-                    echo "[micros-runner] Captured framebuffer screendump: $SCREENDUMP"
-                fi
-            fi
+            capture_screendump
             break
         fi
 
@@ -232,6 +250,14 @@ except Exception:
     if kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true
         wait "$QEMU_PID" 2>/dev/null || true
+    fi
+
+    if [[ -n "$FEEDER_PID" ]]; then
+        kill "$FEEDER_PID" 2>/dev/null || true
+        wait "$FEEDER_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$FIFO_IN" && -p "$FIFO_IN" ]]; then
+        rm -f "$FIFO_IN"
     fi
 
     if [[ -n "$SCREENSHOT" && -n "$SCREENDUMP" && -f "$SCREENDUMP" ]]; then
