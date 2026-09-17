@@ -31,6 +31,7 @@ Technical Sub-Specifications
    specs/sovereign-tool-calling
    specs/process-hierarchy
    specs/reactive-compositor
+   specs/sovereign-cord-cutting
 
 Engineering & Coding Guides
 ===========================
