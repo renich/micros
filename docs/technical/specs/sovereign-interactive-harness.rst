@@ -10,22 +10,25 @@ Sovereign Interactive Harness & Co-Creation Engine Spec
 =================================
 This specification defines the interactive execution architecture, hardware input unification, cognitive prompt routing, and live multi-actor spawning protocol for the Sovereign Genesis Harness in MicrOS (µOS).
 
-1.1 Transformation from Batch Pipeline to Living System
--------------------------------------------------------
-Prior to Milestone 13, MicrOS operated as a batch-execution pipeline: UEFI booted, initialized the Genesis Actor (Actor 0), rendered a static GOP canvas from ``harness.mx``, executed two hardcoded scripted turns with the Resident AI over TLS 1.3, and halted the CPU.
+1.1 Transformation to Interactive Co-Creation Engine
+------------------------------------------------------
+Prior to Milestone 13, MicrOS operated as a batch-execution pipeline: UEFI booted, initialized the Genesis Actor, rendered a static GOP canvas from ``harness.mx``, executed hardcoded scripted turns with the Resident AI over TLS 1.3, and halted the CPU.
 
-Milestone 13 converts MicrOS into an interactive, conversational, and self-healing operating system where:
-* The human user sits at the physical console (or connects via headless COM1 serial).
-* Natural language prompts and typed commands are entered directly into the Harness REPL.
+Milestones 13 and 15b convert this into an interactive, conversational, and self-healing co-creation studio:
+* The system boots into Actor 0 (``init.mx``), which launches MicroShell (``msh.mx``) as App 0.
+* When the user requests visual workspace access via ``msh> harness``, ``harness.mx`` launches as App 1.
+* The Harness takes ownership of the linear 1280x800 GOP framebuffer, rendering vector status panels, active actor tables, and interactive line prompts.
+* Natural language prompts and typed commands are entered directly into the Harness REPL or MicroShell.
 * The Harness forwards prompts to the Resident AI subsystem via ``sys_ai_prompt()``.
 * Emitted Macros code is compiled live into an isolated Actor domain via ``sys_actor_spawn_code()``.
 * The newly created Actor runs cooperatively on bare-metal hardware, and its state/capabilities appear dynamically in the Actor Inspector panel.
 * If an Actor crashes, the Erlang-style hardware supervisor intercepts the exception and alerts the Harness for interactive remediation.
+* Upon entering ``exit``, the harness clears the framebuffer via ``sys_fb_clear(0)`` and yields back to MicroShell.
 
 1.2 Mechanism vs Policy
 -----------------------
 * **Microkernel Mechanism**: Raw x86_64 CPU fiber context switching, non-blocking PS/2 keyboard FIFO polling, COM1 UART register access, GOP framebuffer vector blitting, VirtIO-Net packet transport, and TLS 1.3 encryption.
-* **Harness & AI Policy**: The Genesis Harness (written in Macros) dictates UI layout, command syntax, input line editing, prompt assembly, and error display. The Resident AI defines the system software ontology and implementation code.
+* **App 1 Policy**: The Interactive Studio (written in Macros) dictates visual UI layout, command syntax, input line editing, prompt assembly, and error display. The Resident AI defines the system software ontology and implementation code.
 
 2. Hardware Input & Keystroke ABI
 =================================
@@ -49,9 +52,9 @@ The microkernel exposes non-blocking hardware polling primitives to the Macros r
 * **Behavior**: Polls PS/2 Status Register (port ``0x64``). If bit 0 (Output Buffer Full) is set, reads data port (port ``0x60``) and translates Make scancodes (Set 1) into ASCII using the kernel's keymap.
 * **Return Value**: Returns ASCII code on key press; returns ``-1`` when no key event is pending.
 
-3. Interactive Macros Shell Engine (harness.mx)
-===============================================
-The Genesis Harness replaces its one-shot ``harness_main()`` with an event loop executing natively inside Actor 0:
+3. Interactive Studio Engine (harness.mx)
+=========================================
+The Interactive Studio executes natively inside an application domain (App 1):
 
 3.1 Line Editing & Rendering Invariants
 ---------------------------------------

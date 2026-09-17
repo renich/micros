@@ -30,6 +30,7 @@ Technical Sub-Specifications
    specs/sovereign-storage-substrate
    specs/sovereign-tool-calling
    specs/process-hierarchy
+   specs/reactive-compositor
 
 Core Architecture Principles
 ============================

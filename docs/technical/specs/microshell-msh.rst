@@ -26,4 +26,19 @@ MicroShell provides essential substrate control builtins:
 
 3. Macros Expression Evaluation
 ===============================
-Any input line not recognized as a shell builtin is passed directly to the Macros language lexer, parser, and tree-walk evaluator. Variable assignments (`x = 10 + 20`) update the persistent environment, and expressions are evaluated and formatted to standard output.
+Any input line not recognized as a shell builtin is passed directly to the Macros language lexer, parser, and tree-walk evaluator. Variable assignments (``x = 10 + 20``) update the persistent environment, and expressions are evaluated and formatted to standard output.
+
+4. Bare-Metal Sovereign App 0 (lib/macros/msh.mx)
+=================================================
+In the sovereign microkernel environment (v0.1.0+), MicroShell operates as App 0 written entirely in the Macros language (``lib/macros/msh.mx``) and launched by Actor 0 (``init.mx``):
+
+- **Stream-Oriented Ergonomics**: Listens on COM1 UART serial and PS/2 keyboard inputs via ``sys_serial_read()`` and ``sys_kbd_read()``, printing prompt ``msh>``.
+- **Substrate Control Commands**:
+   - ``status``: System health, active actor counts, contained fault counters.
+   - ``actors``: Real-time table of registered actors, IDs, names, and lifecycle states.
+   - ``spawn <code>`` / ``spawn_cas <hash>``: Live compilation and spawning of isolated actor domains.
+   - ``store <code>`` / ``fetch <hash>`` / ``persist <id>``: Content-Addressed Storage (CAS) operations.
+   - ``ai <prompt>``: Direct inference queries to the Resident AI with autonomous tool execution.
+   - ``harness``: On-demand launch of App 1 (Interactive Studio), returning cleanly to ``msh`` upon exit.
+   - ``kill <id>``: Explicit termination of actor domains.
+- **Supervised Lifecycle**: If MicroShell terminates or faults, Actor 0 supervisor (``init.mx``) catches the state transition and automatically respawns ``msh`` without a kernel reboot.

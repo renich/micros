@@ -25,6 +25,7 @@ Welcome to the sovereign documentation repository for MicrOS (µOS) and the Macr
    project/roadmaps/milestone-13-interactive-harness
    project/roadmaps/milestone-14-sovereign-storage
    project/roadmaps/milestone-15-structured-tool-calling
+   project/roadmaps/milestone-15b-process-hierarchy
    project/roadmaps/milestone-16-reactive-compositor
    project/roadmaps/milestone-17-language-self-hosting
    project/roadmaps/milestone-18-sovereign-cord-cutting

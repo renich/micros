@@ -14,6 +14,10 @@ Architecture & Vision
 
 Active & Sequenced Roadmaps
 ===========================
+* `Milestone 15b: Process Hierarchy Decoupling & Actor Supervision <project/roadmaps/milestone-15b-process-hierarchy.rst>`_ *(Completed)*
+* `Milestone 15: Typed Structured Tool Calling Substrate <project/roadmaps/milestone-15-structured-tool-calling.rst>`_ *(Completed)*
+* `Milestone 14: Sovereign Storage Substrate & Reboot Persistence <project/roadmaps/milestone-14-sovereign-storage.rst>`_ *(Completed)*
+* `Milestone 13: Interactive Sovereign Harness & Co-Creation Engine <project/roadmaps/milestone-13-interactive-harness.rst>`_ *(Completed)*
 * `Milestone 12: Pluggable Resident AI & Sovereign Event Loop <project/roadmaps/milestone-12-resident-ai-substrate.rst>`_ *(Completed)*
 * `Milestone 11: Transport Security & Freestanding HTTPS Engine <project/roadmaps/milestone-11-transport-security.rst>`_ *(Completed)*
 * `Milestone 10: Sovereign Network Substrate & Gemini Flash Orchestrator <project/roadmaps/milestone-10-gemini-orchestrator.rst>`_ *(Completed)*
@@ -28,6 +32,11 @@ Active & Sequenced Roadmaps
 Technical Specifications
 ========================
 * `Master Technical Specification <technical/spec.rst>`_
+* `Process Hierarchy Decoupling & Actor Supervision <technical/specs/process-hierarchy.rst>`_
+* `Reactive Vector Compositor & Multi-Actor Windowing <technical/specs/reactive-compositor.rst>`_
+* `Sovereign Structured Tool Calling & Dispatching <technical/specs/sovereign-tool-calling.rst>`_
+* `Sovereign Storage Substrate & Content-Addressed B-Tree <technical/specs/sovereign-storage-substrate.rst>`_
+* `Sovereign Interactive Studio & Co-Creation Engine <technical/specs/sovereign-interactive-harness.rst>`_
 * `Sovereign Network & Gemini Orchestrator <technical/specs/sovereign-gemini-orchestrator.rst>`_
 * `Sovereign Actor Harness & Supervisor Protocol <technical/specs/sovereign-harness-protocol.rst>`_
 * `Sovereign Capability Substrate & CSpace <technical/specs/sovereign-capability-substrate.rst>`_

@@ -1,6 +1,6 @@
-====================================================
+=====================================================
 Process Hierarchy Decoupling & Actor Supervision Spec
-====================================================
+=====================================================
 
 :Document ID: SPEC-TECH-HIERARCHY-001
 :Status: Approved
@@ -93,7 +93,7 @@ Actor states follow an explicit, monotonically guarded lifecycle:
 ------------------------------------------
 Actor 0 executes an immortal supervision loop:
 
-.. code-block:: macros
+.. code-block:: text
 
    fn supervisor_loop(child_id) {
        while (true) {
@@ -111,10 +111,10 @@ Actor 0 executes an immortal supervision loop:
        }
    }
 
-When the interactive shell terminates (voluntarily or via fault), the supervisor immediately detects state 5 or 4, reloads `msh.mx` from the genesis bundle, and reconstitutes the user session with zero kernel reboots.
+When the interactive shell terminates (voluntarily or via fault), the supervisor immediately detects state 5 or 4, reloads ``msh.mx`` from the genesis bundle, and reconstitutes the user session with zero kernel reboots.
 
 5. Focus Arbitration & Terminal Ergonomics
 ==========================================
-* **Serial / TTY Co-existence**: MicroShell (`msh.mx`) uses COM1 serial output and standard TTY escape sequences for line editing and prompt redraws.
-* **Canvas Preemption**: When `harness.mx` is launched, it takes exclusive ownership of the GOP framebuffer, rendering vector graphs and the Actor Inspector.
-* **Serene Return**: Upon entering `exit` in the harness, `harness.mx` executes `sys_fb_clear(0)` to wipe graphical artifacts and terminates its fiber. MicroShell resumes from `sys_actor_wait`, announces return, and displays the standard `msh> ` prompt.
+* **Serial / TTY Co-existence**: MicroShell (``msh.mx``) uses COM1 serial output and standard TTY escape sequences for line editing and prompt redraws.
+* **Canvas Preemption**: When ``harness.mx`` is launched, it takes exclusive ownership of the GOP framebuffer, rendering vector graphs and the Actor Inspector.
+* **Serene Return**: Upon entering ``exit`` in the harness, ``harness.mx`` executes ``sys_fb_clear(0)`` to wipe graphical artifacts and terminates its fiber. MicroShell resumes from ``sys_actor_wait``, announces return, and displays the standard ``msh>`` prompt.

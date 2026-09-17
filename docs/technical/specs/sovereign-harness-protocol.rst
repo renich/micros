@@ -114,10 +114,10 @@ The supervisor actor receives the ``FaultFrame`` via its supervisor IPC ring and
 2. **QUARANTINE**: Holds the actor in the ``faulted`` state, preserving its memory and stack for interactive inspection via the harness inspector.
 3. **TERMINATE_AND_RECLAIM**: Revokes all capabilities held in the actor's CSpace, returns physical memory extents to the PMM, and frees the actor registry slot.
 
-5. Dynamic Interactive Sovereign Harness
-========================================
-Actor 0 runs ``lib/macros/harness.mx``, providing:
+5. Dynamic Interactive Sovereign Architecture
+==============================================
+Actor 0 runs ``lib/macros/init.mx`` as the root system supervisor, launching MicroShell (``lib/macros/msh.mx``) as App 0, with the interactive visual studio (``lib/macros/harness.mx``) available on demand as App 1:
 
-- **1280x800 Vector Canvas**: Real-time multi-pane display rendering substrate status, interactive command console, active actor table, and capability inspector.
-- **Serial Automation Link**: Structured bidirectional channel over COM1 for autonomous AI agent inspection and headless verification.
-- **Construction Commands**: ``actors``, ``caps``, ``spawn``, ``eval``, ``kill``, ``restart``, ``mem``, ``clear``, and ``help``.
+- **1280x800 Vector Canvas**: Real-time multi-pane display in App 1 rendering substrate status, interactive command console, active actor table, and capability inspector.
+- **Serial Automation Link**: Structured bidirectional channel over COM1 for autonomous AI agent inspection and headless verification in MicroShell (App 0).
+- **Construction Commands**: ``status``, ``actors``, ``spawn``, ``store``, ``fetch``, ``persist``, ``spawn_cas``, ``ai``, ``harness``, ``kill``, ``clear``, and ``help``.
