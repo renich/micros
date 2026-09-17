@@ -4,7 +4,7 @@ Self-Hosting Macros Architecture & Bootstrap Plan
 
 :Document ID: SPEC-TECH-MACROS-SELF-001
 :Status: Approved
-:Traced Stories: [US-REN-002], [US-REN-008], [US-GEM-002], [US-GEM-004]
+:Traced Stories: [US-REN-002], [US-REN-004], [US-GEM-008], [US-GEM-010]
 
 1. Self-Sufficiency & Computational Sovereignty
 ================================================

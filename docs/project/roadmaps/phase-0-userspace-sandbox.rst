@@ -2,7 +2,7 @@ Phase 0: Userspace Sandbox
 ==========================
 
 :Objective: Bootstrap the MicrOS tooling, Macros REPL, and Init system using direct Linux syscalls inside a Fedora host.
-:Status: In Progress
+:Status: Completed & Verified
 
 Milestones
 ----------

@@ -2,7 +2,7 @@ Phase 1: Bare-Metal Substrate
 =============================
 
 :Objective: Replace the Fedora Linux host with our own UEFI Bootloader and Microkernel.
-:Status: Planned
+:Status: Completed & Verified
 
 Milestones
 ----------

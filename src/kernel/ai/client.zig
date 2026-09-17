@@ -78,29 +78,113 @@ pub const AiClient = struct {
     }
 
     pub fn extractCodeBlock(src: []const u8, out_buf: []u8) ?usize {
-        const markers = [_][]const u8{ "```macros", "```mx", "```" };
-        for (markers) |m| {
-            if (findCodeBlockWithMarker(src, m, out_buf)) |len| {
-                return len;
-            }
-        }
-        return null;
-    }
-
-    fn findCodeBlockWithMarker(src: []const u8, marker: []const u8, out_buf: []u8) ?usize {
-        const start_idx = std.mem.indexOf(u8, src, marker) orelse return null;
-        const after_marker = start_idx + marker.len;
-        const newline_idx = std.mem.indexOfScalarPos(u8, src, after_marker, '\n') orelse return null;
-        const code_start = newline_idx + 1;
-        const end_idx = std.mem.indexOfPos(u8, src, code_start, "```") orelse return null;
-
-        if (code_start >= end_idx) return null;
-        const code = src[code_start..end_idx];
-        const copy_len = @min(code.len, out_buf.len);
-        @memcpy(out_buf[0..copy_len], code[0..copy_len]);
-        return copy_len;
+        if (extractRstCodeBlock(src, out_buf)) |len| return len;
+        return extractMarkdownCodeBlock(src, out_buf);
     }
 };
+
+fn checkRstDirective(src: []const u8, dir: []const u8, out_buf: []u8) ?usize {
+    const pos = std.mem.indexOf(u8, src, dir) orelse return null;
+    return parseRstBlockBody(src[pos + dir.len..], out_buf);
+}
+
+fn extractRstCodeBlock(src: []const u8, out_buf: []u8) ?usize {
+    const directives = [_][]const u8{
+        ".. code-block:: macros",
+        ".. code-block:: mx",
+        ".. code-block::",
+    };
+    for (directives) |dir| {
+        if (checkRstDirective(src, dir, out_buf)) |len| return len;
+    }
+    return null;
+}
+
+fn extractMarkdownCodeBlock(src: []const u8, out_buf: []u8) ?usize {
+    const markers = [_][]const u8{ "```macros", "```mx", "```" };
+    for (markers) |m| {
+        if (findCodeBlockWithMarker(src, m, out_buf)) |len| return len;
+    }
+    return null;
+}
+
+fn skipDirectiveHeader(src: []const u8) usize {
+    var i: usize = 0;
+    while (i < src.len and src[i] != '\n') : (i += 1) {}
+    if (i < src.len and src[i] == '\n') i += 1;
+    while (i < src.len) {
+        if (src[i] == '\n') {
+            i += 1;
+            continue;
+        }
+        if (src[i] == '\r' and i + 1 < src.len and src[i + 1] == '\n') {
+            i += 2;
+            continue;
+        }
+        break;
+    }
+    return i;
+}
+
+fn detectIndent(line: []const u8) usize {
+    var count: usize = 0;
+    while (count < line.len and line[count] == ' ') : (count += 1) {}
+    return count;
+}
+
+fn appendNewline(out_buf: []u8, out_len: *usize) void {
+    if (out_len.* > 0 and out_len.* < out_buf.len) {
+        out_buf[out_len.*] = '\n';
+        out_len.* += 1;
+    }
+}
+
+fn appendCodeLine(out_buf: []u8, out_len: *usize, text: []const u8) void {
+    if (out_len.* + text.len + 1 > out_buf.len) return;
+    @memcpy(out_buf[out_len.* .. out_len.* + text.len], text);
+    out_len.* += text.len;
+    out_buf[out_len.*] = '\n';
+    out_len.* += 1;
+}
+
+fn parseRstBlockBody(body_src: []const u8, out_buf: []u8) ?usize {
+    const start_idx = skipDirectiveHeader(body_src);
+    if (start_idx >= body_src.len) return null;
+
+    var iter = std.mem.splitScalar(u8, body_src[start_idx..], '\n');
+    var indent: usize = 0;
+    var out_len: usize = 0;
+
+    while (iter.next()) |raw_line| {
+        const line = std.mem.trimEnd(u8, raw_line, "\r");
+        if (line.len == 0) {
+            appendNewline(out_buf, &out_len);
+            continue;
+        }
+        const line_indent = detectIndent(line);
+        if (indent == 0 and line_indent == 0) break;
+        if (indent == 0) indent = line_indent;
+        if (line_indent < indent) break;
+        appendCodeLine(out_buf, &out_len, line[indent..]);
+    }
+    while (out_len > 0 and out_buf[out_len - 1] == '\n') out_len -= 1;
+    appendNewline(out_buf, &out_len);
+    return if (out_len > 0) out_len else null;
+}
+
+fn findCodeBlockWithMarker(src: []const u8, marker: []const u8, out_buf: []u8) ?usize {
+    const start_idx = std.mem.indexOf(u8, src, marker) orelse return null;
+    const after_marker = start_idx + marker.len;
+    const newline_idx = std.mem.indexOfScalarPos(u8, src, after_marker, '\n') orelse return null;
+    const code_start = newline_idx + 1;
+    const end_idx = std.mem.indexOfPos(u8, src, code_start, "```") orelse return null;
+
+    if (code_start >= end_idx) return null;
+    const code = src[code_start..end_idx];
+    const copy_len = @min(code.len, out_buf.len);
+    @memcpy(out_buf[0..copy_len], code[0..copy_len]);
+    return copy_len;
+}
 
 test "client polymorphic request dispatch" {
     const gemini_cfg = provider_mod.ProviderConfig{
@@ -117,10 +201,40 @@ test "client polymorphic request dispatch" {
     try std.testing.expect(std.mem.indexOf(u8, req_buf[0..len], "POST /v1beta/models/") != null);
 }
 
-test "client extract code block" {
+test "client extract markdown code block" {
     const sample = "Directive:\n```macros\nsys_serial_write(\"OK\");\n```\nDone.";
     var code_buf: [64]u8 = undefined;
     const len = AiClient.extractCodeBlock(sample, &code_buf);
     try std.testing.expect(len != null);
     try std.testing.expectEqualStrings("sys_serial_write(\"OK\");\n", code_buf[0..len.?]);
+}
+
+test "client extract rst code block 3-space" {
+    const sample =
+        "Directive Narrative\n" ++
+        "===================\n\n" ++
+        ".. code-block:: macros\n\n" ++
+        "   sys_fb_draw_string(20, 20, \"RST Online\", 65280, 0);\n" ++
+        "   sys_serial_write(\"Active\\n\");\n\n" ++
+        "Narrative continues outside code block.";
+    var code_buf: [128]u8 = undefined;
+    const len = AiClient.extractCodeBlock(sample, &code_buf);
+    try std.testing.expect(len != null);
+    const expected =
+        "sys_fb_draw_string(20, 20, \"RST Online\", 65280, 0);\n" ++
+        "sys_serial_write(\"Active\\n\");\n";
+    try std.testing.expectEqualStrings(expected, code_buf[0..len.?]);
+}
+
+test "client extract rst code block 4-space" {
+    const sample =
+        ".. code-block:: mx\n\n" ++
+        "    var x = 42;\n" ++
+        "    print(x);\n\n" ++
+        "End of block.";
+    var code_buf: [128]u8 = undefined;
+    const len = AiClient.extractCodeBlock(sample, &code_buf);
+    try std.testing.expect(len != null);
+    const expected = "var x = 42;\nprint(x);\n";
+    try std.testing.expectEqualStrings(expected, code_buf[0..len.?]);
 }

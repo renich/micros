@@ -4,7 +4,7 @@ MicroShell (msh/ush) Specification
 
 :Document ID: SPEC-TECH-MSH-001
 :Status: Approved
-:Traced Stories: [US-REN-001], [US-REN-007], [US-GEM-003], [US-GEM-005]
+:Traced Stories: [US-REN-001], [US-REN-002], [US-REN-005], [US-GEM-009]
 
 1. Interactive & Scripted Execution Environment
 ===============================================

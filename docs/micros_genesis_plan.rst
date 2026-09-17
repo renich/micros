@@ -1,6 +1,6 @@
-==============================================================
+================================================================
 MicrOS (µOS): Sovereign Systems Architecture & Genesis Blueprint
-==============================================================
+================================================================
 
 :Author: Rénich Bon Ćirić & Antigravity
 :Date: 2026-09-15
@@ -261,7 +261,7 @@ MicrOS (µOS) is deliberately structured around the complementary strengths of h
    +--------------------------+----------------------------------------------------+---------------------------------------------------+
    | Fault Remediation        | Decides operational tradeoffs upon fatal failures  | Ingests binary telemetry, live-clones, patches UB |
    +--------------------------+----------------------------------------------------+---------------------------------------------------+
-   | Application Authoring    | Authors expressive Macros business logic & UIs  | Optimizes low-level Zig primitives and ring alloc |
+   | Application Authoring    | Authors expressive Macros business logic & UIs     | Optimizes low-level Zig primitives and ring alloc |
    +--------------------------+----------------------------------------------------+---------------------------------------------------+
 
 Verification Matrix & Automated CI Harness
@@ -300,7 +300,7 @@ The implementation track is governed by four gated milestone reviews:
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+
    | M1        | Microkernel & Memory | ``boot.efi``, PMM, VMM, Scheduler, VirtIO-Con | Boots via UEFI; preemptive multitasking |
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+
-   | M2        | Language & Runtime   | Macros compiler, Immix GC, Green Threads   | Self-compiled HTTP/TUI binary executes  |
+   | M2        | Language & Runtime   | Macros compiler, Immix GC, Green Threads      | Self-compiled HTTP/TUI binary executes  |
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+
    | M3        | Full Sovereignty     | Native CoW FS, TCP/IP, Self-Hosting Rebuild   | System compiles itself on bare metal    |
    +-----------+----------------------+-----------------------------------------------+-----------------------------------------+

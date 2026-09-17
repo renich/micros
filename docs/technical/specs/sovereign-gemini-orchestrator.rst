@@ -4,7 +4,7 @@ Sovereign Network Substrate & Gemini Orchestrator Spec
 
 :Document ID: SPEC-TECH-GEMINI-001
 :Status: Active
-:Traced Stories: [US-REN-001], [US-REN-006], [US-GEM-001], [US-GEM-007], [US-GEM-008]
+:Traced Stories: [US-REN-004], [US-REN-006], [US-GEM-001], [US-GEM-007], [US-GEM-010]
 
 1. Architectural Axioms: Gemini as Root Sovereign Entity
 ==========================================================
@@ -37,8 +37,8 @@ Gemini Flash interacts with µOS through bidirectional structured tool calling. 
 ===================================
 
 2.1 VirtIO-Net Driver (virtio-net-pci)
--------------------------------------
-* Targets Modern VirtIO 1.0 specifications over PCI bus (`0x1af4:0x1000` / `0x1041`).
+--------------------------------------
+* Targets Modern VirtIO 1.0 specifications over PCI bus (`0x1af4:0x1000`/`0x1041`).
 * Split virtqueues: Receive Queue (Queue 0) and Transmit Queue (Queue 1).
 * Buffer descriptors aligned to 4096-byte page boundaries with zero-copy packet passing.
 
@@ -61,7 +61,7 @@ Gemini Flash interacts with µOS through bidirectional structured tool calling. 
 * **Freestanding TLS 1.3 Client**:
   - Leverages ``std.crypto.tls.Client`` from Zig 0.16.0 standard library over abstract ``std.Io.Reader`` and ``std.Io.Writer`` interfaces.
   - SNI extension set to `generativelanguage.googleapis.com`.
-  - X25519 elliptic-curve key exchange, HKDF key derivation, and AES-GCM / ChaCha20-Poly1305 record encryption.
+  - X25519 elliptic-curve key exchange, HKDF key derivation, and AES-GCM/ChaCha20-Poly1305 record encryption.
   - Root trust verified against embedded Google Trust Services (GTS) Root CA certificate.
 
 3. Cognitive Actor & Gemini Flash Protocol
@@ -146,6 +146,6 @@ The Genesis bundle (`genesis.mcb`) packages an authoritative skill corpus embedd
 2. **Skill: `capability-governance`**: Mathematical rights attenuation rules, `CSpace` operations, SPSC IPC ring protocol, and delegation boundaries.
 3. **Skill: `hardware-control`**: PCI configuration space access, MMIO mapping, VirtIO virtqueue management, framebuffer vector rendering, and ACPI power management.
 4. **Skill: `autonomous-construction`**: Protocols for writing, compiling via `lib/macros/compiler.mx`, spawning isolated worker actors, and executing verification tests.
-5. **Skill: `fault-remediation`**: Ingesting 40-byte `FaultFrame` register dumps, analyzing `#PF` / `#GP` / `#DE` exceptions, and hot-patching running actors.
+5. **Skill: `fault-remediation`**: Ingesting 40-byte `FaultFrame` register dumps, analyzing `#PF`/#GP`/#DE` exceptions, and hot-patching running actors.
 
 With this corpus and tool suite, the AI resident possesses absolute self-awareness of its host machine and complete operational competence from the first instruction.

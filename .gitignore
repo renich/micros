@@ -8,3 +8,4 @@ test_*.zig
 tools/bin/
 tools/.zig-cache/
 esp/
+docs/_build/

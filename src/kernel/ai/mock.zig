@@ -4,12 +4,12 @@
 const std = @import("std");
 
 pub const MOCK_RESPONSE: []const u8 =
-    "### SOVEREIGN DIRECTIVE: MOCK-0001 (OFFLINE MODE)\n\n" ++
-    "Operating system parameters verified in air-gapped mode.\n" ++
-    "```macros\n" ++
-    "sys_serial_write(\"[MockAi] Autonomous sovereign directive active.\\n\");\n" ++
-    "sys_fb_draw_string(50, 50, \"MICROS OFFLINE SOVEREIGN HARNESS\", 65280, 0);\n" ++
-    "```\n";
+    "Sovereign Directive: MOCK-0001 Offline Mode\n" ++
+    "===========================================\n\n" ++
+    "Operating system parameters verified in air-gapped mode.\n\n" ++
+    ".. code-block:: macros\n\n" ++
+    "   sys_serial_write(\"[MockAi] Autonomous sovereign directive active.\\n\");\n" ++
+    "   sys_fb_draw_string(50, 50, \"MICROS OFFLINE SOVEREIGN HARNESS\", 65280, 0);\n";
 
 pub fn generateResponse(user_prompt: []const u8, out_buf: []u8) !usize {
     _ = user_prompt;

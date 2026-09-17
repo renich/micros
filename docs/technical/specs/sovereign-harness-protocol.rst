@@ -4,7 +4,7 @@ Sovereign Actor Harness & Supervisor Protocol Spec
 
 :Document ID: SPEC-TECH-HARNESS-001
 :Status: Approved
-:Traced Stories: [US-REN-001], [US-REN-006], [US-GEM-001], [US-GEM-007], [US-GEM-008]
+:Traced Stories: [US-REN-001], [US-REN-006], [US-REN-008], [US-GEM-009], [US-GEM-010]
 
 1. Architectural Axioms
 =======================

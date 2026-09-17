@@ -14,14 +14,16 @@ Architecture & Vision
 
 Active & Sequenced Roadmaps
 ===========================
-* `Milestone 10: Sovereign Network Substrate & Gemini Flash Orchestrator <project/roadmaps/milestone-10-gemini-orchestrator.rst>`_ *(Active)*
+* `Milestone 12: Pluggable Resident AI & Sovereign Event Loop <project/roadmaps/milestone-12-resident-ai-substrate.rst>`_ *(Completed)*
+* `Milestone 11: Transport Security & Freestanding HTTPS Engine <project/roadmaps/milestone-11-transport-security.rst>`_ *(Completed)*
+* `Milestone 10: Sovereign Network Substrate & Gemini Flash Orchestrator <project/roadmaps/milestone-10-gemini-orchestrator.rst>`_ *(Completed)*
 * `Milestone 9: Sovereign Actor Harness & Self-Healing Multi-Actor Substrate <project/roadmaps/milestone-9-sovereign-harness.rst>`_ *(Completed)*
 * `Milestone 8: Sovereign Capability Substrate & Genesis Domain <project/roadmaps/milestone-8-sovereign-substrate.rst>`_ *(Completed)*
-* `Phase 0: Userspace Sandbox <project/roadmaps/phase-0-userspace-sandbox.rst>`_
-* `Phase 1: Bare-Metal Substrate <project/roadmaps/phase-1-bare-metal-substrate.rst>`_
-* `Phase 2: The Language Factory (Macros) <project/roadmaps/phase-2-language-factory.rst>`_
-* `Phase 3: Subsystems & Compositor <project/roadmaps/phase-3-subsystems-compositor.rst>`_
-* `Phase 4: Sovereign Cord-Cutting <project/roadmaps/phase-4-sovereign-cord-cutting.rst>`_
+* `Phase 0: Userspace Sandbox <project/roadmaps/phase-0-userspace-sandbox.rst>`_ *(Completed)*
+* `Phase 1: Bare-Metal Substrate <project/roadmaps/phase-1-bare-metal-substrate.rst>`_ *(Completed)*
+* `Phase 2: The Language Factory (Macros) <project/roadmaps/phase-2-language-factory.rst>`_ *(Completed)*
+* `Phase 3: Subsystems & Compositor <project/roadmaps/phase-3-subsystems-compositor.rst>`_ *(In Progress)*
+* `Phase 4: Sovereign Cord-Cutting <project/roadmaps/phase-4-sovereign-cord-cutting.rst>`_ *(Planned)*
 
 Technical Specifications
 ========================

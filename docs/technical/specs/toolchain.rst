@@ -4,7 +4,7 @@ Substrate Toolchain & Verification Specification
 
 :Document ID: SPEC-TECH-TOOL-001
 :Status: Approved
-:Traced Stories: [US-REN-005], [US-REN-006], [US-GEM-006], [US-GEM-009]
+:Traced Stories: [US-REN-009], [US-GEM-001], [US-GEM-002], [US-GEM-003], [US-GEM-004], [US-GEM-005], [US-GEM-006], [US-GEM-007]
 
 1. Substrate Verification Toolchain
 ===================================

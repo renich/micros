@@ -20,3 +20,6 @@ Welcome to the sovereign documentation repository for MicrOS (µOS) and the Macr
    project/roadmaps/milestone-8-sovereign-substrate
    project/roadmaps/milestone-9-sovereign-harness
    project/roadmaps/milestone-10-gemini-orchestrator
+   project/roadmaps/milestone-11-transport-security
+   project/roadmaps/milestone-12-resident-ai-substrate
+   project/audits/2026-09-17-full-documentation-audit

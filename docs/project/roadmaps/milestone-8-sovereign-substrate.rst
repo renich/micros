@@ -2,7 +2,7 @@ Milestone 8: Sovereign Capability Substrate & Genesis Actor
 ===========================================================
 
 :Objective: Eliminate legacy POSIX abstractions (PIDs, integer file descriptors, ambient authority) from the microkernel, establishing the pure Object-Capability model (CSpace), typed IPC ring buffers, immutable capability bundles, and direct framebuffer grants.
-:Status: In Progress
+:Status: Completed & Verified
 :Specification: SPEC-TECH-CAP-001
 
 Milestones & Deliverables

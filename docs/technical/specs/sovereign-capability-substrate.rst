@@ -1,10 +1,10 @@
-==================================================
+===================================================
 Sovereign Capability Substrate & Genesis Actor Spec
-==================================================
+===================================================
 
 :Document ID: SPEC-TECH-CAP-001
 :Status: Approved
-:Traced Stories: [US-REN-001], [US-REN-006], [US-GEM-001], [US-GEM-007], [US-GEM-008]
+:Traced Stories: [US-REN-006], [US-REN-007], [US-REN-008], [US-GEM-001], [US-GEM-010]
 
 1. Architecture Axioms & Post-POSIX Model
 =========================================

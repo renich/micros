@@ -45,7 +45,7 @@ This document specifies the end-to-end user stories representing human interacti
 * Total boot-to-prompt latency < 1.0 second on virtualized hardware.
 
 [US-REN-004] Zero-Libc Substrate Determinism
-===========================================
+============================================
 * **As a** systems programmer,
 * **I want** the substrate layer to interact directly with hardware and kernel syscalls without linking against `libc`,
 * **So that** I eliminate hidden global heap state, non-deterministic locale logic, and opaque runtime overhead.

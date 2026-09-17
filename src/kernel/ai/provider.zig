@@ -38,7 +38,7 @@ pub const SOVEREIGN_SYSTEM_PROMPT: []const u8 =
     "sys_serial_write(text); " ++
     "sys_fault_count(); " ++
     "In Macros, all numbers are decimal integers (e.g. 16777215 for white, 65280 for green, 0 for black). Statements end in semicolons. " ++
-    "Always include an executable ```macros code block in your responses to govern the system.";
+    "Format all responses using reStructuredText (.rst). Always include an executable code block formatted as: .. code-block:: macros (with 3-space indentation) to govern the system.";
 
 pub fn parseProviderType(name: []const u8) ProviderType {
     if (std.mem.eql(u8, name, "openai")) return .openai;

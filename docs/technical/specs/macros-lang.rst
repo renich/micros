@@ -4,7 +4,7 @@ Macros Language Formal Specification
 
 :Document ID: SPEC-TECH-MACROS-LANG-001
 :Status: Approved
-:Traced Stories: [US-REN-002], [US-REN-008], [US-GEM-002], [US-GEM-004], [US-GEM-009]
+:Traced Stories: [US-REN-002], [US-REN-004], [US-REN-010], [US-GEM-008], [US-GEM-010]
 :File Extensions: ``.mx``, ``.macros``
 
 1. Executive Summary & Design Principles
@@ -40,7 +40,7 @@ Token Classes:
 3. Syntax & Formal Grammar (EBNF)
 =================================
 
-.. code-block:: ebnf
+.. code-block:: text
 
    Program        ::= Statement* EOF
    Statement      ::= FunctionDecl | IfStmt | WhileStmt | ReturnStmt | Block | AssignStmt | ExprStmt
@@ -98,7 +98,7 @@ The self-hosting architecture ensures that Macros can compile itself within Micr
 8. Traceability & Acceptance Criteria
 =====================================
 - **[US-REN-002]**: Verifies execution of ``.mx``/``.macros`` scripts via standalone runner ``/bin/macros`` and shell ``msh``.
-- **[US-REN-008]**: Verifies zero memory fragmentation and deterministic line recycling via Immix GC.
-- **[US-GEM-002]**: Verifies cooperative fiber dispatch and assembly context switching.
-- **[US-GEM-004]**: Verifies AST construction, recursive descent parsing, and evaluation without libc.
-- **[US-GEM-009]**: Verifies self-hosting compiler compilation and execution pipeline.
+- **[US-REN-004]**: Verifies zero-libc substrate determinism, AST construction, and evaluation directly on Linux syscalls.
+- **[US-REN-010]**: Verifies green-thread concurrent fiber scheduling and assembly context switching.
+- **[US-GEM-008]**: Verifies isolated Immix GC heap partitioning, 128-byte line recycling, and zero memory fragmentation.
+- **[US-GEM-010]**: Verifies context-window-optimized architecture with modules under 1,000 lines.
