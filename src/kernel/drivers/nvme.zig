@@ -153,6 +153,27 @@ pub fn calcPrpChaining(
     return .{ .prp1 = prp1, .prp2 = prp_list_phys };
 }
 
+pub fn calcPrpChainingScatter(
+    phys_pages: []const u64,
+    total_bytes: usize,
+    prp_list_phys: u64,
+    prp_list: [*]u64,
+) struct { prp1: u64, prp2: u64 } {
+    if (phys_pages.len == 0) return .{ .prp1 = 0, .prp2 = 0 };
+    const prp1 = phys_pages[0];
+    if (total_bytes <= PAGE_SIZE or phys_pages.len == 1) {
+        return .{ .prp1 = prp1, .prp2 = 0 };
+    }
+    if (total_bytes <= 2 * PAGE_SIZE or phys_pages.len == 2) {
+        return .{ .prp1 = prp1, .prp2 = phys_pages[1] };
+    }
+    var i: usize = 0;
+    while (i < phys_pages.len - 1) : (i += 1) {
+        prp_list[i] = phys_pages[i + 1];
+    }
+    return .{ .prp1 = prp1, .prp2 = prp_list_phys };
+}
+
 pub const NvmeQueue = struct {
     qid: u16,
     size: u16,
@@ -549,6 +570,17 @@ test "nvme prp chaining calculation" {
     try std.testing.expectEqual(@as(u64, 0x20000), prp_3p.prp2);
     try std.testing.expectEqual(@as(u64, 0x11000), prp_list[0]);
     try std.testing.expectEqual(@as(u64, 0x12000), prp_list[1]);
+}
+
+test "nvme scatter prp chaining calculation" {
+    var prp_list: [512]u64 = [_]u64{0} ** 512;
+    const scatter_pages = [_]u64{ 0x10000, 0x50000, 0x90000 };
+
+    const prp_scatter = calcPrpChainingScatter(&scatter_pages, 12288, 0x20000, &prp_list);
+    try std.testing.expectEqual(@as(u64, 0x10000), prp_scatter.prp1);
+    try std.testing.expectEqual(@as(u64, 0x20000), prp_scatter.prp2);
+    try std.testing.expectEqual(@as(u64, 0x50000), prp_list[0]);
+    try std.testing.expectEqual(@as(u64, 0x90000), prp_list[1]);
 }
 
 test "nvme block device interface mock" {

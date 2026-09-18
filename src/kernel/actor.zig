@@ -3,6 +3,8 @@
 // Eradicates legacy Unix process (PID) model with zero ambient authority.
 
 const std = @import("std");
+const builtin = @import("builtin");
+const io = @import("arch/x86_64/io.zig");
 const cspace_mod = @import("cap/cspace.zig");
 const CSpace = cspace_mod.CSpace;
 const capability_mod = @import("cap/capability.zig");
@@ -148,12 +150,27 @@ pub const Actor = struct {
 pub const ActorRegistry = struct {
     actors: [MAX_ACTORS]?*Actor,
     active_count: usize,
+    lock: std.atomic.Value(u32),
 
     pub fn init() ActorRegistry {
         return ActorRegistry{
             .actors = [_]?*Actor{null} ** MAX_ACTORS,
             .active_count = 0,
+            .lock = std.atomic.Value(u32).init(0),
         };
+    }
+
+    fn acquireLock(self: *ActorRegistry) u64 {
+        const flags = if (!builtin.is_test) io.pushfqAndCli() else 0;
+        while (self.lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            if (!builtin.is_test) io.pause();
+        }
+        return flags;
+    }
+
+    fn releaseLock(self: *ActorRegistry, flags: u64) void {
+        self.lock.store(0, .release);
+        if (!builtin.is_test) io.popfq(flags);
     }
 
     pub fn get(self: *const ActorRegistry, id: u32) ?*Actor {
@@ -170,6 +187,8 @@ pub const ActorRegistry = struct {
     }
 
     pub fn register(self: *ActorRegistry, actor: *Actor) ActorError!void {
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
         if (actor.id >= MAX_ACTORS) return ActorError.RegistryFull;
         if (self.actors[actor.id] != null) return ActorError.RegistryFull;
         self.actors[actor.id] = actor;
@@ -184,6 +203,9 @@ pub const ActorRegistry = struct {
         cspace_capacity: usize,
         page_table_base: u64,
     ) !*Actor {
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
         const id = self.findFreeId() orelse return ActorError.RegistryFull;
         const actor = try Actor.initWithSupervisor(
             allocator,
@@ -195,7 +217,9 @@ pub const ActorRegistry = struct {
         );
         errdefer actor.deinit(allocator);
 
-        try self.register(actor);
+        if (self.actors[id] != null) return ActorError.RegistryFull;
+        self.actors[id] = actor;
+        self.active_count += 1;
         return actor;
     }
 
@@ -203,7 +227,15 @@ pub const ActorRegistry = struct {
 
     pub fn terminate(self: *ActorRegistry, allocator: std.mem.Allocator, id: u32) ActorError!void {
         if (id >= MAX_ACTORS) return ActorError.ActorNotFound;
-        const actor = self.actors[id] orelse return ActorError.ActorNotFound;
+        const flags = self.acquireLock();
+        const actor = self.actors[id] orelse {
+            self.releaseLock(flags);
+            return ActorError.ActorNotFound;
+        };
+        self.actors[id] = null;
+        self.active_count -= 1;
+        self.releaseLock(flags);
+
         actor.state = .terminated;
         if (actor.page_table_base != 0) {
             if (page_table_destructor) |destroy_fn| {
@@ -211,8 +243,6 @@ pub const ActorRegistry = struct {
             }
             actor.page_table_base = 0;
         }
-        self.actors[id] = null;
-        self.active_count -= 1;
         actor.deinit(allocator);
     }
 };

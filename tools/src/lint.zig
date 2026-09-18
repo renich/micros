@@ -93,7 +93,7 @@ const Linter = struct {
             return;
         }
         state.current_nesting += 1;
-        if (state.in_function) {
+        if (state.in_function and state.current_nesting >= state.func_nesting_level) {
             const rel_depth = state.current_nesting - state.func_nesting_level;
             if (rel_depth > RULES.max_nesting + 1) {
                 self.reportError(path, line, "Nesting depth exceeds maximum of 3 levels.");

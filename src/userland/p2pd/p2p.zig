@@ -294,6 +294,71 @@ pub const P2pDaemon = struct {
     pub fn peerCount(self: *const P2pDaemon) usize {
         return self.peers.count;
     }
+
+    pub fn createHandshakeInit(self: *P2pDaemon, nonce: *const [NONCE_LEN]u8) !HandshakeInitPayload {
+        const sig = try self.identity.signChallenge(nonce);
+        return HandshakeInitPayload{
+            .initiator_pubkey = self.identity.key_pair.public_key.bytes,
+            .nonce = nonce.*,
+            .signature = sig,
+        };
+    }
+
+    pub fn processHandshakeInit(
+        self: *P2pDaemon,
+        init_payload: *const HandshakeInitPayload,
+        response_nonce: *const [NONCE_LEN]u8,
+    ) !HandshakeRespPayload {
+        const valid = NodeIdentity.verifySignature(
+            &init_payload.initiator_pubkey,
+            &init_payload.nonce,
+            &init_payload.signature,
+        );
+        if (!valid) return error.InvalidHandshakeSignature;
+
+        const resp_sig = try self.identity.signChallenge(response_nonce);
+
+        var i: usize = 0;
+        while (i < self.peers.count) : (i += 1) {
+            if (self.peers.peers[i]) |*p| {
+                if (std.mem.eql(u8, &p.pubkey, &init_payload.initiator_pubkey)) {
+                    p.authenticated = true;
+                    break;
+                }
+            }
+        }
+
+        return HandshakeRespPayload{
+            .responder_pubkey = self.identity.key_pair.public_key.bytes,
+            .nonce = response_nonce.*,
+            .signature = resp_sig,
+            .session_status = 1,
+        };
+    }
+
+    pub fn processHandshakeResp(
+        self: *P2pDaemon,
+        resp_payload: *const HandshakeRespPayload,
+    ) !void {
+        if (resp_payload.session_status != 1) return error.HandshakeRejected;
+        const valid = NodeIdentity.verifySignature(
+            &resp_payload.responder_pubkey,
+            &resp_payload.nonce,
+            &resp_payload.signature,
+        );
+        if (!valid) return error.InvalidHandshakeSignature;
+
+        var i: usize = 0;
+        while (i < self.peers.count) : (i += 1) {
+            if (self.peers.peers[i]) |*p| {
+                if (std.mem.eql(u8, &p.pubkey, &resp_payload.responder_pubkey)) {
+                    p.authenticated = true;
+                    return;
+                }
+            }
+        }
+        return error.PeerNotFound;
+    }
 };
 
 // === Colocated Unit Tests ===
@@ -416,4 +481,42 @@ test "P2P wire frame serialization and integrity parsing" {
     frame_buf[frame_len - 1] ^= 0x01;
     const err = parseFrame(frame_buf[0..frame_len], &parsed_header);
     try std.testing.expectError(error.ChecksumMismatch, err);
+}
+
+test "P2P mutual cryptographic handshake authentication" {
+    const seed_a = [_]u8{0x11} ** 32;
+    const seed_b = [_]u8{0x22} ** 32;
+
+    var node_a = try P2pDaemon.init(std.testing.allocator, seed_a, 8080);
+    var node_b = try P2pDaemon.init(std.testing.allocator, seed_b, 8081);
+
+    // Node A discovers Node B via beacon
+    var beacon_b: [74]u8 = undefined;
+    node_b.formatBeacon(&beacon_b);
+    _ = try node_a.handleIncomingBeacon(&beacon_b, [_]u8{ 192, 168, 100, 2 }, 10);
+    try std.testing.expectEqual(false, node_a.peers.peers[0].?.authenticated);
+
+    // Node B discovers Node A via beacon
+    var beacon_a: [74]u8 = undefined;
+    node_a.formatBeacon(&beacon_a);
+    _ = try node_b.handleIncomingBeacon(&beacon_a, [_]u8{ 192, 168, 100, 1 }, 10);
+    try std.testing.expectEqual(false, node_b.peers.peers[0].?.authenticated);
+
+    // Node A initiates handshake
+    const nonce_a = [_]u8{0xAA} ** NONCE_LEN;
+    const init_payload = try node_a.createHandshakeInit(&nonce_a);
+
+    // Node B processes handshake init and produces response
+    const nonce_b = [_]u8{0xBB} ** NONCE_LEN;
+    const resp_payload = try node_b.processHandshakeInit(&init_payload, &nonce_b);
+    try std.testing.expectEqual(true, node_b.peers.peers[0].?.authenticated);
+
+    // Node A processes handshake response
+    try node_a.processHandshakeResp(&resp_payload);
+    try std.testing.expectEqual(true, node_a.peers.peers[0].?.authenticated);
+
+    // Tampered signature rejection
+    var tampered_resp = resp_payload;
+    tampered_resp.signature[0] ^= 0xFF;
+    try std.testing.expectError(error.InvalidHandshakeSignature, node_a.processHandshakeResp(&tampered_resp));
 }

@@ -71,109 +71,17 @@ fn get_punct_str(c) {
     return "";
 }
 
-fn match_len_2(lexeme) {
-    if (lexeme[0] == 102) {
-        if (lexeme[1] == 110) { return 3; }
-    }
-    if (lexeme[0] == 105) {
-        if (lexeme[1] == 102) { return 5; }
-    }
-    return 0;
-}
-
-fn match_len_4(lexeme) {
-    if (lexeme[0] == 101) {
-        if (lexeme[1] == 108) {
-            if (lexeme[2] == 115) {
-                if (lexeme[3] == 101) { return 6; }
-            }
-        }
-    }
-    if (lexeme[0] == 116) {
-        if (lexeme[1] == 114) {
-            if (lexeme[2] == 117) {
-                if (lexeme[3] == 101) { return 8; }
-            }
-        }
-    }
-    return 0;
-}
-
-fn match_len_5(lexeme) {
-    if (lexeme[0] == 119) {
-        if (lexeme[1] == 104) {
-            if (lexeme[2] == 105) {
-                if (lexeme[3] == 108) {
-                    if (lexeme[4] == 101) { return 7; }
-                }
-            }
-        }
-    }
-    if (lexeme[0] == 102) {
-        if (lexeme[1] == 97) {
-            if (lexeme[2] == 108) {
-                if (lexeme[3] == 115) {
-                    if (lexeme[4] == 101) { return 9; }
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-fn match_len_6(lexeme) {
-    if (lexeme[0] == 114) {
-        if (lexeme[1] == 101) {
-            if (lexeme[2] == 116) {
-                if (lexeme[3] == 117) {
-                    if (lexeme[4] == 114) {
-                        if (lexeme[5] == 110) { return 4; }
-                    }
-                }
-            }
-        }
-    }
-    if (lexeme[0] == 105) {
-        if (lexeme[1] == 109) {
-            if (lexeme[2] == 112) {
-                if (lexeme[3] == 111) {
-                    if (lexeme[4] == 114) {
-                        if (lexeme[5] == 116) { return 41; }
-                    }
-                }
-            }
-        }
-    }
-    if (lexeme[0] == 101) {
-        if (lexeme[1] == 120) {
-            if (lexeme[2] == 112) {
-                if (lexeme[3] == 111) {
-                    if (lexeme[4] == 114) {
-                        if (lexeme[5] == 116) { return 42; }
-                    }
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-fn match_len_3(lexeme) {
-    if (lexeme[0] == 110) {
-        if (lexeme[1] == 105) {
-            if (lexeme[2] == 108) { return 32; }
-        }
-    }
-    return 0;
-}
-
 fn match_keyword(lexeme) {
-    len_lex = len(lexeme);
-    if (len_lex == 2) { return match_len_2(lexeme); }
-    if (len_lex == 3) { return match_len_3(lexeme); }
-    if (len_lex == 4) { return match_len_4(lexeme); }
-    if (len_lex == 5) { return match_len_5(lexeme); }
-    if (len_lex == 6) { return match_len_6(lexeme); }
+    if (lexeme == "fn") { return 3; }
+    if (lexeme == "if") { return 5; }
+    if (lexeme == "nil") { return 32; }
+    if (lexeme == "else") { return 6; }
+    if (lexeme == "true") { return 8; }
+    if (lexeme == "while") { return 7; }
+    if (lexeme == "false") { return 9; }
+    if (lexeme == "return") { return 4; }
+    if (lexeme == "import") { return 41; }
+    if (lexeme == "export") { return 42; }
     return 0;
 }
 

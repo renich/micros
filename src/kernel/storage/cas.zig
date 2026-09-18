@@ -9,7 +9,9 @@ const block = @import("../drivers/block.zig");
 
 pub const CAS_SUPERBLOCK_MAGIC: u32 = 0x4D494352; // "MICR"
 pub const CAS_SUPERBLOCK_VERSION: u32 = 1;
-pub const SECTOR_SUPERBLOCK: u64 = 0;
+pub const SECTOR_SUPERBLOCK_A: u64 = 0;
+pub const SECTOR_SUPERBLOCK_B: u64 = 1;
+pub const SECTOR_SUPERBLOCK: u64 = SECTOR_SUPERBLOCK_A;
 pub const SECTOR_FIRST_CHUNK: u64 = 8;
 pub const SECTOR_SIZE: usize = 512;
 pub const FIRST_SECTOR_DATA_CAPACITY: usize = SECTOR_SIZE - chunk_mod.CHUNK_HEADER_SIZE; // 448
@@ -29,24 +31,30 @@ pub const CasSuperblock = extern struct {
 pub const CasEngine = struct {
     cache: *block_cache.BlockCache,
     superblock: CasSuperblock,
+    active_sector: u64 = SECTOR_SUPERBLOCK_A,
 
     pub fn init(cache: *block_cache.BlockCache, dev: ?*block.BlockDevice, total_sectors: u64) !CasEngine {
-        var sec_buf: [SECTOR_SIZE]u8 align(@alignOf(CasSuperblock)) = undefined;
-        try cache.readSector(SECTOR_SUPERBLOCK, &sec_buf, dev);
+        const sb_a = readAndValidateSb(cache, SECTOR_SUPERBLOCK_A, dev);
+        const sb_b = readAndValidateSb(cache, SECTOR_SUPERBLOCK_B, dev);
 
-        const sb_ptr: *const CasSuperblock = @ptrCast(@alignCast(&sec_buf));
-        if (sb_ptr.magic != CAS_SUPERBLOCK_MAGIC) {
+        if (sb_a == null and sb_b == null) {
             const formatted_sb = formatSuperblock(total_sectors);
-            try writeSuperblock(cache, &formatted_sb, dev);
-            return CasEngine{ .cache = cache, .superblock = formatted_sb };
+            try writeSuperblockAt(cache, SECTOR_SUPERBLOCK_A, &formatted_sb, dev);
+            try writeSuperblockAt(cache, SECTOR_SUPERBLOCK_B, &formatted_sb, dev);
+            return CasEngine{ .cache = cache, .superblock = formatted_sb, .active_sector = SECTOR_SUPERBLOCK_A };
         }
 
-        const computed_csum = computeSbChecksum(sb_ptr);
-        if (!std.mem.eql(u8, &computed_csum, &sb_ptr.checksum)) {
-            return error.CorruptedSuperblock;
+        if (sb_a != null and sb_b != null) {
+            if (sb_b.?.generation > sb_a.?.generation) {
+                return CasEngine{ .cache = cache, .superblock = sb_b.?, .active_sector = SECTOR_SUPERBLOCK_B };
+            }
+            return CasEngine{ .cache = cache, .superblock = sb_a.?, .active_sector = SECTOR_SUPERBLOCK_A };
         }
 
-        return CasEngine{ .cache = cache, .superblock = sb_ptr.* };
+        if (sb_a) |a| {
+            return CasEngine{ .cache = cache, .superblock = a, .active_sector = SECTOR_SUPERBLOCK_A };
+        }
+        return CasEngine{ .cache = cache, .superblock = sb_b.?, .active_sector = SECTOR_SUPERBLOCK_B };
     }
 
     pub fn putChunk(
@@ -70,7 +78,9 @@ pub const CasEngine = struct {
         self.superblock.generation += 1;
         self.superblock.checksum = computeSbChecksum(&self.superblock);
 
-        try writeSuperblock(self.cache, &self.superblock, dev);
+        const target_sec = if (self.active_sector == SECTOR_SUPERBLOCK_A) SECTOR_SUPERBLOCK_B else SECTOR_SUPERBLOCK_A;
+        try writeSuperblockAt(self.cache, target_sec, &self.superblock, dev);
+        self.active_sector = target_sec;
         return hash;
     }
 
@@ -129,7 +139,10 @@ pub const CasEngine = struct {
         self.superblock.root_hash = root.*;
         self.superblock.generation += 1;
         self.superblock.checksum = computeSbChecksum(&self.superblock);
-        try writeSuperblock(self.cache, &self.superblock, dev);
+
+        const target_sec = if (self.active_sector == SECTOR_SUPERBLOCK_A) SECTOR_SUPERBLOCK_B else SECTOR_SUPERBLOCK_A;
+        try writeSuperblockAt(self.cache, target_sec, &self.superblock, dev);
+        self.active_sector = target_sec;
     }
 
     pub fn getRootHash(self: *const CasEngine) [chunk_mod.HASH_SIZE]u8 {
@@ -157,10 +170,24 @@ fn computeSbChecksum(sb: *const CasSuperblock) [chunk_mod.HASH_SIZE]u8 {
     return chunk_mod.computeBlake3Hash(raw[0..checksum_offset]);
 }
 
-fn writeSuperblock(cache: *block_cache.BlockCache, sb: *const CasSuperblock, dev: ?*block.BlockDevice) !void {
+fn readAndValidateSb(cache: *block_cache.BlockCache, sec: u64, dev: ?*block.BlockDevice) ?CasSuperblock {
+    var sec_buf: [SECTOR_SIZE]u8 align(@alignOf(CasSuperblock)) = undefined;
+    cache.readSector(sec, &sec_buf, dev) catch return null;
+    const sb_ptr: *const CasSuperblock = @ptrCast(@alignCast(&sec_buf));
+    if (sb_ptr.magic != CAS_SUPERBLOCK_MAGIC) return null;
+    const computed_csum = computeSbChecksum(sb_ptr);
+    if (!std.mem.eql(u8, &computed_csum, &sb_ptr.checksum)) return null;
+    return sb_ptr.*;
+}
+
+fn writeSuperblockAt(cache: *block_cache.BlockCache, sec: u64, sb: *const CasSuperblock, dev: ?*block.BlockDevice) !void {
     const raw: *const [SECTOR_SIZE]u8 = @ptrCast(@alignCast(sb));
-    try cache.writeSector(SECTOR_SUPERBLOCK, raw, dev);
+    try cache.writeSector(sec, raw, dev);
     try cache.flush(dev);
+}
+
+fn writeSuperblock(cache: *block_cache.BlockCache, sb: *const CasSuperblock, dev: ?*block.BlockDevice) !void {
+    try writeSuperblockAt(cache, SECTOR_SUPERBLOCK_A, sb, dev);
 }
 
 fn writeChunkData(
@@ -344,4 +371,73 @@ test "cas engine operating over partition slice" {
     try std.testing.expectEqual(@as(u8, 0xEE), raw_disk.sectors[0][0]);
     const sb_magic = std.mem.readInt(u32, raw_disk.sectors[50][0..4], .little);
     try std.testing.expectEqual(CAS_SUPERBLOCK_MAGIC, sb_magic);
+}
+
+test "cas engine dual-superblock A/B power failure resilience" {
+    var raw_disk = struct {
+        sectors: [200][SECTOR_SIZE]u8 = [_][SECTOR_SIZE]u8{[_]u8{0} ** SECTOR_SIZE} ** 200,
+        device: block.BlockDevice = undefined,
+
+        pub fn init(self: *@This()) *block.BlockDevice {
+            self.device = block.BlockDevice{
+                .ptr = @ptrCast(self),
+                .vtable = &vtable,
+                .total_sectors = 200,
+            };
+            return &self.device;
+        }
+
+        const vtable = block.BlockDevice.VTable{
+            .readSector = mockRead,
+            .writeSector = mockWrite,
+            .readSectors = mockReads,
+            .writeSectors = mockWrites,
+            .flush = mockFlush,
+        };
+
+        fn mockRead(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            @memcpy(buf, &self.sectors[lba]);
+        }
+
+        fn mockWrite(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            @memcpy(&self.sectors[lba], buf);
+        }
+
+        fn mockReads(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            for (0..count) |i| {
+                @memcpy(buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE], &self.sectors[lba + i]);
+            }
+        }
+
+        fn mockWrites(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            for (0..count) |i| {
+                @memcpy(&self.sectors[lba + i], buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
+            }
+        }
+
+        fn mockFlush(_: *anyopaque) anyerror!void {}
+    }{};
+
+    const disk_dev = raw_disk.init();
+    var cache = try block_cache.BlockCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    var cas = try CasEngine.init(&cache, disk_dev, 200);
+    _ = try cas.putChunk(.raw_blob, "Crash Recovery Payload", disk_dev);
+
+    // Corrupt Sector 0 (Superblock A) to simulate power failure mid-write
+    @memset(&raw_disk.sectors[0], 0xDE);
+
+    // Mount with new cache: should seamlessly recover state from Sector 1 (Superblock B)
+    var cache2 = try block_cache.BlockCache.init(std.testing.allocator);
+    defer cache2.deinit();
+
+    const recovered_cas = try CasEngine.init(&cache2, disk_dev, 200);
+    try std.testing.expectEqual(CAS_SUPERBLOCK_MAGIC, recovered_cas.superblock.magic);
+    try std.testing.expect(recovered_cas.superblock.generation > 0);
+    try std.testing.expectEqual(SECTOR_SUPERBLOCK_B, recovered_cas.active_sector);
 }

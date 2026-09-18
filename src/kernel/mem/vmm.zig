@@ -10,6 +10,7 @@ pub const PAGE_WRITABLE: u64 = 1 << 1;
 pub const PAGE_USER: u64 = 1 << 2;
 pub const PAGE_HUGE: u64 = 1 << 7;
 pub const PAGE_ANON: u64 = 1 << 9;
+pub const PAGE_MMIO: u64 = 1 << 10;
 pub const PAGE_NO_EXECUTE: u64 = 1 << 63;
 
 pub const PageTable = extern struct {
@@ -36,45 +37,26 @@ pub fn init(hhdm_offset: u64) void {
     }
 }
 
-pub fn mapPage(pml4_phys: u64, virt: u64, phys: u64, flags: u64) bool {
-    const pml4_idx = (virt >> 39) & 0x1FF;
-    const pdpt_idx = (virt >> 30) & 0x1FF;
-    const pd_idx = (virt >> 21) & 0x1FF;
-    const pt_idx = (virt >> 12) & 0x1FF;
+fn getOrCreateSubtable(parent: *PageTable, idx: u64, flags: u64) ?*PageTable {
+    if ((parent.entries[idx] & PAGE_PRESENT) == 0) {
+        const new_table = pmm.allocPage() orelse return null;
+        const subtable: *PageTable = @ptrFromInt(new_table + hhdm_base);
+        for (&subtable.entries) |*e| e.* = 0;
+        parent.entries[idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE | (flags & PAGE_USER);
+        return subtable;
+    }
+    return @ptrFromInt((parent.entries[idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+}
 
+pub fn mapPage(pml4_phys: u64, virt: u64, phys: u64, flags: u64) bool {
+    const eff_flags = if ((flags & PAGE_MMIO) != 0) (flags & ~PAGE_ANON) else flags;
     const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
 
-    // PML4 -> PDPT
-    if ((pml4.entries[pml4_idx] & PAGE_PRESENT) == 0) {
-        const new_table = pmm.allocPage() orelse return false;
-        const pdpt: *PageTable = @ptrFromInt(new_table + hhdm_base);
-        for (&pdpt.entries) |*e| e.* = 0;
-        pml4.entries[pml4_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE | (flags & PAGE_USER);
-    }
+    const pdpt = getOrCreateSubtable(pml4, (virt >> 39) & 0x1FF, eff_flags) orelse return false;
+    const pd = getOrCreateSubtable(pdpt, (virt >> 30) & 0x1FF, eff_flags) orelse return false;
+    const pt = getOrCreateSubtable(pd, (virt >> 21) & 0x1FF, eff_flags) orelse return false;
 
-    const pdpt: *PageTable = @ptrFromInt((pml4.entries[pml4_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
-
-    // PDPT -> PD
-    if ((pdpt.entries[pdpt_idx] & PAGE_PRESENT) == 0) {
-        const new_table = pmm.allocPage() orelse return false;
-        const pd: *PageTable = @ptrFromInt(new_table + hhdm_base);
-        for (&pd.entries) |*e| e.* = 0;
-        pdpt.entries[pdpt_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE | (flags & PAGE_USER);
-    }
-
-    const pd: *PageTable = @ptrFromInt((pdpt.entries[pdpt_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
-
-    // PD -> PT
-    if ((pd.entries[pd_idx] & PAGE_PRESENT) == 0) {
-        const new_table = pmm.allocPage() orelse return false;
-        const pt: *PageTable = @ptrFromInt(new_table + hhdm_base);
-        for (&pt.entries) |*e| e.* = 0;
-        pd.entries[pd_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE | (flags & PAGE_USER);
-    }
-
-    const pt: *PageTable = @ptrFromInt((pd.entries[pd_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
-    pt.entries[pt_idx] = (phys & 0x000F_FFFF_FFFF_F000) | flags;
-
+    pt.entries[(virt >> 12) & 0x1FF] = (phys & 0x000F_FFFF_FFFF_F000) | eff_flags;
     return true;
 }
 
@@ -97,7 +79,7 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return false;
 
     const pte = pt.entries[pt_idx];
-    if ((pte & PAGE_ANON) != 0) {
+    if ((pte & PAGE_ANON) != 0 and (pte & PAGE_MMIO) == 0) {
         pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
     }
 
@@ -225,7 +207,7 @@ fn freePt(pd_entry: u64) void {
     const pt_phys = pd_entry & 0x000F_FFFF_FFFF_F000;
     const pt: *PageTable = @ptrFromInt(pt_phys + hhdm_base);
     for (pt.entries) |pte| {
-        if ((pte & PAGE_PRESENT) != 0 and (pte & PAGE_USER) != 0 and (pte & PAGE_ANON) != 0) {
+        if ((pte & PAGE_PRESENT) != 0 and (pte & PAGE_USER) != 0 and (pte & PAGE_ANON) != 0 and (pte & PAGE_MMIO) == 0) {
             pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
         }
     }
@@ -444,4 +426,36 @@ test "vmm protectPage modifies W^X permission flags on leaf PTE" {
     try std.testing.expect(protectPage(pml4_phys, test_virt, 3));
     try std.testing.expect((pt.entries[pt_idx] & PAGE_WRITABLE) != 0);
     try std.testing.expect((pt.entries[pt_idx] & PAGE_NO_EXECUTE) != 0);
+}
+
+test "vmm unmapPage preserves hardware MMIO physical frames" {
+    var pml4 align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pdpt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pd align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+
+    const saved_hhdm = hhdm_base;
+    defer hhdm_base = saved_hhdm;
+    hhdm_base = 0;
+
+    const pml4_phys = @intFromPtr(&pml4);
+    const pdpt_phys = @intFromPtr(&pdpt);
+    const pd_phys = @intFromPtr(&pd);
+    const pt_phys = @intFromPtr(&pt);
+
+    const test_virt: u64 = 0x0000_0000_4000_0000;
+    const pml4_idx = (test_virt >> 39) & 0x1FF;
+    const pdpt_idx = (test_virt >> 30) & 0x1FF;
+    const pd_idx = (test_virt >> 21) & 0x1FF;
+    const pt_idx = (test_virt >> 12) & 0x1FF;
+
+    pml4.entries[pml4_idx] = pdpt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pdpt.entries[pdpt_idx] = pd_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pd.entries[pd_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    // Map with PAGE_MMIO | PAGE_ANON (PAGE_MMIO must override PAGE_ANON)
+    pt.entries[pt_idx] = 0xFD00_0000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_MMIO | PAGE_ANON;
+
+    const unmapped = unmapPage(pml4_phys, test_virt);
+    try std.testing.expect(unmapped);
+    try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx]);
 }
