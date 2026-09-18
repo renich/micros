@@ -166,6 +166,42 @@ pub fn virtToPhys(pml4_phys: u64, virt: u64) ?u64 {
     return (pte & 0x000F_FFFF_FFFF_F000) | (virt & 0xFFF);
 }
 
+fn clearPageAnon(pml4_phys: u64, virt: u64) void {
+    const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
+    const pml4e = pml4.entries[(virt >> 39) & 0x1FF];
+    if ((pml4e & PAGE_PRESENT) == 0) return;
+
+    const pdpt: *PageTable = @ptrFromInt((pml4e & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pdpte = pdpt.entries[(virt >> 30) & 0x1FF];
+    if ((pdpte & PAGE_PRESENT) == 0 or (pdpte & PAGE_HUGE) != 0) return;
+
+    const pd: *PageTable = @ptrFromInt((pdpte & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pde = pd.entries[(virt >> 21) & 0x1FF];
+    if ((pde & PAGE_PRESENT) == 0 or (pde & PAGE_HUGE) != 0) return;
+
+    const pt: *PageTable = @ptrFromInt((pde & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pt_idx = (virt >> 12) & 0x1FF;
+    if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return;
+
+    pt.entries[pt_idx] &= ~PAGE_ANON;
+}
+
+pub fn pinDmaPages(pml4_phys: u64, virt_addr: u64, len_bytes: usize) ?u64 {
+    if (len_bytes == 0) return null;
+    const first_phys = virtToPhys(pml4_phys, virt_addr) orelse return null;
+    var offset: usize = 0;
+    while (offset < len_bytes) : (offset += 4096) {
+        const expected = first_phys + offset;
+        const page_phys = virtToPhys(pml4_phys, virt_addr + offset) orelse return null;
+        if (page_phys != expected) return null;
+    }
+    offset = 0;
+    while (offset < len_bytes) : (offset += 4096) {
+        clearPageAnon(pml4_phys, virt_addr + offset);
+    }
+    return first_phys;
+}
+
 pub fn loadPageTable(pml4_phys: u64) void {
     if (builtin.is_test) return;
     asm volatile ("movq %[cr3], %%cr3"
@@ -236,6 +272,9 @@ fn freePdpt(pml4_entry: u64) void {
 
 pub fn destroyActorAddressSpace(actor_pml4_phys: u64) void {
     if (actor_pml4_phys == 0) return;
+    if (readCr3() == actor_pml4_phys) {
+        switchAddressSpace(kernel_pml4_phys);
+    }
     const pml4: *PageTable = @ptrFromInt(actor_pml4_phys + hhdm_base);
     for (pml4.entries[0..256]) |entry| {
         freePdpt(entry);
@@ -459,4 +498,38 @@ test "vmm unmapPage preserves hardware MMIO physical frames" {
     const unmapped = unmapPage(pml4_phys, test_virt);
     try std.testing.expect(unmapped);
     try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx]);
+}
+
+test "vmm pinDmaPages verifies contiguity and clears PAGE_ANON" {
+    var pml4 align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pdpt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pd align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+
+    const saved_hhdm = hhdm_base;
+    defer hhdm_base = saved_hhdm;
+    hhdm_base = 0;
+
+    const pml4_phys = @intFromPtr(&pml4);
+    const pdpt_phys = @intFromPtr(&pdpt);
+    const pd_phys = @intFromPtr(&pd);
+    const pt_phys = @intFromPtr(&pt);
+
+    const test_virt: u64 = 0x0000_0000_4000_0000;
+    const pml4_idx = (test_virt >> 39) & 0x1FF;
+    const pdpt_idx = (test_virt >> 30) & 0x1FF;
+    const pd_idx = (test_virt >> 21) & 0x1FF;
+    const pt_idx = (test_virt >> 12) & 0x1FF;
+
+    pml4.entries[pml4_idx] = pdpt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pdpt.entries[pdpt_idx] = pd_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pd.entries[pd_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pt.entries[pt_idx] = 0x6000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_ANON;
+    pt.entries[pt_idx + 1] = 0x7000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_ANON;
+
+    const pinned = pinDmaPages(pml4_phys, test_virt, 8192);
+    try std.testing.expect(pinned != null);
+    try std.testing.expectEqual(@as(u64, 0x6000), pinned.?);
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_ANON) == 0);
+    try std.testing.expect((pt.entries[pt_idx + 1] & PAGE_ANON) == 0);
 }

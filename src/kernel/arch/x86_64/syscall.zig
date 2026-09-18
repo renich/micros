@@ -2,6 +2,7 @@
 // Provides fast userland syscall/sysret transitions with unforgeable stack isolation and CSpace gating.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const io = @import("io.zig");
 const serial = @import("../../serial.zig");
 const actor_mod = @import("../../actor.zig");
@@ -158,12 +159,17 @@ fn handleActorSpawn(name_ptr: u64, name_len: u64) i64 {
     if (name_ptr >= USERLAND_MAX or name_len > USERLAND_MAX - name_ptr) return -3;
     const reg = actor_mod.active_registry orelse return -2;
     const alloc = kernel_allocator orelse return -2;
-    const name: []const u8 = @as([*]const u8, @ptrFromInt(name_ptr))[0..@intCast(name_len)];
-    const pml4_phys = vmm.createActorAddressSpace() orelse return -2;
+
+    var safe_name: [32]u8 = undefined;
+    const n_len: usize = @intCast(name_len);
+    const user_slice: []const u8 = @as([*]const u8, @ptrFromInt(name_ptr))[0..n_len];
+    @memcpy(safe_name[0..n_len], user_slice);
+
+    const pml4_phys = vmm.createActorAddressSpace() orelse (if (builtin.is_test) 0 else return -2);
     const child = reg.spawn(
         alloc,
         getCurrentActorId(),
-        name,
+        safe_name[0..n_len],
         16,
         pml4_phys,
     ) catch {
@@ -445,4 +451,29 @@ test "handleActorSpawn rejects kernel virtual addresses" {
     const kernel_ptr: u64 = 0xFFFF_8000_0000_1000;
     const res = handleActorSpawn(kernel_ptr, 10);
     try std.testing.expectEqual(@as(i64, -3), res);
+}
+
+test "handleActorSpawn safe user copy and spawn" {
+    const allocator = std.testing.allocator;
+    var registry = actor_mod.ActorRegistry.init();
+    setRegistry(&registry);
+    setAllocator(allocator);
+    defer {
+        actor_mod.active_registry = null;
+        kernel_allocator = null;
+    }
+
+    const genesis = try registry.spawn(allocator, 0, "genesis", 16, 0);
+    defer registry.terminate(allocator, genesis.id) catch {};
+    setActorId(0);
+
+    const test_name = "test_worker";
+    const name_ptr: u64 = @intFromPtr(test_name.ptr);
+    const child_id = handleActorSpawn(name_ptr, test_name.len);
+    try std.testing.expect(child_id > 0);
+    defer registry.terminate(allocator, @intCast(child_id)) catch {};
+
+    const child = registry.get(@intCast(child_id)).?;
+    defer releaseActorRef(child);
+    try std.testing.expectEqualStrings("test_worker", child.getName());
 }

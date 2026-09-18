@@ -177,14 +177,7 @@ fn dmaPinBridge(virt_addr: usize, len_bytes: usize) ?u64 {
     const cr3 = vmm.readCr3();
     const pml4 = if (cr3 != 0) cr3 else vmm.kernel_pml4_phys;
     if (pml4 == 0) return @as(u64, @intCast(virt_addr));
-    const first_phys = vmm.virtToPhys(pml4, @as(u64, @intCast(virt_addr))) orelse return null;
-    var offset: usize = 4096;
-    while (offset < len_bytes) : (offset += 4096) {
-        const expected = first_phys + offset;
-        const page_phys = vmm.virtToPhys(pml4, @as(u64, @intCast(virt_addr + offset))) orelse return null;
-        if (page_phys != expected) return null;
-    }
-    return first_phys;
+    return vmm.pinDmaPages(pml4, @as(u64, @intCast(virt_addr)), len_bytes);
 }
 
 fn initNetDaemon(allocator: std.mem.Allocator) void {
