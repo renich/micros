@@ -11,6 +11,9 @@ pub const MessageType = enum(u16) {
     capability_grant = 0x0003,
     event_signal = 0x0004,
     yield_request = 0x0005,
+    net_packet = 0x0006,
+    ai_request = 0x0007,
+    ai_response = 0x0008,
 };
 
 pub const MessageFrame = extern struct {
@@ -148,4 +151,59 @@ test "RingBuffer 64-byte frame push, pop, and SPSC lock-free ordering" {
     try std.testing.expectEqualStrings("stream_frame_02", popped2.payload[0..popped2.payload_len]);
 
     try std.testing.expect(ring.isEmpty());
+}
+
+pub const SPSC_BUFFER_CAPACITY: usize = 3840;
+
+pub const SpscRingBuffer = extern struct {
+    head: u32 align(64),
+    tail: u32 align(64),
+    capacity: u32 align(64),
+    reserved: u32 align(64),
+    buffer: [SPSC_BUFFER_CAPACITY]u8,
+
+    pub fn init() SpscRingBuffer {
+        return .{
+            .head = 0,
+            .tail = 0,
+            .capacity = @intCast(SPSC_BUFFER_CAPACITY),
+            .reserved = 0,
+            .buffer = [_]u8{0} ** SPSC_BUFFER_CAPACITY,
+        };
+    }
+
+    pub fn isFull(self: *const SpscRingBuffer) bool {
+        return ((self.tail + 1) % self.capacity) == self.head;
+    }
+
+    pub fn isEmpty(self: *const SpscRingBuffer) bool {
+        return self.head == self.tail;
+    }
+
+    pub fn writeByte(self: *SpscRingBuffer, byte: u8) bool {
+        if (self.isFull()) return false;
+        self.buffer[self.tail] = byte;
+        self.tail = (self.tail + 1) % self.capacity;
+        return true;
+    }
+
+    pub fn readByte(self: *SpscRingBuffer) ?u8 {
+        if (self.isEmpty()) return null;
+        const b = self.buffer[self.head];
+        self.head = (self.head + 1) % self.capacity;
+        return b;
+    }
+};
+
+comptime {
+    std.debug.assert(@sizeOf(SpscRingBuffer) == 4096);
+}
+
+test "SpscRingBuffer page-aligned single byte FIFO roundtrip" {
+    var spsc = SpscRingBuffer.init();
+    try std.testing.expect(spsc.isEmpty());
+    try std.testing.expect(spsc.writeByte(42));
+    try std.testing.expect(!spsc.isEmpty());
+    try std.testing.expectEqual(@as(?u8, 42), spsc.readByte());
+    try std.testing.expect(spsc.isEmpty());
 }
