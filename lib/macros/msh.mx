@@ -80,6 +80,8 @@ fn cmd_help() {
     console_writeln("  commit [msg]  - Snapshot workspace into CAS (OCC)");
     console_writeln("  workspace     - Show workspace status (ws)");
     console_writeln("  edit <path>   - Launch visual text editor (vedit)");
+    console_writeln("  run <path>    - Run Macros script from workspace or bundle");
+    console_writeln("  ai <prompt>   - Conversational Resident AI query/synthesis");
     console_writeln("  kill <id>     - Terminate actor by ID");
     console_writeln("  spawn <code>  - Spawn new actor from Macros code");
     console_writeln("  store <code>  - Store raw code or text into CAS");
@@ -365,6 +367,73 @@ fn cmd_edit(path) {
     return 0;
 }
 
+fn cmd_run(path) {
+    if (len(path) == 0) {
+        console_writeln("Usage: run <path>");
+        return 0;
+    }
+    src = sys_catalog_read(path);
+    if (len(src) == 0) {
+        src = sys_bundle_read(path);
+    }
+    if (len(src) == 0) {
+        console_writeln("Error: File not found or empty: " + path);
+        return 0;
+    }
+    id = sys_actor_spawn_code(path, src);
+    if (id < 0) {
+        console_writeln("Error: Failed to compile or spawn actor for " + path);
+        return 0;
+    }
+    console_writeln("Spawned Actor " + int_to_str(id) + " (" + path + ")");
+    return 0;
+}
+
+fn spawn_ai_code(code) {
+    console_writeln("[ai] Synthesized Actor code detected. Spawning...");
+    id = sys_actor_spawn_code("child_worker", code);
+    if (id < 0) {
+        console_writeln("[kernel] Failed to compile or spawn actor.");
+    } else {
+        console_writeln("[kernel] Spawned dynamic Actor " + int_to_str(id));
+    }
+    return 0;
+}
+
+fn cmd_ai(prompt) {
+    if (len(prompt) == 0) {
+        console_writeln("Usage: ai <prompt>");
+        return 0;
+    }
+    console_writeln("[ai] Querying Resident AI...");
+    resp = sys_ai_prompt(prompt);
+    if (len(resp) == 0) {
+        console_writeln("[ai] No response or network error.");
+        return 0;
+    }
+    turn = 0;
+    while (turn < 5) {
+        tool_res = sys_ai_tool_call(resp);
+        if (len(tool_res) == 0) {
+            turn = 999;
+        } else {
+            console_writeln("[ai:tool] " + tool_res);
+            resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or summarize.");
+            if (len(resp) == 0) {
+                console_writeln("[ai] Multi-turn follow-up failed.");
+                return 0;
+            }
+            turn = turn + 1;
+        }
+    }
+    code = sys_ai_extract_code(resp);
+    if (len(code) > 0) {
+        return spawn_ai_code(code);
+    }
+    console_writeln(resp);
+    return 0;
+}
+
 fn eval_workspace_cmd(cmd) {
     if (cmd == "ls") { return cmd_ls(""); }
     if (is_prefix(cmd, "ls ")) { return cmd_ls(substr(cmd, 3, len(cmd))); }
@@ -376,6 +445,10 @@ fn eval_workspace_cmd(cmd) {
     if (cmd == "workspace") { return cmd_workspace(); }
     if (cmd == "ws") { return cmd_workspace(); }
     if (is_prefix(cmd, "edit ")) { return cmd_edit(substr(cmd, 5, len(cmd))); }
+    if (cmd == "run") { return cmd_run(""); }
+    if (is_prefix(cmd, "run ")) { return cmd_run(substr(cmd, 4, len(cmd))); }
+    if (cmd == "ai") { return cmd_ai(""); }
+    if (is_prefix(cmd, "ai ")) { return cmd_ai(substr(cmd, 3, len(cmd))); }
     return 0 - 1;
 }
 

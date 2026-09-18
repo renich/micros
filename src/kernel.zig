@@ -101,6 +101,8 @@ test "Genesis Bundle contains and compiles msh.mx" {
     }
     try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
     try std_mod.testing.expect(chunk.code.items.len > 0);
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, msh_source, "fn cmd_run(path)") != null);
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, msh_source, "fn cmd_ai(prompt)") != null);
 }
 
 test "Genesis Bundle contains and compiles harness.mx" {
