@@ -73,6 +73,13 @@ fn cmd_help() {
     console_writeln("  status        - System health and telemetry");
     console_writeln("  actors        - List registered actors and state");
     console_writeln("  clear         - Clear the terminal screen");
+    console_writeln("  ls [prefix]   - List files in sovereign workspace");
+    console_writeln("  cat <path>    - Read file from sovereign workspace");
+    console_writeln("  write <p> <t> - Write text into workspace file");
+    console_writeln("  rm <path>     - Delete file from workspace");
+    console_writeln("  commit [msg]  - Snapshot workspace into CAS (OCC)");
+    console_writeln("  workspace     - Show workspace status (ws)");
+    console_writeln("  edit <path>   - Launch visual text editor (vedit)");
     console_writeln("  kill <id>     - Terminate actor by ID");
     console_writeln("  spawn <code>  - Spawn new actor from Macros code");
     console_writeln("  store <code>  - Store raw code or text into CAS");
@@ -91,6 +98,10 @@ fn cmd_status() {
     console_writeln("* Status    : Ready");
     console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active");
     console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained");
+    st = sys_catalog_status();
+    if (len(st) > 0) {
+        console_writeln("* Catalog   : " + st);
+    }
 }
 
 fn cmd_actors() {
@@ -242,7 +253,135 @@ fn cmd_reboot() {
     return 0;
 }
 
+fn cmd_ls(prefix) {
+    list_str = sys_catalog_list(prefix);
+    if (len(list_str) == 0) {
+        console_writeln("(empty workspace)");
+        return 0;
+    }
+    console_write(list_str);
+    return 0;
+}
+
+fn cmd_cat(path) {
+    if (len(path) == 0) {
+        console_writeln("Usage: cat <path>");
+        return 0;
+    }
+    content = sys_catalog_read(path);
+    if (len(content) == 0) {
+        console_writeln("Error: File not found or empty: " + path);
+        return 0;
+    }
+    console_write(content);
+    clen = len(content);
+    if (substr(content, clen - 1, clen) != "\n") {
+        console_writeln("");
+    }
+    return 0;
+}
+
+fn cmd_write(path, text) {
+    hex = sys_catalog_write(path, text);
+    if (len(hex) == 0) {
+        console_writeln("Error: Write failed for " + path);
+        return 0;
+    }
+    console_writeln("Wrote " + path + " (hash: " + substr(hex, 0, 16) + "...)");
+    return 0;
+}
+
+fn cmd_write_parse(arg) {
+    slen = len(arg);
+    sp = 0 - 1;
+    i = 0;
+    while (i < slen) {
+        if (substr(arg, i, i + 1) == " ") {
+            if (sp < 0) { sp = i; }
+        }
+        i = i + 1;
+    }
+    if (sp < 0) {
+        return cmd_write(arg, "");
+    }
+    p = substr(arg, 0, sp);
+    t = substr(arg, sp + 1, slen);
+    return cmd_write(p, t);
+}
+
+fn cmd_rm(path) {
+    if (len(path) == 0) {
+        console_writeln("Usage: rm <path>");
+        return 0;
+    }
+    ok = sys_catalog_delete(path);
+    if (ok) {
+        console_writeln("Deleted " + path);
+    } else {
+        console_writeln("Error: File not found or delete failed: " + path);
+    }
+    return 0;
+}
+
+fn cmd_commit(msg) {
+    if (len(msg) == 0) { msg = "workspace snapshot"; }
+    root = sys_catalog_commit(msg);
+    if (len(root) == 0) {
+        console_writeln("Error: Commit failed.");
+        return 0;
+    }
+    console_writeln("Committed workspace root: " + root);
+    return 0;
+}
+
+fn cmd_workspace() {
+    st = sys_catalog_status();
+    console_writeln("Workspace Status: " + st);
+    return 0;
+}
+
+fn cmd_edit(path) {
+    if (len(path) == 0) {
+        console_writeln("Usage: edit <path>");
+        return 0;
+    }
+    sys_catalog_write(".vedit_target", path);
+    src = sys_bundle_read("vedit.mx");
+    if (len(src) == 0) {
+        console_writeln("Error: vedit.mx not found in genesis bundle.");
+        return 0;
+    }
+    console_writeln("Launching Visual Text Editor for " + path + "...");
+    sys_fb_clear(CLR_BG);
+    id = sys_actor_spawn_code("vedit", src);
+    if (id < 0) {
+        console_writeln("Error: Failed to spawn vedit actor.");
+        return 0;
+    }
+    sys_actor_wait(id);
+    msh_draw_header();
+    msh_clear_screen();
+    console_writeln("Editor session finished. Returned to msh.");
+    return 0;
+}
+
+fn eval_workspace_cmd(cmd) {
+    if (cmd == "ls") { return cmd_ls(""); }
+    if (is_prefix(cmd, "ls ")) { return cmd_ls(substr(cmd, 3, len(cmd))); }
+    if (is_prefix(cmd, "cat ")) { return cmd_cat(substr(cmd, 4, len(cmd))); }
+    if (is_prefix(cmd, "write ")) { return cmd_write_parse(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "rm ")) { return cmd_rm(substr(cmd, 3, len(cmd))); }
+    if (cmd == "commit") { return cmd_commit(""); }
+    if (is_prefix(cmd, "commit ")) { return cmd_commit(substr(cmd, 7, len(cmd))); }
+    if (cmd == "workspace") { return cmd_workspace(); }
+    if (cmd == "ws") { return cmd_workspace(); }
+    if (is_prefix(cmd, "edit ")) { return cmd_edit(substr(cmd, 5, len(cmd))); }
+    return 0 - 1;
+}
+
 fn eval_command(cmd) {
+    ws_res = eval_workspace_cmd(cmd);
+    if (ws_res >= 0) { return ws_res; }
     if (cmd == "help") { return cmd_help(); }
     if (cmd == "status") { return cmd_status(); }
     if (cmd == "actors") { return cmd_actors(); }

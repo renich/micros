@@ -7,6 +7,13 @@
       "spec_ref": "docs/technical/specs/reactive-compositor.rst",
       "verification_cmd": "make check"
     },
+    "SPEC-TECH-FS-001": {
+      "last_checked": "2026-09-18T03:08:55.448Z",
+      "name": "Sovereign Catalog Broker & Semantic Workspace Substrate",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/sovereign-workspace-catalog.rst",
+      "verification_cmd": "make check"
+    },
     "SPEC-TECH-HIERARCHY-001": {
       "last_checked": "2026-09-17T19:59:23.608Z",
       "name": "Process Hierarchy Decoupling (msh App 0 and harness App 1)",

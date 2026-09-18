@@ -1,0 +1,326 @@
+// MicrOS (µOS) Sovereign Visual Text Editor (vedit)
+// Full-screen TUI text editor for UEFI GOP display and serial console.
+// Backed by BLAKE3 Content-Addressed Storage and Sovereign Workspace Catalog.
+// Zero libc, native Macros.
+
+fn init_vedit_state() {
+    CLR_TEXT = 15132390;
+    CLR_MUTED = 8226192;
+    CLR_GREEN = 4057997;
+    CLR_WARN = 15774780;
+    CLR_CYAN = 3800806;
+    CLR_BG = 0;
+    CLR_HDR = 856343;
+    CLR_BORDER = 2238254;
+    VIEW_ROWS = 45;
+    VIEW_COLS = 145;
+
+    v_fname = "scratch.txt";
+    v_lines = [];
+    v_cur_row = 0;
+    v_cur_col = 0;
+    v_scroll = 0;
+    v_dirty = false;
+    v_status = "Ready | ^S: Save | ^Q: Quit";
+    v_running = true;
+}
+
+init_vedit_state();
+
+fn split_lines(text) {
+    res = [];
+    tlen = len(text);
+    if (tlen == 0) {
+        res = push(res, "");
+        return res;
+    }
+    cur = "";
+    i = 0;
+    while (i < tlen) {
+        ch = substr(text, i, i + 1);
+        if (ch == "\n") {
+            res = push(res, cur);
+            cur = "";
+        } else if (ch != "\r") {
+            cur = cur + ch;
+        }
+        i = i + 1;
+    }
+    res = push(res, cur);
+    return res;
+}
+
+fn join_lines(lines_arr) {
+    res = "";
+    n = len(lines_arr);
+    i = 0;
+    while (i < n) {
+        if (i > 0) {
+            res = res + "\n";
+        }
+        res = res + lines_arr[i];
+        i = i + 1;
+    }
+    return res;
+}
+
+fn format_lineno(num) {
+    s = int_to_str(num);
+    slen = len(s);
+    if (slen == 1) { return "   " + s + " |"; }
+    if (slen == 2) { return "  " + s + " |"; }
+    if (slen == 3) { return " " + s + " |"; }
+    return s + " |";
+}
+
+fn draw_header(fname, is_dirty, row, col) {
+    sys_fb_draw_rect(0, 0, 1280, 24, CLR_HDR);
+    tag = "[CLEAN]";
+    if (is_dirty) { tag = "[MODIFIED]"; }
+    pos = "Ln " + int_to_str(row + 1) + ", Col " + int_to_str(col + 1);
+    info = "[vedit] " + fname + "  " + tag + "  " + pos;
+    sys_fb_draw_string(16, 4, info, CLR_TEXT, CLR_HDR);
+    sys_fb_draw_string(1020, 4, "^S: Save | ^Q: Quit", CLR_CYAN, CLR_HDR);
+    sys_fb_draw_rect(0, 24, 1280, 1, CLR_BORDER);
+}
+
+fn draw_footer(msg) {
+    sys_fb_draw_rect(0, 776, 1280, 24, CLR_HDR);
+    sys_fb_draw_string(16, 780, msg, CLR_TEXT, CLR_HDR);
+    sys_fb_draw_rect(0, 775, 1280, 1, CLR_BORDER);
+}
+
+fn draw_editor_line(vy, lineno, text, is_cur, cur_c) {
+    py = 28 + (vy * 16);
+    sys_fb_draw_rect(0, py, 1280, 16, CLR_BG);
+    l_str = format_lineno(lineno);
+    sys_fb_draw_string(8, py, l_str, CLR_MUTED, CLR_BG);
+
+    tlen = len(text);
+    if (tlen > VIEW_COLS) {
+        text = substr(text, 0, VIEW_COLS);
+    }
+    sys_fb_draw_string(56, py, text, CLR_TEXT, CLR_BG);
+
+    if (is_cur) {
+        cx = 56 + (cur_c * 8);
+        ch = " ";
+        if (cur_c < len(text)) {
+            ch = substr(text, cur_c, cur_c + 1);
+        }
+        sys_fb_draw_rect(cx, py, 8, 16, CLR_TEXT);
+        sys_fb_draw_string(cx, py, ch, CLR_BG, CLR_TEXT);
+    }
+}
+
+fn render_screen() {
+    draw_header(v_fname, v_dirty, v_cur_row, v_cur_col);
+    draw_footer(v_status);
+
+    total = len(v_lines);
+    vi = 0;
+    while (vi < VIEW_ROWS) {
+        file_line = v_scroll + vi;
+        if (file_line < total) {
+            is_c = false;
+            if (file_line == v_cur_row) { is_c = true; }
+            draw_editor_line(vi, file_line + 1, v_lines[file_line], is_c, v_cur_col);
+        } else {
+            py = 28 + (vi * 16);
+            sys_fb_draw_rect(0, py, 1280, 16, CLR_BG);
+            sys_fb_draw_string(8, py, "   ~ |", CLR_MUTED, CLR_BG);
+        }
+        vi = vi + 1;
+    }
+}
+
+fn edit_insert_char(lines_arr, r, c, ch_code) {
+    line = lines_arr[r];
+    left = substr(line, 0, c);
+    right = substr(line, c, len(line));
+    ch_str = char_to_str(ch_code);
+    lines_arr[r] = left + ch_str + right;
+}
+
+fn edit_delete_char(lines_arr, r, c) {
+    line = lines_arr[r];
+    if (c > 0) {
+        left = substr(line, 0, c - 1);
+        right = substr(line, c, len(line));
+        lines_arr[r] = left + right;
+        return lines_arr;
+    }
+    if (r > 0) {
+        prev = lines_arr[r - 1];
+        lines_arr[r - 1] = prev + line;
+        new_arr = [];
+        i = 0;
+        while (i < len(lines_arr)) {
+            if (i != r) { new_arr = push(new_arr, lines_arr[i]); }
+            i = i + 1;
+        }
+        return new_arr;
+    }
+    return lines_arr;
+}
+
+fn edit_split_line(lines_arr, r, c) {
+    cur_line = lines_arr[r];
+    left = substr(cur_line, 0, c);
+    right = substr(cur_line, c, len(cur_line));
+    lines_arr[r] = left;
+
+    new_arr = [];
+    i = 0;
+    while (i < len(lines_arr)) {
+        new_arr = push(new_arr, lines_arr[i]);
+        if (i == r) { new_arr = push(new_arr, right); }
+        i = i + 1;
+    }
+    return new_arr;
+}
+
+fn cursor_up() {
+    if (v_cur_row > 0) {
+        v_cur_row = v_cur_row - 1;
+        if (v_cur_col > len(v_lines[v_cur_row])) { v_cur_col = len(v_lines[v_cur_row]); }
+        if (v_cur_row < v_scroll) { v_scroll = v_cur_row; }
+    }
+}
+
+fn cursor_down() {
+    if (v_cur_row + 1 < len(v_lines)) {
+        v_cur_row = v_cur_row + 1;
+        if (v_cur_col > len(v_lines[v_cur_row])) { v_cur_col = len(v_lines[v_cur_row]); }
+        if (v_cur_row >= v_scroll + VIEW_ROWS) { v_scroll = v_cur_row - VIEW_ROWS + 1; }
+    }
+}
+
+fn cursor_left() {
+    if (v_cur_col > 0) {
+        v_cur_col = v_cur_col - 1;
+    } else if (v_cur_row > 0) {
+        v_cur_row = v_cur_row - 1;
+        v_cur_col = len(v_lines[v_cur_row]);
+        if (v_cur_row < v_scroll) { v_scroll = v_cur_row; }
+    }
+}
+
+fn cursor_right() {
+    if (v_cur_col < len(v_lines[v_cur_row])) {
+        v_cur_col = v_cur_col + 1;
+    } else if (v_cur_row + 1 < len(v_lines)) {
+        v_cur_row = v_cur_row + 1;
+        v_cur_col = 0;
+        if (v_cur_row >= v_scroll + VIEW_ROWS) { v_scroll = v_cur_row - VIEW_ROWS + 1; }
+    }
+}
+
+fn action_backspace() {
+    old_len = len(v_lines[v_cur_row]);
+    v_lines = edit_delete_char(v_lines, v_cur_row, v_cur_col);
+    if (v_cur_col > 0) {
+        v_cur_col = v_cur_col - 1;
+    } else if (v_cur_row > 0) {
+        v_cur_row = v_cur_row - 1;
+        v_cur_col = len(v_lines[v_cur_row]) - old_len;
+        if (v_cur_row < v_scroll) { v_scroll = v_cur_row; }
+    }
+    v_dirty = true;
+}
+
+fn action_enter() {
+    v_lines = edit_split_line(v_lines, v_cur_row, v_cur_col);
+    v_cur_row = v_cur_row + 1;
+    v_cur_col = 0;
+    if (v_cur_row >= v_scroll + VIEW_ROWS) { v_scroll = v_cur_row - VIEW_ROWS + 1; }
+    v_dirty = true;
+}
+
+fn action_save() {
+    full_text = join_lines(v_lines);
+    hex = sys_catalog_write(v_fname, full_text);
+    if (len(hex) == 0) {
+        v_status = "Error: write failed";
+        return 0;
+    }
+    commit_hex = sys_catalog_commit("vedit: save " + v_fname);
+    if (len(commit_hex) == 0) {
+        v_status = "Saved (uncommitted CAS: " + substr(hex, 0, 12) + "...)";
+    } else {
+        v_status = "Saved root: " + substr(commit_hex, 0, 12) + "...";
+    }
+    v_dirty = false;
+    return 0;
+}
+
+fn poll_editor_key() {
+    c = sys_serial_read();
+    if (c >= 0) {
+        if (c == 27) {
+            c2 = sys_serial_read();
+            if (c2 == 91) {
+                c3 = sys_serial_read();
+                if (c3 == 65) { return 256; }
+                if (c3 == 66) { return 257; }
+                if (c3 == 67) { return 259; }
+                if (c3 == 68) { return 258; }
+            }
+            return 27;
+        }
+        return c;
+    }
+    return sys_kbd_read();
+}
+
+fn dispatch_key(k) {
+    if (k == 17) { v_running = false; return 0; }
+    if (k == 19) { action_save(); return 1; }
+    if (k == 256) { cursor_up(); return 1; }
+    if (k == 257) { cursor_down(); return 1; }
+    if (k == 258) { cursor_left(); return 1; }
+    if (k == 259) { cursor_right(); return 1; }
+    if (k == 8) { action_backspace(); return 1; }
+    if (k == 127) { action_backspace(); return 1; }
+    if (k == 10) { action_enter(); return 1; }
+    if (k == 13) { action_enter(); return 1; }
+    if (k >= 32) {
+        if (k <= 126) {
+            edit_insert_char(v_lines, v_cur_row, v_cur_col, k);
+            v_cur_col = v_cur_col + 1;
+            v_dirty = true;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fn vedit_loop() {
+    render_screen();
+    while (v_running) {
+        k = poll_editor_key();
+        if (k < 0) {
+            sys_yield();
+        } else {
+            should_render = dispatch_key(k);
+            if (should_render == 1) {
+                render_screen();
+            }
+        }
+    }
+}
+
+fn vedit_main() {
+    target = sys_catalog_read(".vedit_target");
+    if (len(target) > 0) {
+        v_fname = target;
+    }
+    content = sys_catalog_read(v_fname);
+    v_lines = split_lines(content);
+    if (len(v_lines) == 0) {
+        v_lines = [""];
+    }
+    vedit_loop();
+}
+
+vedit_main();

@@ -28,6 +28,7 @@ const PointerState = compositor_mod.PointerState;
 pub const storage_abi = @import("storage/storage_abi.zig");
 pub const registerBlockDevice = storage_abi.registerBlockDevice;
 pub const setRebuildEngine = storage_abi.setRebuildEngine;
+pub const catalog_abi = @import("storage/catalog_abi.zig");
 pub const net_abi = @import("net/net_abi.zig");
 pub const git_abi = @import("net/git_abi.zig");
 const cap_mod = @import("cap/capability.zig");
@@ -80,6 +81,7 @@ fn getCallerActorId() u32 {
 pub fn setContext(ctx: *AbiContext) void {
     active_ctx = ctx;
     storage_abi.caller_auth_fn = checkCallerAuthority;
+    catalog_abi.setStorageContext(ctx.cas_put_fn, ctx.cas_get_fn, checkCallerAuthority);
     net_abi.setNetworkContext(ctx.net_stack, checkCallerAuthority, getCallerActorId);
     git_abi.setCasContext(ctx.cas_put_fn, ctx.cas_get_fn);
     git_abi.setCallerAuth(checkCallerAuthority);
@@ -88,6 +90,7 @@ pub fn setContext(ctx: *AbiContext) void {
 pub fn clearContext() void {
     active_ctx = null;
     storage_abi.caller_auth_fn = null;
+    catalog_abi.clearCatalogContext();
     net_abi.clearNetworkContext();
     git_abi.clearGitContext();
 }
@@ -352,8 +355,13 @@ fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const scan = ps2_mod.readScancode();
     if (scan == 0 or scan == 0xFF) return Value{ .integer = -1 };
     const ev = kbd.processScancode(scan) orelse return Value{ .integer = -1 };
-    if (ev.action == .press and ev.ascii != 0) {
-        return Value{ .integer = @as(i64, ev.ascii) };
+    if (ev.action == .press) {
+        if (ev.ascii != 0) {
+            return Value{ .integer = @as(i64, ev.ascii) };
+        }
+        if (ev.keycode != 0) {
+            return Value{ .integer = @as(i64, ev.keycode) };
+        }
     }
     return Value{ .integer = -1 };
 }
@@ -574,6 +582,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_compositor_flush", Value{ .native = nativeSysCompositorFlush });
     try vm.globals.put("sys_pointer_read", Value{ .native = nativeSysPointerRead });
     try storage_abi.registerStorageSyscalls(vm);
+    try catalog_abi.registerCatalogSyscalls(vm);
     try net_abi.registerNetworkSyscalls(vm);
     try git_abi.registerGitSyscalls(vm);
 }

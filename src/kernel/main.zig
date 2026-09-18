@@ -469,7 +469,8 @@ fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8) !void {
     }
     const is_sys = std.mem.eql(u8, name, "msh") or std.mem.eql(u8, name, "harness") or
         std.mem.eql(u8, name, "installer") or std.mem.eql(u8, name, "rebuild") or
-        std.mem.eql(u8, name, "httpd") or std.mem.eql(u8, name, "web");
+        std.mem.eql(u8, name, "httpd") or std.mem.eql(u8, name, "web") or
+        std.mem.eql(u8, name, "vedit");
     if (is_sys) {
         _ = try child.insertCap(cap_mod.Capability{
             .cap_type = .actor_control,

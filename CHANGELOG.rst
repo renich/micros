@@ -10,6 +10,14 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 20 (Sovereign Catalog Broker & Semantic Workspace Substrate - SPEC-TECH-FS-001)**:
+  - **Zero-POSIX Merkle Workspace Manifests**: Implemented ``src/kernel/storage/manifest.zig`` with 128-byte fixed-size ``WorkspaceEntry`` records, single-pass path sanitization (rejecting ``..``, ``\``, ``//``, and control chars), strict lexicographical sorting, $O(\log N)$ binary search, and alignment-safe serialization into ``ChunkType.workspace_manifest`` (type 6) chunks.
+  - **Sovereign Catalog Broker & OCC Commit Protocol**: Implemented ``src/kernel/storage/catalog_abi.zig`` managing workspace staging states, persisting file content as raw BLAKE3 chunks in CAS, advancing manifest roots monotonically via Optimistic Concurrency Control, and preventing multi-actor split-brain corruption without blocking filesystem locks.
+  - **Capability-Gated Workspace Syscall ABI**: Exposed 6 native syscalls (``sys_catalog_write``, ``sys_catalog_read``, ``sys_catalog_list``, ``sys_catalog_delete``, ``sys_catalog_commit``, ``sys_catalog_status``) in ``src/kernel/abi.zig`` gated strictly by ``CapType.storage_device`` in the caller's CSpace.
+  - **MicroShell Workspace Interaction Primitives**: Extended ``lib/macros/msh.mx`` with stream-oriented workspace commands (``ls [prefix]``, ``cat <path>``, ``write <path> <text>``, ``rm <path>``, ``commit [msg]``, ``workspace``, ``edit <path>``), fulfilling the persistent semantic file home requirement for human developers and autonomous AI agents.
+  - **Sovereign Visual Text Editor Actor (vedit)**: Authored standalone full-screen TUI text editor in ``lib/macros/vedit.mx`` rendering directly to the 1280x800 UEFI GOP framebuffer canvas and serial console with title bar, line number gutter, cursor navigation, viewport scrolling, atomic ``Ctrl+S`` CAS saving/commit, and clean ``Ctrl+Q`` exit.
+  - **Live QEMU UEFI End-to-End Verification**: Verified interactive file creation, multi-entry catalog listing, OCC commit snapshotting, and full visual text editing under QEMU UEFI with 0 defects.
+
 - **Milestone 19 (Git Smart HTTP Transport & CAS Packfile Substrate - SPEC-TECH-NET-003)**:
   - **Git Packet-Line Protocol Engine**: Implemented ``writePktLine``, ``writeFlush``, ``writeDelim``, ``parsePktLine``, and ``parsePushCommand`` in ``src/kernel/net/git_pkt.zig`` with 4-byte hex length prefixing and zero-copy slicing.
   - **Smart HTTP Discovery & Report-Status**: Implemented ``buildAdvertisementBody`` and ``buildReportStatusBody`` in ``src/kernel/net/git_transport.zig``, generating capability advertisements (``report-status``, ``delete-refs``) and push report confirmations without sideband framing.

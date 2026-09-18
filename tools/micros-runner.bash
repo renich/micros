@@ -283,6 +283,7 @@ elif [[ "$MODE" == "uefi" ]]; then
     ESP_DIR="$BUILD_DIR/esp"
     mkdir -p "$ESP_DIR/EFI/BOOT"
     cp "$ROOT_DIR/zig-out/bin/boot.efi" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
+    cp "$ROOT_DIR/src/kernel/genesis.mcb" "$ESP_DIR/genesis.mcb"
 
     QEMU_ARGS=(
         -m 512M

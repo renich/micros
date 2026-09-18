@@ -34,6 +34,7 @@ Technical Sub-Specifications
    specs/sovereign-cord-cutting
    specs/fast-path-tcp-server
    specs/git-smart-http-ingestion
+   specs/sovereign-workspace-catalog
 
 Engineering & Coding Guides
 ===========================

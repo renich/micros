@@ -15,6 +15,7 @@ pub const ChunkType = enum(u32) {
     bytecode_chunk = 3,
     merkle_node = 4,
     system_manifest = 5,
+    workspace_manifest = 6,
 };
 
 pub const CasChunkHeader = extern struct {
