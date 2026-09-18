@@ -90,6 +90,7 @@ fn cmd_help() {
     console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
     console_writeln("  layout <l>    - Set keyboard layout (es or us)");
     console_writeln("  harness       - Launch visual studio");
+    console_writeln("  desk          - Launch Sovereign Desktop Environment");
     console_writeln("  install       - Launch standalone silicon installer");
     console_writeln("  httpd         - Launch CAS-backed HTTP/1.1 web server");
     console_writeln("  rebuild       - Rebuild system kernel and stage to ESP");
@@ -195,6 +196,26 @@ fn cmd_harness() {
     msh_draw_header();
     msh_clear_screen();
     console_writeln("Harness terminated. Returned to msh.");
+    return 0;
+}
+
+fn cmd_desk() {
+    d_src = sys_bundle_read("desk.mx");
+    if (len(d_src) == 0) {
+        console_writeln("Error: desk.mx not found in genesis bundle.");
+        return 0;
+    }
+    console_writeln("Launching Sovereign Desktop Environment...");
+    sys_fb_clear(CLR_BG);
+    d_id = sys_actor_spawn_code("desk", d_src);
+    if (d_id < 0) {
+        console_writeln("Error: Failed to spawn desk actor.");
+        return 0;
+    }
+    sys_actor_wait(d_id);
+    msh_draw_header();
+    msh_clear_screen();
+    console_writeln("Desktop environment terminated. Returned to msh.");
     return 0;
 }
 
@@ -465,6 +486,7 @@ fn eval_command(cmd) {
         return 0;
     }
     if (cmd == "harness") { return cmd_harness(); }
+    if (cmd == "desk") { return cmd_desk(); }
     if (cmd == "install") { return cmd_install(); }
     if (cmd == "httpd") { return cmd_httpd(); }
     if (cmd == "rebuild") { return cmd_rebuild(); }
