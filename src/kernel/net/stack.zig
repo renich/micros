@@ -145,7 +145,7 @@ pub const NetworkStack = struct {
     }
 
     fn processClientTcp(self: *NetworkStack, src_ip: [4]u8, tcp_hdr: tcp_mod.TcpHeader, data: []const u8) void {
-        const client = &(self.tcp_client orelse return);
+        const client = if (self.tcp_client) |*c| c else return;
         if (!std.mem.eql(u8, &src_ip, &client.remote_ip)) return;
         if (tcp_hdr.src_port != client.remote_port) return;
 
@@ -363,24 +363,25 @@ pub const NetworkStack = struct {
         self.tcp_client = tcp_mod.TcpClient.init(self.dhcp_config.ip, remote_ip, local_port, remote_port, 0x1234_5678);
         self.tcp_rx_len = 0;
 
+        const client = if (self.tcp_client) |*c| c else return error.NotConnected;
         var attempt: usize = 0;
         while (attempt < MAX_SYN_RETRIES) : (attempt += 1) {
             var syn_buf: [64]u8 = undefined;
             const syn_len = if (attempt == 0)
-                try self.tcp_client.?.buildSyn(&syn_buf)
+                try client.buildSyn(&syn_buf)
             else
-                try self.tcp_client.?.buildSynRetransmit(&syn_buf);
+                try client.buildSynRetransmit(&syn_buf);
 
             try self.sendIpv4(remote_ip, ipv4_mod.PROTO_TCP, syn_buf[0..syn_len]);
 
             const wait_iters = BASE_SYN_ITERS * (attempt + 1);
             var iter: usize = 0;
-            while (self.tcp_client.?.state != .established and iter < wait_iters) : (iter += 1) {
+            while (client.state != .established and iter < wait_iters) : (iter += 1) {
                 _ = self.poll();
                 io.pause();
             }
 
-            if (self.tcp_client.?.state == .established) return;
+            if (client.state == .established) return;
             serial.writeString("[net] TCP SYN timeout; retransmitting...\n");
         }
 
@@ -388,7 +389,7 @@ pub const NetworkStack = struct {
     }
 
     pub fn sendTcpData(self: *NetworkStack, data: []const u8) !void {
-        const client = &(self.tcp_client orelse return error.NotConnected);
+        const client = if (self.tcp_client) |*c| c else return error.NotConnected;
         if (client.state != .established) return error.NotConnected;
 
         var offset: usize = 0;
@@ -442,7 +443,7 @@ pub const NetworkStack = struct {
     }
 
     pub fn closeTcp(self: *NetworkStack) !void {
-        const client = &(self.tcp_client orelse return);
+        const client = if (self.tcp_client) |*c| c else return;
         if (client.state == .established) {
             var fin_buf: [64]u8 = undefined;
             const fin_len = try client.buildFin(&fin_buf);

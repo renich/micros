@@ -29,3 +29,7 @@ Milestones & Deliverables
 * **M23b.4: Multi-Producer Single-Consumer (MPSC) IPC Rings**
    - Extend ``src/kernel/ipc/ring.zig`` from SPSC to MPSC ring buffers.
    - Support concurrent multi-core message emission into service actor request queues using atomic compare-and-swap (CAS) head pointers and cacheline padding (64 bytes).
+
+Architectural Note & Execution Boundary:
+----------------------------------------
+Milestone 23b establishes the low-level CPU hardware timer and SMP infrastructure: Local APIC 1000Hz periodic interrupt configuration (vector ``0x20``), SMP topology tick accounting, core affinity tracking, AP bringup trampoline, and MPSC IPC queues. Full preemptive hardware thread stack swapping (linking fiber execution states directly to SMP ``ExecutionContext`` stack pointer replacement in the APIC ISR trampoline) is scheduled for Milestone 36 (Phase 10), completing the transition alongside standalone Ring 3 userland processes. In the interim, actors and services execute reliably within cooperative fiber scheduling with hardware APIC ticks advancing system time and quantum bookkeeping.

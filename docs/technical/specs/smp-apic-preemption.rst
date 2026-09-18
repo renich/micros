@@ -146,6 +146,10 @@ The low-level ISR saves registers, switches to the microkernel scheduling contex
        popq %rax
        iretq
 
+.. note::
+
+   **Implementation Phasing**: Milestone 23b establishes the APIC hardware timer configuration, periodic interrupt dispatch, and SMP topology tick tracking. The dynamic stack pointer swap (``movq %rax, %rsp``) is phased into Milestone 36 (Phase 10) to synchronize directly with standalone Ring 3 userland processes, while current kernel services execute within cooperative fibers.
+
 4. APIC INIT-SIPI-SIPI Multicore Bringup Protocol
 =================================================
 Secondary Application Processors (APs) are woken from low-power wait-for-SIPI states into 64-bit Long Mode.

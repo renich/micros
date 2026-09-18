@@ -105,14 +105,14 @@ pub const TcpStreamAdapter = struct {
     }
 
     pub fn writeAll(self: *TcpStreamAdapter, data: []const u8) !void {
-        const client = &(self.tls_client orelse return error.NotConnected);
+        const client = if (self.tls_client) |*c| c else return error.NotConnected;
         try client.writer.writeAll(data);
         try client.writer.flush();
         try self.writer_interface.flush();
     }
 
     pub fn readSlice(self: *TcpStreamAdapter, dest: []u8) !usize {
-        const client = &(self.tls_client orelse return error.NotConnected);
+        const client = if (self.tls_client) |*c| c else return error.NotConnected;
         return try client.reader.readSliceShort(dest);
     }
 
