@@ -199,10 +199,18 @@ pub const ActorRegistry = struct {
         return actor;
     }
 
+    pub var page_table_destructor: ?*const fn (u64) void = null;
+
     pub fn terminate(self: *ActorRegistry, allocator: std.mem.Allocator, id: u32) ActorError!void {
         if (id >= MAX_ACTORS) return ActorError.ActorNotFound;
         const actor = self.actors[id] orelse return ActorError.ActorNotFound;
         actor.state = .terminated;
+        if (actor.page_table_base != 0) {
+            if (page_table_destructor) |destroy_fn| {
+                destroy_fn(actor.page_table_base);
+            }
+            actor.page_table_base = 0;
+        }
         self.actors[id] = null;
         self.active_count -= 1;
         actor.deinit(allocator);

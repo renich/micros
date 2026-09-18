@@ -9,14 +9,14 @@ Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP)
 Milestones & Deliverables
 -------------------------
 
-* **Milestone 23a: Hardware Ring 3 & Syscall Substrate** [ACTIVE]
+* **Milestone 23a: Hardware Ring 3 & Syscall Substrate** [COMPLETED]
    - **TSS Descriptor & Interrupt Stacks**: Implement 64-bit Task State Segment (TSS) in ``src/kernel/arch/x86_64/gdt.zig`` with dedicated per-core ``RSP0`` kernel stacks and execute the ``ltr`` instruction.
    - **Fast Syscall ABI**: Configure x86_64 Model-Specific Registers (``EFER.SCE``, ``STAR``, ``LSTAR``, ``SFMASK``) to handle fast userland ``syscall`` and ``sysretq`` transitions.
    - **Per-Actor Address Spaces**: Implement isolated 4-level CR3 virtual address spaces with strict User/Supervisor bit protection (preventing Ring 3 code from accessing kernel virtual memory).
    - **Blocked By**: Phase 5 completion.
    - **Unblocks**: M23b, M24, M25.
 
-* **Milestone 23b: Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate** [SCHEDULED]
+* **Milestone 23b: Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate** [ACTIVE]
    - **Local APIC Timer Preemption**: Program Local APIC timer for periodic hardware interrupts (1000Hz quantum) via IDT vector ``0x20``.
    - **Preemptive Context Switching**: Save and restore full CPU register state (``pushaq``/``popaq``, ``iretq``) on timer ticks, eliminating cooperative scheduling starvation.
    - **APIC INIT-SIPI-SIPI Multicore Bringup**: Bootstrap secondary Application Processors (APs) into 64-bit Long Mode and establish per-core runqueues with lock-free work-stealing.

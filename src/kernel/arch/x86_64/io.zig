@@ -67,8 +67,43 @@ pub inline fn rdtsc() u64 {
     return (rdx_val << 32) | rax_val;
 }
 
-test "port io signatures compile" {
+pub const MSR_EFER: u32 = 0xC0000080;
+pub const MSR_STAR: u32 = 0xC0000081;
+pub const MSR_LSTAR: u32 = 0xC0000082;
+pub const MSR_CSTAR: u32 = 0xC0000083;
+pub const MSR_SFMASK: u32 = 0xC0000084;
+pub const MSR_FS_BASE: u32 = 0xC0000100;
+pub const MSR_GS_BASE: u32 = 0xC0000101;
+pub const MSR_KERNEL_GS_BASE: u32 = 0xC0000102;
+
+pub inline fn rdmsr(msr: u32) u64 {
+    var low: u32 = undefined;
+    var high: u32 = undefined;
+    asm volatile ("rdmsr"
+        : [low] "={eax}" (low),
+          [high] "={edx}" (high),
+        : [msr] "{ecx}" (msr),
+    );
+    return (@as(u64, high) << 32) | @as(u64, low);
+}
+
+pub inline fn wrmsr(msr: u32, val: u64) void {
+    const low: u32 = @truncate(val);
+    const high: u32 = @truncate(val >> 32);
+    asm volatile ("wrmsr"
+        :
+        : [low] "{eax}" (low),
+          [high] "{edx}" (high),
+          [msr] "{ecx}" (msr),
+    );
+}
+
+test "port io and msr signatures compile" {
     // Verified compilation of port I/O primitives
     try std.testing.expect(@sizeOf(u16) == 2);
     try std.testing.expect(@sizeOf(u32) == 4);
+    try std.testing.expect(MSR_EFER == 0xC0000080);
+    try std.testing.expect(MSR_STAR == 0xC0000081);
+    try std.testing.expect(MSR_LSTAR == 0xC0000082);
+    try std.testing.expect(MSR_SFMASK == 0xC0000084);
 }

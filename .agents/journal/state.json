@@ -1,6 +1,6 @@
 {
   "current_phase": 5,
   "journal_version": "0.2.0",
-  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 23a: Hardware Ring 3 & Syscall Substrate",
+  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 23b: Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate",
   "pjp_version": "0.10.1"
 }

@@ -12,6 +12,9 @@ pub const supervisor = @import("kernel/supervisor.zig");
 pub const abi = @import("kernel/abi.zig");
 pub const harness_bindings = @import("kernel/harness_bindings.zig");
 pub const io = @import("kernel/arch/x86_64/io.zig");
+pub const gdt = @import("kernel/arch/x86_64/gdt.zig");
+pub const syscall = @import("kernel/arch/x86_64/syscall.zig");
+pub const vmm = @import("kernel/mem/vmm.zig");
 pub const pci = @import("kernel/drivers/pci.zig");
 pub const virtio_net = @import("kernel/drivers/virtio_net.zig");
 pub const virtio_blk = @import("kernel/drivers/virtio_blk.zig");
@@ -67,6 +70,9 @@ test "kernel module tests" {
     _ = @import("kernel/compositor.zig");
     _ = @import("userland/netd/netd.zig");
     _ = @import("userland/aid/aid.zig");
+    _ = @import("kernel/arch/x86_64/gdt.zig");
+    _ = @import("kernel/arch/x86_64/syscall.zig");
+    _ = @import("kernel/mem/vmm.zig");
 }
 
 test "Genesis Bundle contains and compiles init.mx" {

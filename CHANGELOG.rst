@@ -10,6 +10,14 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 23a (Hardware Ring 3 Privilege Isolation & Fast Syscall Substrate - SPEC-TECH-CAP-002)**:
+  - **Task State Segment (TSS) & Hardware Privilege Rings**: Implemented 104-byte ``TaskStateSegment`` and 16-byte ``TssDescriptor`` in ``src/kernel/arch/x86_64/gdt.zig``, expanded GDT with Ring 3 user code/data descriptors (0x18, 0x20, 0x28) and TSS descriptor (0x30), and executed ``ltr`` instruction.
+  - **Fast Syscall ABI (LSTAR/STAR)**: Implemented freestanding x86_64 fast syscall substrate in ``src/kernel/arch/x86_64/syscall.zig`` configuring ``IA32_EFER.SCE``, ``IA32_STAR``, ``IA32_LSTAR``, ``IA32_SFMASK``, and ``IA32_KERNEL_GS_BASE`` with unforgeable stack isolation and atomic ``swapgs``.
+  - **Per-Actor 4-Level CR3 Virtual Address Spaces**: Implemented per-actor PML4 directory creation, lower-half userland address isolation (0x0000_0000_0000_0000..0x0000_7FFF_FFFF_FFFF), upper-half microkernel cloning (0xFFFF_8000_0000_0000..0xFFFF_FFFF_FFFF_FFFF) with Supervisor bit protection, page unmapping, and TLB invalidation (``invlpg``) in ``src/kernel/mem/vmm.zig``.
+  - **Capability-Gated Syscall Dispatcher**: Connected ``kernelSyscallDispatch`` directly to caller CSpace capabilities, enforcing capability tokens for actor management (``actor_control``), memory mapping (``memory_extent``), device DMA frames (``network_device``, ``storage_device``), and hardware interrupt handling (``irq_endpoint``) with zero ambient authority.
+  - **PMM Reclamation & Lifecycle Hooks**: Added ``page_table_destructor`` to ``ActorRegistry`` in ``src/kernel/actor.zig`` ensuring actor virtual address space page tables are automatically reclaimed by the PMM upon termination without page frame leaks.
+  - **Verification**: Added colocated unit tests across VMM and Syscall modules, bringing test suite to 316/316 passing green tests, verified 100% bidirectional specification traceability, and validated live QEMU UEFI boot.
+
 - **Milestone 22 (Pure Microkernel Network & AI Decoupling - SPEC-TECH-NET-004)**:
   - **Lock-Free Page-Aligned SPSC Ring Buffer IPC**: Implemented ``SpscRingBuffer`` in ``src/kernel/ipc/ring.zig`` with 4096-byte page alignment (``align(4096)``), 64-byte cacheline separation, and acquire/release memory fences for high-throughput zero-copy streaming between kernel and userland service actors.
   - **Hardware Capability Primitives & W^X Enforcement**: Added ``sys_frame_info`` in ``src/kernel/cap/cap_abi.zig`` providing physical DMA frame mapping under strict capability validation, and ``sys_irq_ack`` for safe interrupt line acknowledgment without ambient authority.

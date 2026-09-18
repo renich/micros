@@ -11,6 +11,7 @@ const idt = @import("arch/x86_64/idt.zig");
 const pmm = @import("mem/pmm.zig");
 const vmm = @import("mem/vmm.zig");
 const io = @import("arch/x86_64/io.zig");
+const syscall = @import("arch/x86_64/syscall.zig");
 const vm_mod = @import("../macros/vm.zig");
 const chunk_mod = @import("../macros/chunk.zig");
 const eval_mod = @import("../macros/eval.zig");
@@ -109,6 +110,11 @@ fn initHardware(boot_info: *const BootInfo) void {
     pmm.init(boot_info);
     vmm.init(boot_info.hhdm_offset);
     serial.writeStatusOk("mmu ", "PMM physical and VMM virtual paging active");
+    syscall.init();
+    syscall.setRegistry(&global_registry);
+    syscall.setDeviceHandlers(frameInfoBridge, irqAckBridge);
+    serial.writeStatusOk("priv", "TSS Ring 3 and Fast Syscall (LSTAR) ready");
+    actor_mod.ActorRegistry.page_table_destructor = vmm.destroyActorAddressSpace;
     initNetwork(boot_info);
 }
 
@@ -210,10 +216,12 @@ fn onFiberContextSwitch(maybe_fib: ?*fiber_mod.Fiber) void {
         if (fib.entry == actorThread and fib.user_data != null) {
             const act_ctx: *ActorThreadContext = @ptrCast(@alignCast(fib.user_data.?));
             idt.current_actor_id = act_ctx.actor.id;
+            syscall.setActorId(act_ctx.actor.id);
             return;
         }
     }
     idt.current_actor_id = 0;
+    syscall.setActorId(0);
 }
 
 fn actorThread(ctx: ?*anyopaque) void {
@@ -348,8 +356,12 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
         allocator.destroy(chunk);
     }
 
-    const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, 0);
-    errdefer global_registry.terminate(allocator, child.id) catch {};
+    const pml4_phys = vmm.createActorAddressSpace() orelse 0;
+    const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, pml4_phys);
+    errdefer {
+        if (pml4_phys != 0) vmm.destroyActorAddressSpace(pml4_phys);
+        global_registry.terminate(allocator, child.id) catch {};
+    }
 
     try delegateInitialCaps(child, name);
     try attachActorVm(allocator, child, chunk);
@@ -801,6 +813,7 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
 
     var fba = std.heap.FixedBufferAllocator.init(&kernel_heap);
     const allocator = fba.allocator();
+    syscall.setAllocator(allocator);
 
     const genesis = actor_mod.Actor.init(
         allocator,
