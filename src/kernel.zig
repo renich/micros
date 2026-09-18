@@ -76,6 +76,7 @@ test "kernel module tests" {
     _ = @import("userland/aid/aid.zig");
     _ = @import("userland/gopd/gopd.zig");
     _ = @import("userland/gopd/hypertree.zig");
+    _ = @import("userland/gopd/vector.zig");
     _ = @import("userland/storaged/storaged.zig");
     _ = @import("kernel/arch/x86_64/gdt.zig");
     _ = @import("kernel/arch/x86_64/syscall.zig");

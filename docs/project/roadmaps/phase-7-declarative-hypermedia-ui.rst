@@ -16,7 +16,7 @@ Milestones & Deliverables
    - **Blocked By**: Phase 6 (M24 gopd, M26 microkernel stability).
    - **Unblocks**: M28, M29.
 
-* **Milestone 28: AABB-Bounded Vector Rasterizer & Glyph Atlas Cache** [SCHEDULED]
+* **Milestone 28: AABB-Bounded Vector Rasterizer & Glyph Atlas Cache** [COMPLETED]
    - **Software Vector Engine**: Implement fast Signed Distance Field (SDF) and curved path rasterization bounded strictly by AABB damage rectangles.
    - **Scalable Typography**: Implement standalone TrueType/OpenType vector font decoder with multi-size glyph atlas caching in memory.
    - **Alpha Blending & Compositing**: Deliver smooth anti-aliased geometry, drop shadows, translucent glass panels, and sub-pixel text rendering.

@@ -9,6 +9,7 @@ const compositor_mod = @import("../../kernel/compositor.zig");
 const boot_info_mod = @import("../../kernel/boot_info.zig");
 const fb_mod = @import("../../kernel/fb.zig");
 pub const hypertree = @import("hypertree.zig");
+pub const vector = @import("vector.zig");
 
 pub const DaemonState = enum(u8) {
     uninitialized = 0,
@@ -37,22 +38,27 @@ pub const GopDaemon = struct {
     pointer: compositor_mod.PointerState,
     mouse_decoder: compositor_mod.Ps2MouseDecoder,
     tree: hypertree.HyperTree,
+    glyph_cache: vector.GlyphAtlasCache,
     state: DaemonState,
     frames_presented: u64,
     damage_flushes: u64,
     input_events_processed: u64,
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        fb_info: boot_info_mod.FramebufferInfo,
-        fb_cap: cap_mod.Capability,
-    ) !GopDaemon {
+    fn validateInit(fb_info: boot_info_mod.FramebufferInfo, fb_cap: cap_mod.Capability) !void {
         if (fb_cap.cap_type != .framebuffer or !fb_cap.hasRight(cap_mod.Rights.WRITE)) {
             return error.PermissionDenied;
         }
         if (fb_info.base_addr == 0 or fb_info.width == 0 or fb_info.height == 0) {
             return error.InvalidFramebuffer;
         }
+    }
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        fb_info: boot_info_mod.FramebufferInfo,
+        fb_cap: cap_mod.Capability,
+    ) !GopDaemon {
+        try validateInit(fb_info, fb_cap);
 
         var canvas = try compositor_mod.Canvas.init(
             allocator,
@@ -68,6 +74,7 @@ pub const GopDaemon = struct {
         const pointer = compositor_mod.PointerState.init(fb_info.width, fb_info.height);
         const mouse_decoder = compositor_mod.Ps2MouseDecoder.init();
         const tree = hypertree.HyperTree.init(allocator);
+        const glyph_cache = vector.GlyphAtlasCache.init();
 
         return GopDaemon{
             .allocator = allocator,
@@ -77,6 +84,7 @@ pub const GopDaemon = struct {
             .pointer = pointer,
             .mouse_decoder = mouse_decoder,
             .tree = tree,
+            .glyph_cache = glyph_cache,
             .state = .active,
             .frames_presented = 0,
             .damage_flushes = 0,
