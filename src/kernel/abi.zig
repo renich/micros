@@ -379,6 +379,7 @@ fn nativeSysActorName(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const reg = ctx.registry;
     const id = castToU32(args[0].integer) orelse return Value{ .string = "" };
     if (reg.get(id)) |actor| {
+        defer actor.release();
         return Value{ .string = actor.getName() };
     }
     return Value{ .string = "" };
@@ -391,6 +392,7 @@ fn nativeSysActorState(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const reg = ctx.registry;
     const id = castToU32(args[0].integer) orelse return Value{ .integer = -1 };
     if (reg.get(id)) |actor| {
+        defer actor.release();
         return Value{ .integer = @as(i64, @intFromEnum(actor.state)) };
     }
     return Value{ .integer = -1 };
@@ -466,8 +468,10 @@ fn nativeSysActorWait(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     while (true) {
         const actor = ctx.registry.get(target_id);
         if (actor == null or actor.?.state == .terminated or actor.?.state == .faulted) {
+            if (actor) |act| act.release();
             break;
         }
+        actor.?.release();
         if (ctx.net_stack) |stack| {
             stack.pollTcpServer();
         }

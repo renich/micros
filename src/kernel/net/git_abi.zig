@@ -227,6 +227,9 @@ fn unpackObjects(
     while (count < obj_count and count < MAX_OBJECTS_PER_PACK) {
         if (offset >= pack_data.len) break;
         const obj_hdr = git_pack.parseObjectHeader(pack_data[offset..]) orelse return error.BadObjectHeader;
+        if (obj_hdr.obj_type == .ofs_delta or obj_hdr.obj_type == .ref_delta) {
+            return error.UnsupportedDeltaObject;
+        }
         offset += obj_hdr.header_bytes;
 
         const decomp = try git_pack.decompressObject(allocator, pack_data[offset..], obj_hdr.uncompressed_size);
@@ -298,7 +301,9 @@ pub fn processReceivePack(
     };
 
     var objects: [MAX_OBJECTS_PER_PACK]ParsedPackObject = undefined;
-    const count = try unpackObjects(allocator, pack_data, pack_hdr.object_count, &objects);
+    const count = unpackObjects(allocator, pack_data, pack_hdr.object_count, &objects) catch |err| {
+        return try git_transport.buildReportStatusBody(push_cmd.ref_name, false, @errorName(err), out_buf);
+    };
     defer {
         for (0..count) |i| allocator.free(objects[i].data);
     }

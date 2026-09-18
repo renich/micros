@@ -10,7 +10,9 @@ Hardware Ring 3 Privilege Isolation & Fast Syscall Substrate (µOS)
 
 1. Architectural Axioms & Hardware Privilege Separation
 =======================================================
-This specification formalizes the transition of MicrOS (µOS) from cooperative Ring 0 fiber execution into authentic hardware CPU privilege separation on x86_64. Ring 0 is restricted to microkernel primitives; all userland service daemons (``netd``, ``aid``, ``storaged``, ``gopd``) and application actors execute strictly in Ring 3 (User Mode).
+This specification formalizes the transition of MicrOS (µOS) from cooperative Ring 0 fiber execution into authentic hardware CPU privilege separation on x86_64. Ring 0 is restricted to microkernel primitives; all userland service daemons (``netd``, ``aid``, ``storaged``, ``gopd``) and application actors are architected for execution in Ring 3 (User Mode).
+
+Milestone 23a defines the x86_64 CPU hardware infrastructure: GDT, TSS with RSP0, IA32_STAR/LSTAR syscall dispatch, and per-actor 4-level PML4 CR3 userland memory isolation. Full standalone userland daemon execution handoff is realized in Milestone 36 (Phase 10).
 
 1.1 The Hardware Privilege Axiom
 --------------------------------

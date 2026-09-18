@@ -182,6 +182,7 @@ pub const VirtioNetDevice = struct {
         self.rx_queue.last_used_idx +%= 1;
 
         const desc_id = elem.id;
+        if (desc_id >= QUEUE_SIZE) return null;
         const total_len = elem.len;
         const hdr_size = @sizeOf(VirtioNetHeader);
 
@@ -279,4 +280,26 @@ test "virtio net packet payload bounds" {
     var oversized: [2000]u8 = undefined;
     const err = dev.sendPacket(&oversized);
     try std.testing.expectError(error.PacketTooLarge, err);
+}
+
+test "virtio net pollReceive rejects out-of-bounds descriptor id" {
+    var backing_mem: [8192]u8 align(4096) = [_]u8{0} ** 8192;
+    var rx_q = VirtQueue.init(0, 0x1000, &backing_mem);
+    rx_q.used.idx = 1;
+    rx_q.used.ring[0] = .{ .id = 999, .len = 100 };
+    var dev = VirtioNetDevice{
+        .io_base = 0xC000,
+        .mac = [_]u8{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 },
+        .rx_queue = rx_q,
+        .tx_queue = rx_q,
+        .rx_buffers_virt = undefined,
+        .rx_buffers_phys = 0,
+        .tx_buffer_virt = undefined,
+        .tx_buffer_phys = 0,
+        .tx_in_flight = false,
+        .initialized = true,
+    };
+    var buf: [256]u8 = undefined;
+    const res = dev.pollReceive(&buf);
+    try std.testing.expectEqual(@as(?usize, null), res);
 }

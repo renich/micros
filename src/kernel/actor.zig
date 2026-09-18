@@ -33,6 +33,7 @@ pub const ActorState = enum(u8) {
 };
 
 pub const Actor = struct {
+    allocator: std.mem.Allocator,
     id: u32,
     name: [32]u8,
     name_len: usize,
@@ -43,6 +44,7 @@ pub const Actor = struct {
     restart_count: u32,
     fiber_ctx: ?*anyopaque,
     source: ?[]const u8 = null,
+    ref_count: std.atomic.Value(u32),
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -73,6 +75,7 @@ pub const Actor = struct {
         @memcpy(name_buf[0..copy_len], name[0..copy_len]);
 
         actor.* = .{
+            .allocator = allocator,
             .id = id,
             .name = name_buf,
             .name_len = copy_len,
@@ -83,17 +86,26 @@ pub const Actor = struct {
             .restart_count = 0,
             .fiber_ctx = null,
             .source = null,
+            .ref_count = std.atomic.Value(u32).init(1),
         };
         return actor;
     }
 
-    pub fn deinit(self: *Actor, allocator: std.mem.Allocator) void {
-        if (self.source) |src| {
-            allocator.free(src);
-            self.source = null;
+    pub fn release(self: *Actor) void {
+        if (self.ref_count.fetchSub(1, .release) == 1) {
+            asm volatile ("" ::: .{ .memory = true });
+            if (self.source) |src| {
+                self.allocator.free(src);
+                self.source = null;
+            }
+            self.cspace.deinit(self.allocator);
+            self.allocator.destroy(self);
         }
-        self.cspace.deinit(allocator);
-        allocator.destroy(self);
+    }
+
+    pub fn deinit(self: *Actor, allocator: std.mem.Allocator) void {
+        _ = allocator;
+        self.release();
     }
 
     pub fn getName(self: *const Actor) []const u8 {
@@ -199,7 +211,9 @@ pub const ActorRegistry = struct {
         const flags = self.acquireLock();
         defer self.releaseLock(flags);
         if (id >= MAX_ACTORS) return null;
-        return self.actors[id];
+        const actor = self.actors[id] orelse return null;
+        _ = actor.ref_count.fetchAdd(1, .acquire);
+        return actor;
     }
 
     pub fn findFreeId(self: *const ActorRegistry) ?u32 {
@@ -271,7 +285,7 @@ pub const ActorRegistry = struct {
         if (actor_destructor) |destruct_fn| {
             destruct_fn(allocator, actor);
         }
-        actor.deinit(allocator);
+        actor.release();
     }
 };
 
@@ -335,11 +349,31 @@ test "ActorRegistry spawn, query, and termination" {
     try std.testing.expectEqual(@as(usize, 1), registry.active_count);
 
     const lookup = registry.get(0).?;
+    defer lookup.release();
     try std.testing.expectEqual(child, lookup);
 
     try registry.terminate(allocator, 0);
     try std.testing.expectEqual(@as(usize, 0), registry.active_count);
     try std.testing.expect(registry.get(0) == null);
+}
+
+test "Actor reference counting prevents use-after-free during concurrent terminate" {
+    const allocator = std.testing.allocator;
+    var registry = ActorRegistry.init();
+
+    _ = try registry.spawn(allocator, GENESIS_ACTOR_ID, "smp_worker", 16, 0x4000);
+    const lookup = registry.get(0).?;
+    try std.testing.expectEqual(@as(u32, 2), lookup.ref_count.load(.acquire));
+
+    // Terminate removes actor from registry, but caller's reference remains valid
+    try registry.terminate(allocator, 0);
+    try std.testing.expect(registry.get(0) == null);
+    try std.testing.expectEqual(@as(u32, 1), lookup.ref_count.load(.acquire));
+    try std.testing.expectEqualStrings("smp_worker", lookup.getName());
+    try std.testing.expectEqual(ActorState.terminated, lookup.state);
+
+    // Releasing the remaining reference destroys the actor cleanly with 0 leaks
+    lookup.release();
 }
 
 test "Capability delegation between supervisor and child actor" {

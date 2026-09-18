@@ -462,6 +462,7 @@ fn casGetBridge(hex_hash: []const u8, out_buf: []u8) anyerror!usize {
 fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     if (global_cas == null) return error.NoStorage;
     const actor = global_registry.get(actor_id) orelse return error.ActorNotFound;
+    defer actor.release();
     const src = actor.source orelse return error.NoSourceRecorded;
     const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.actor_source, src, dev);
@@ -487,7 +488,10 @@ fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u
 
 fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerror!bool {
     const target = global_registry.get(target_actor) orelse return error.ActorNotFound;
-    const caller = getCurrentActorBridge() orelse global_registry.get(actor_mod.GENESIS_ACTOR_ID) orelse return error.ActorNotFound;
+    defer target.release();
+    const cur = getCurrentActorBridge();
+    const caller = cur orelse (global_registry.get(actor_mod.GENESIS_ACTOR_ID) orelse return error.ActorNotFound);
+    defer if (cur == null) caller.release();
     _ = try caller.cspace.grant(source_slot, target.cspace, rights_mask);
     return true;
 }
@@ -501,24 +505,15 @@ fn drawCanvasBridge(x: u32, y: u32, w: u32, h: u32, color: u32) void {
 }
 
 fn telemetryBridge() ai_mod.tools.TelemetrySnapshot {
-    return ai_mod.tools.TelemetrySnapshot{
-        .active_actors = @intCast(global_registry.active_count),
-        .total_faults = if (global_supervisor) |s| s.total_faults else 0,
-        .free_ram_pages = 256,
-        .uptime_ticks = 100,
-    };
+    const faults = if (global_supervisor) |s| s.total_faults else 0;
+    return .{ .active_actors = @intCast(global_registry.active_count), .total_faults = faults, .free_ram_pages = 256, .uptime_ticks = 100 };
 }
 
 fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
     const ring_phys = pmm.allocContiguousPages(virtio_blk_mod.QUEUE_PAGES) orelse return false;
     const dma_phys = pmm.allocContiguousPages(virtio_blk_mod.DMA_PAGES) orelse return false;
 
-    global_virtio_blk = virtio_blk_mod.VirtioBlkDevice.init(
-        blk_pci,
-        ring_phys,
-        dma_phys,
-        boot_info.hhdm_offset,
-    ) catch |err| {
+    global_virtio_blk = virtio_blk_mod.VirtioBlkDevice.init(blk_pci, ring_phys, dma_phys, boot_info.hhdm_offset) catch |err| {
         serial.writeString("[kernel] VirtIO-Blk init failed: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");

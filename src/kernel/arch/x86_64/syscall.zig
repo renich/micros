@@ -77,8 +77,13 @@ pub fn getCallerActor() ?*actor_mod.Actor {
     return reg.get(getCurrentActorId());
 }
 
+fn releaseActorRef(actor: *actor_mod.Actor) void {
+    actor.release();
+}
+
 pub fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
     const actor = getCallerActor() orelse return false;
+    defer releaseActorRef(actor);
     if (actor.id == 0) return true;
     return actor.hasCap(cap_type, rights);
 }
@@ -150,6 +155,8 @@ pub export fn asmSyscallEntry() callconv(.naked) void {
 fn handleActorSpawn(name_ptr: u64, name_len: u64) i64 {
     if (!checkCallerAuthority(.actor_control, Rights.WRITE)) return -1;
     if (name_len == 0 or name_len > 32 or name_ptr == 0) return -3;
+    const USERLAND_MAX: u64 = 0x0000_7FFF_FFFF_FFFF;
+    if (name_ptr >= USERLAND_MAX or name_len > USERLAND_MAX - name_ptr) return -3;
     const reg = active_registry orelse return -2;
     const alloc = kernel_allocator orelse return -2;
     const name: []const u8 = @as([*]const u8, @ptrFromInt(name_ptr))[0..@intCast(name_len)];
@@ -181,11 +188,13 @@ fn handleActorStatus(id_val: u64) i64 {
     const reg = active_registry orelse return -1;
     if (id_val > std.math.maxInt(u32)) return -1;
     const actor = reg.get(@intCast(id_val)) orelse return -1;
+    defer releaseActorRef(actor);
     return @intFromEnum(actor.state);
 }
 
 fn handleCapGrant(target_id: u64, cap_slot: u64, rights_mask: u64) i64 {
     const caller = getCallerActor() orelse return -1;
+    defer releaseActorRef(caller);
     if (cap_slot > std.math.maxInt(u32) or target_id > std.math.maxInt(u32)) return -3;
     const slot: u32 = @intCast(cap_slot);
     const target: u32 = @intCast(target_id);
@@ -195,6 +204,7 @@ fn handleCapGrant(target_id: u64, cap_slot: u64, rights_mask: u64) i64 {
 
     const reg = active_registry orelse return -4;
     const dest = reg.get(target) orelse return -4;
+    defer releaseActorRef(dest);
 
     var granted = cap;
     granted.rights = cap.rights & @as(u16, @truncate(rights_mask));
@@ -204,6 +214,7 @@ fn handleCapGrant(target_id: u64, cap_slot: u64, rights_mask: u64) i64 {
 
 fn handleCapRevoke(cap_slot: u64) i64 {
     const caller = getCallerActor() orelse return -1;
+    defer releaseActorRef(caller);
     if (cap_slot > std.math.maxInt(u32)) return -3;
     const slot: u32 = @intCast(cap_slot);
     caller.revokeCap(slot) catch return -2;
@@ -212,6 +223,7 @@ fn handleCapRevoke(cap_slot: u64) i64 {
 
 fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
     const caller = getCallerActor() orelse return -1;
+    defer releaseActorRef(caller);
     if (!caller.authorizesPhysicalExtent(phys, 4096, Rights.WRITE)) return -1;
     if (virt >= 0x0000_8000_0000_0000 or (virt & 0xFFF) != 0) return -4;
     if (caller.page_table_base == 0) return -2;
@@ -224,6 +236,7 @@ fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
 
 fn handleMemUnmap(virt: u64) i64 {
     const caller = getCallerActor() orelse return -1;
+    defer releaseActorRef(caller);
     if (!caller.hasCap(.memory_extent, Rights.WRITE) and caller.id != actor_mod.GENESIS_ACTOR_ID) return -1;
     if (caller.page_table_base == 0) return -2;
     if (!vmm.unmapPage(caller.page_table_base, virt)) {
@@ -414,4 +427,23 @@ test "handleMemMap capability extent check and PAGE_ANON sanitization" {
     // Authorized extent passes capability check (fails with -2 due to null page_table_base in mock)
     const auth_res = handleMemMap(0x400000, 0x100000, vmm.PAGE_ANON);
     try std.testing.expectEqual(@as(i64, -2), auth_res);
+}
+
+test "handleActorSpawn rejects kernel virtual addresses" {
+    const allocator = std.testing.allocator;
+    var registry = actor_mod.ActorRegistry.init();
+    setRegistry(&registry);
+    setAllocator(allocator);
+    defer {
+        active_registry = null;
+        kernel_allocator = null;
+    }
+
+    const genesis = try registry.spawn(allocator, 0, "genesis", 16, 0);
+    defer registry.terminate(allocator, genesis.id) catch {};
+    setActorId(0);
+
+    const kernel_ptr: u64 = 0xFFFF_8000_0000_1000;
+    const res = handleActorSpawn(kernel_ptr, 10);
+    try std.testing.expectEqual(@as(i64, -3), res);
 }

@@ -118,6 +118,7 @@ pub const Supervisor = struct {
     ) actor_mod.ActorError!RecoveryAction {
         self.total_faults += 1;
         const target = self.registry.get(fault.actor_id) orelse return actor_mod.ActorError.ActorNotFound;
+        defer target.release();
         target.state = .faulted;
 
         return switch (self.policy) {

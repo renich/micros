@@ -1,7 +1,7 @@
 Milestone 23a: Hardware Ring 3 & Syscall Substrate
 ====================================================
 
-:Objective: Establish authentic hardware CPU privilege separation on x86_64, moving beyond cooperative Ring 0 fibers into true hardware-enforced Ring 3 user mode. Implement a 64-bit Task State Segment (TSS) with per-core kernel stacks, configure MSRs for fast ``syscall``/``sysretq`` transitions, and isolate actors into per-domain 4-level CR3 virtual address spaces.
+:Objective: Establish authentic hardware CPU privilege separation substrate on x86_64, preparing the foundation to move beyond cooperative Ring 0 fibers into true hardware-enforced Ring 3 user mode. Implement a 64-bit Task State Segment (TSS) with per-core kernel stacks, configure MSRs for fast ``syscall``/``sysretq`` transitions, and isolate actors into per-domain 4-level CR3 virtual address spaces (with full standalone daemon process execution handoff scheduled for Milestone 36).
 :Status: Completed & Verified
 :Specification: SPEC-TECH-CAP-002
 :Traced Stories: [US-REN-004], [US-REN-006], [US-GEM-001], [US-GEM-010]

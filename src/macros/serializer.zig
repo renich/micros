@@ -121,6 +121,7 @@ fn deserializeString(data: []const u8, pos: *usize, allocator: Allocator) ![]con
 
 fn deserializeFunction(data: []const u8, pos: *usize, allocator: Allocator) !eval.Function {
     const name = try deserializeString(data, pos, allocator);
+    errdefer allocator.free(name);
     if (pos.* + 10 > data.len) return SerializerError.TruncatedData;
     const arity = std.mem.readInt(u16, data[pos.* .. pos.* + 2][0..2], .little);
     const local_count = std.mem.readInt(u16, data[pos.* + 2 .. pos.* + 4][0..2], .little);
@@ -183,6 +184,10 @@ pub fn deserializeChunk(allocator: Allocator, data: []const u8) !Chunk {
     var i: u32 = 0;
     while (i < consts_count) : (i += 1) {
         const val = try deserializeConstant(data, &pos, allocator);
+        errdefer {
+            if (val == .string) allocator.free(val.string);
+            if (val == .function) allocator.free(val.function.name);
+        }
         if (val == .string) {
             _ = try ch.addAllocatedString(allocator, val.string);
         } else if (val == .function) {
