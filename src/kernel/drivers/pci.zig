@@ -28,16 +28,26 @@ pub const CMD_BUS_MASTER: u16 = 0x0004;
 pub const CLASS_STORAGE: u8 = 0x01;
 pub const CLASS_NETWORK: u8 = 0x02;
 pub const CLASS_DISPLAY: u8 = 0x03;
+pub const CLASS_SERIAL_BUS: u8 = 0x0C;
 pub const SUBCLASS_ETHERNET: u8 = 0x00;
 pub const SUBCLASS_NVME: u8 = 0x08;
+pub const SUBCLASS_USB: u8 = 0x03;
 pub const PROG_IF_NVME: u8 = 0x02;
+pub const PROG_IF_XHCI: u8 = 0x30;
 
 pub const VENDOR_VIRTIO: u16 = 0x1AF4;
 pub const VENDOR_INTEL: u16 = 0x8086;
+pub const VENDOR_REALTEK: u16 = 0x10EC;
 pub const DEVICE_VIRTIO_NET_LEGACY: u16 = 0x1000;
 pub const DEVICE_VIRTIO_NET_MODERN: u16 = 0x1041;
 pub const DEVICE_VIRTIO_BLK_LEGACY: u16 = 0x1001;
 pub const DEVICE_VIRTIO_BLK_MODERN: u16 = 0x1042;
+pub const DEVICE_INTEL_E1000: u16 = 0x100E;
+pub const DEVICE_INTEL_E1000E: u16 = 0x10D3;
+pub const DEVICE_INTEL_I219: u16 = 0x15B8;
+pub const DEVICE_INTEL_I225: u16 = 0x15F3;
+pub const DEVICE_REALTEK_R8168: u16 = 0x8168;
+pub const DEVICE_REALTEK_R8169: u16 = 0x8169;
 
 pub const PciDevice = struct {
     bus: u8,
