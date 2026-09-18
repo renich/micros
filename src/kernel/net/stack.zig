@@ -76,7 +76,7 @@ pub const NetworkStack = struct {
         if (!self.isTargetIp(ip_hdr.dst_ip)) return;
 
         const ip_header_len = @as(usize, ip_hdr.ihl) * 4;
-        if (data.len < ip_header_len) return;
+        if (data.len < ip_header_len or ip_hdr.total_len < ip_header_len) return;
         const payload = data[ip_header_len..@min(data.len, ip_hdr.total_len)];
 
         switch (ip_hdr.protocol) {
@@ -440,6 +440,7 @@ pub const NetworkStack = struct {
             serial.writeString("[net] TCP ACK timeout; retransmitting segment...\n");
         }
 
+        client.seq = start_seq;
         return error.TcpAckTimeout;
     }
 
@@ -760,4 +761,41 @@ test "processClientTcp and handleServerConnSegment emit duplicate ACKs on out-of
     try std.testing.expectEqual(@as(u32, 5000), stack.tcp_client.?.ack);
     // Buffer should not receive out of order payload
     try std.testing.expectEqual(@as(usize, 0), stack.tcp_rx_len);
+}
+
+test "processIpv4 drops malformed packet where total_len < header_len without panicking" {
+    var dummy_dev: virtio_net_mod.VirtioNetDevice = undefined;
+    dummy_dev.initialized = false;
+    var stack = NetworkStack.init(&dummy_dev);
+    stack.dhcp_config.bound = true;
+    stack.dhcp_config.ip = [_]u8{ 10, 0, 2, 15 };
+
+    // IPv4 header with ihl = 5 (20 bytes) but total_len = 10 (< 20)
+    var malformed = [_]u8{
+        0x45, 0x00, 0x00, 0x0A, // Version/IHL, DSCP/ECN, Total Length = 10
+        0x12, 0x34, 0x00, 0x00, // ID, Flags/Fragment Offset
+        0x40, 0x06, 0x00, 0x00, // TTL=64, Proto=TCP, Checksum
+        10, 0, 2, 2, // Src IP
+        10, 0, 2, 15, // Dst IP
+    };
+    // Should safely discard without reverse-slice panic
+    stack.processIpv4([_]u8{ 0, 0, 0, 0, 0, 0 }, &malformed);
+}
+
+test "sendChunkWithRetry restores client seq on error" {
+    var dummy_dev: virtio_net_mod.VirtioNetDevice = undefined;
+    dummy_dev.initialized = false;
+    var stack = NetworkStack.init(&dummy_dev);
+    stack.dhcp_config.bound = true;
+    stack.dhcp_config.ip = [_]u8{ 10, 0, 2, 15 };
+
+    var client = tcp_mod.TcpClient.init([_]u8{ 10, 0, 2, 15 }, [_]u8{ 10, 0, 2, 2 }, 49152, 80, 1000);
+    client.state = .established;
+    client.seq = 1000;
+    client.unacked_seq = 1000;
+
+    const data = "Hello World";
+    const res = stack.sendChunkWithRetry(&client, data);
+    try std.testing.expectError(error.DeviceNotInitialized, res);
+    try std.testing.expectEqual(@as(u32, 1000), client.seq);
 }

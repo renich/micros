@@ -180,9 +180,10 @@ fn nativeSysFbClear(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
+    const color = castToU32(args[0].integer) orelse return error.InvalidArgs;
     const ctx = active_ctx orelse return Value{ .nil = {} };
     if (ctx.framebuffer) |fb| {
-        fb.clear(@intCast(args[0].integer));
+        fb.clear(color);
     }
     return Value{ .nil = {} };
 }
@@ -195,15 +196,13 @@ fn nativeSysFbDrawString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return error.InvalidArgs;
     }
     if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
+    const x = castToU32(args[0].integer) orelse return error.InvalidArgs;
+    const y = castToU32(args[1].integer) orelse return error.InvalidArgs;
+    const color = castToU32(args[3].integer) orelse return error.InvalidArgs;
+    const bg = castToU32(args[4].integer) orelse return error.InvalidArgs;
     const ctx = active_ctx orelse return Value{ .nil = {} };
     if (ctx.framebuffer) |fb| {
-        fb.drawString(
-            @intCast(args[0].integer),
-            @intCast(args[1].integer),
-            args[2].string,
-            @intCast(args[3].integer),
-            @intCast(args[4].integer),
-        );
+        fb.drawString(x, y, args[2].string, color, bg);
     }
     return Value{ .nil = {} };
 }
@@ -216,15 +215,14 @@ fn nativeSysFbDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return error.InvalidArgs;
     }
     if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
+    const x = castToU32(args[0].integer) orelse return error.InvalidArgs;
+    const y = castToU32(args[1].integer) orelse return error.InvalidArgs;
+    const w = castToU32(args[2].integer) orelse return error.InvalidArgs;
+    const h = castToU32(args[3].integer) orelse return error.InvalidArgs;
+    const color = castToU32(args[4].integer) orelse return error.InvalidArgs;
     const ctx = active_ctx orelse return Value{ .nil = {} };
     if (ctx.framebuffer) |fb| {
-        fb.drawRect(
-            @intCast(args[0].integer),
-            @intCast(args[1].integer),
-            @intCast(args[2].integer),
-            @intCast(args[3].integer),
-            @intCast(args[4].integer),
-        );
+        fb.drawRect(x, y, w, h, color);
     }
     return Value{ .nil = {} };
 }
@@ -238,7 +236,7 @@ fn nativeSysIpcRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         const handle = castToU32(args[0].integer) orelse return error.InvalidArgs;
         const cap = actor.getCap(handle) orelse return error.InvalidCapability;
         if (cap.cap_type != .ipc_ring or (cap.rights & cap_mod.Rights.READ) == 0) return error.PermissionDenied;
-        if (cap.data_addr == 0) return error.InvalidCapability;
+        if (cap.data_size != @sizeOf(RingBuffer) or cap.data_addr == 0) return error.InvalidCapability;
         ring = @ptrFromInt(cap.data_addr);
     } else if (caller_id == 0) {
         const ctx = active_ctx orelse return Value{ .integer = -1 };
@@ -936,4 +934,56 @@ test "sys_ipc_recv rejects unauthorized non-genesis actors without capability" {
 
     var no_args = [_]Value{};
     try std.testing.expectError(error.PermissionDenied, nativeSysIpcRecv(&vm, &no_args));
+}
+
+test "abi ipc_ring type confusion and framebuffer negative coordinate rejection" {
+    const allocator = std.testing.allocator;
+    var registry = ActorRegistry.init();
+    const genesis = try registry.spawn(allocator, 0, "genesis", 32, 0);
+    defer registry.terminate(allocator, genesis.id) catch {};
+    const child = try registry.spawn(allocator, genesis.id, "worker", 32, 0);
+    defer registry.terminate(allocator, child.id) catch {};
+
+    var dummy: u64 = 0;
+    const fake_cap = cap_mod.Capability{
+        .cap_type = .ipc_ring,
+        .rights = cap_mod.Rights.READ,
+        .object_id = 99,
+        .data_addr = @intFromPtr(&dummy),
+        .data_size = 8,
+    };
+    const handle = try child.insertCap(fake_cap);
+
+    var ctx = AbiContext{ .registry = &registry, .supervisor = genesis };
+    setContext(&ctx);
+    defer clearContext();
+
+    var chunk = @import("../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    const Helper = struct {
+        var act: ?*Actor = null;
+        fn get() ?*Actor {
+            return act;
+        }
+    };
+    Helper.act = child;
+    ctx.current_actor_fn = Helper.get;
+
+    var args = [_]Value{Value{ .integer = @intCast(handle) }};
+    try std.testing.expectError(error.InvalidCapability, nativeSysIpcRecv(&vm, &args));
+
+    const fb_cap = cap_mod.Capability{
+        .cap_type = .framebuffer,
+        .rights = cap_mod.Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    };
+    _ = try genesis.insertCap(fb_cap);
+    Helper.act = genesis;
+    var neg_clear = [_]Value{Value{ .integer = -1 }};
+    try std.testing.expectError(error.InvalidArgs, nativeSysFbClear(&vm, &neg_clear));
 }
