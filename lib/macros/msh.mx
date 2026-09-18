@@ -1,4 +1,4 @@
-// MicrOS (µOS) MicroShell (msh) - App 0
+// MicrOS (µOS) MicroShell
 // Stream-oriented CLI for humans and AI agents.
 
 fn init_msh() {
@@ -16,8 +16,8 @@ init_msh();
 
 fn msh_draw_header() {
     sys_fb_draw_rect(0, 0, 1280, 24, 856343);
-    sys_fb_draw_string(20, 4, "uOS MicroShell (msh) - App 0", CLR_TEXT, 856343);
-    sys_fb_draw_string(1140, 4, "tty0/16550", CLR_MUTED, 856343);
+    sys_fb_draw_string(20, 4, "uOS MicroShell", CLR_TEXT, 856343);
+    sys_fb_draw_string(1200, 4, "x86_64", CLR_MUTED, 856343);
     sys_fb_draw_rect(0, 24, 1280, 1, 2238254);
 }
 
@@ -79,7 +79,7 @@ fn cmd_help() {
     console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash");
     console_writeln("  persist <id>  - Persist actor source to CAS root");
     console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
-    console_writeln("  harness       - Launch full-screen visual studio (App 1)");
+    console_writeln("  harness       - Launch visual studio");
     console_writeln("  install       - Launch standalone silicon installer");
     console_writeln("  rebuild       - Rebuild system kernel and stage to ESP");
     console_writeln("  reboot        - Reset system and reboot hardware");
@@ -167,7 +167,7 @@ fn cmd_harness() {
         console_writeln("Error: harness.mx not found in genesis bundle.");
         return 0;
     }
-    console_writeln("Launching App 1: Interactive Harness...");
+    console_writeln("Launching Visual Studio...");
     h_id = sys_actor_spawn_code("harness", h_src);
     if (h_id < 0) {
         console_writeln("Error: Failed to spawn harness actor.");
@@ -341,8 +341,8 @@ fn msh_loop() {
 fn msh_main() {
     msh_draw_header();
     msh_clear_screen();
-    console_writeln("MicroShell (msh) v0.1.0-dev");
-    console_writeln("Type 'help' for commands, 'harness' for visual studio.");
+    console_writeln("MicroShell 0.15.0");
+    console_writeln("Type 'help' for commands.");
     console_writeln("");
     msh_loop();
 }

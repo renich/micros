@@ -409,7 +409,7 @@ fn harness_main() {
     draw_header();
     draw_panels();
     render_inspector();
-    console_writeln("MicrOS Interactive Studio (App 1)", CLR_TEXT);
+    console_writeln("MicrOS Interactive Studio", CLR_TEXT);
     console_writeln("Type 'help' for commands, 'exit' to return to msh.", CLR_MUTED);
     console_newline();
     harness_loop();

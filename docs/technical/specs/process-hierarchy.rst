@@ -17,9 +17,9 @@ Prior to this architecture, the microkernel booted directly into a full-screen g
 The decoupled process hierarchy enforces four strict layers:
 
 * **Layer 0 (Microkernel Substrate)**: Ring 0 Zig implementation providing raw CPU fiber scheduling, PMM/VMM memory isolation, VirtIO drivers, SPSC IPC rings, capability checks, and the unified native C-ABI substrate (`src/kernel/abi.zig`). Exposes mechanism only; enforces zero UI or shell policies.
-* **Layer 1 (Actor 0 Supervisor)**: Root userspace actor (`lib/macros/init.mx`, PID 1) running in CSpace 0. Acts as the immortal Erlang-style hardware supervisor. Reads genesis payloads, spawns default user interfaces, and traps child faults and termination events.
-* **Layer 2 (App 0 MicroShell)**: Primary system interface (`lib/macros/msh.mx`). Dual-output terminal interface for humans and AI agents. Renders directly to the UEFI GOP linear framebuffer (`tty0`) while mirroring to the UART 16550 serial console (`ttyS0`). Handles command evaluation, telemetry queries, actor lifecycle management, CAS storage manipulation, and application dispatching.
-* **Layer 3 (App 1 Interactive Studio)**: Visual IDE and GOP canvas workspace (`lib/macros/harness.mx`). Launched on demand from MicroShell (`msh> harness`), rendering vector telemetry and actor graphs on the 1280x800 framebuffer. Exits cleanly back to MicroShell via `exit`, restoring MicroShell's display.
+* **Layer 1 (Supervisor)**: Root userspace actor (`lib/macros/init.mx`, PID 1 / Actor 0) running in CSpace 0. Acts as the immortal Erlang-style hardware supervisor. Reads genesis payloads, spawns default user interfaces, and traps child faults and termination events.
+* **Layer 2 (MicroShell)**: Primary system interface (`lib/macros/msh.mx`). Dual-output terminal interface for humans and AI agents. Renders directly to the UEFI GOP linear framebuffer (`tty0`) while mirroring to the UART 16550 serial console (`ttyS0`). Handles command evaluation, telemetry queries, actor lifecycle management, CAS storage manipulation, and application dispatching.
+* **Layer 3 (Interactive Studio)**: Visual IDE and GOP canvas workspace (`lib/macros/harness.mx`). Launched on demand from MicroShell (`msh> harness`), rendering vector telemetry and actor graphs on the 1280x800 framebuffer. Exits cleanly back to MicroShell via `exit`, restoring MicroShell's display.
 
 2. Four-Layer Process Taxonomy
 ==============================
@@ -37,12 +37,12 @@ The decoupled process hierarchy enforces four strict layers:
    +------------------------------+------------------------------+
                                   | Spawns
    +------------------------------v------------------------------+
-   | Layer 2: App 0 MicroShell (lib/macros/msh.mx, Dual GOP/TTY) |
+   | Layer 2: MicroShell (lib/macros/msh.mx, Dual GOP/TTY)       |
    | Line Editor, Builtin Dispatcher, Actor Manager, Framebuffer |
    +------------------------------+------------------------------+
                                   | Launches on Demand
    +------------------------------v------------------------------+
-   | Layer 3: App 1 Interactive Studio (lib/macros/harness.mx)   |
+   | Layer 3: Interactive Studio (lib/macros/harness.mx)         |
    | Direct GOP Framebuffer Canvas, Visual Telemetry, Vector UI  |
    +-------------------------------------------------------------+
 
