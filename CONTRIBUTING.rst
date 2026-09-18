@@ -31,15 +31,15 @@ The Ten Commandments of Code Quality
 
 Every line of code committed to MicrOS must comply with the Ten Commandments defined in `AGENTS.md <AGENTS.md>`_:
 
-1. **File Size**: No file shall exceed 1,000 lines of code.
-2. **Function Size**: No function shall exceed 40 lines.
-3. **Nesting Depth**: Maximum indentation depth is 3 levels.
-4. **Formatting**: Never use spaces around forward slashes in text or markdown (format as ``word/word``, never with spaces around the slash).
+1. **File Size & Domain Boundaries**: No file shall exceed 1,000 lines of code. Generic names (``utils.zig``, ``common.zig``, ``helpers.zig``) are strictly forbidden; all modules must represent concrete domain boundaries.
+2. **Function Size**: No function shall exceed 40 lines of executable logic (declarative ``switch`` dispatch tables are exempt from artificial fragmentation).
+3. **Nesting Depth**: Maximum indentation depth is 3 levels. Favor early returns and guard clauses.
+4. **Capability Discipline**: Zero ambient authority. Direct hardware, network, storage, or actor manipulation requires explicit CSpace capability tokens.
 5. **No Magic Numbers**: All constants must be strongly typed or defined in ``UPPER_SNAKE_CASE`` (e.g., ``0x4D494352_4F534B45``).
 6. **Explicit Errors**: No ``catch unreachable`` outside unit tests. All runtime errors must bubble up explicitly using Zig error unions.
-7. **No Libc**: The substrate layer (``src/sys/`` and the kernel) must never link against or include libc. Use direct Linux syscalls or native x86_64 inline assembly.
-8. **Memory Safety**: All memory allocations must take an explicit ``std.mem.Allocator`` parameter. Hidden global state allocations are strictly forbidden.
-9. **Page Alignment**: All ``mmap`` regions, page tables, and hardware buffers must mathematically enforce 4096-byte alignment.
+7. **Freestanding Substrate**: The substrate layer and kernel must never link against or include libc. Hardware interaction strictly via VirtIO/NVMe DMA, MMIO, Port I/O, or native x86_64 inline assembly.
+8. **Memory Safety**: All dynamic memory allocations must take an explicit ``std.mem.Allocator`` parameter. Hidden global state allocations are forbidden, and hot driver/interrupt paths must be strictly zero-allocation.
+9. **Page & Sector Alignment**: All PMM/VMM frames, DMA virtqueues, and storage buffers must mathematically enforce 4096-byte page and 512-byte sector alignment.
 10. **Test Colocation**: Tests must reside alongside the production code they test within the same module using native Zig ``test`` blocks.
 
 Codebase Architecture & Understanding Guides
