@@ -2,7 +2,7 @@ Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP)
 =============================================================================
 
 :Objective: Complete the architectural excision of all hardware device drivers, filesystems, and display management from Ring 0 into isolated Ring 3 userland service actors, enforce true hardware privilege separation (TSS, CR3, syscall/sysret), and establish hardware APIC timer preemption across symmetric multi-core CPUs.
-:Status: Active Target
+:Status: Completed
 :Specifications: `SPEC-TECH-CAP-002`, `SPEC-TECH-SMP-001`, `SPEC-TECH-COMPOSITOR-002`, `SPEC-TECH-STORAGE-002`, `SPEC-TECH-MIN-001`
 :Critical Path: M23a -> M23b -> M24 -> M25 -> M26
 
@@ -38,7 +38,7 @@ Milestones & Deliverables
    - **Blocked By**: M23b, M24.
    - **Unblocks**: M26, Phase 8 (P2P CAS).
 
-* **Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation** [ACTIVE]
+* **Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation** [COMPLETED]
    - **Architectural Purity Verification**: Formally audit Ring 0 microkernel core; verify zero device drivers, zero network stacks, zero filesystems, and zero floating-point operations in Ring 0 (< 2,000 LOC safety ceiling).
    - **Physical Bare-Metal Silicon Validation**: Deploy and validate live boot, SMP execution, and driver stability on physical x86_64 server hardware and workstations.
    - **Blocked By**: M24, M25.

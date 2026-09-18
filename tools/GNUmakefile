@@ -17,6 +17,7 @@ CACHE_DIR := .zig-cache
 
 # Native Zig binaries
 BINARIES := \
+	$(BIN_DIR)/micros-audit-minimality \
 	$(BIN_DIR)/micros-bundle \
 	$(BIN_DIR)/micros-fb-verify \
 	$(BIN_DIR)/micros-lint \
@@ -32,6 +33,7 @@ SCRIPTS := \
 
 # Symlink launchers
 SYMLINKS := \
+	micros-audit-minimality \
 	micros-bundle \
 	micros-inspect \
 	micros-runner \
@@ -54,6 +56,10 @@ all: $(BINARIES) $(SYMLINKS)
 $(BIN_DIR):
 	mkdir -p $@
 
+$(BIN_DIR)/micros-audit-minimality: $(SRC_DIR)/audit_minimality.zig | $(BIN_DIR)
+	@echo "=> Compiling $@..."
+	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
+
 $(BIN_DIR)/micros-fb-verify: $(SRC_DIR)/fb_verify.zig | $(BIN_DIR)
 	@echo "=> Compiling $@..."
 	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
@@ -67,6 +73,9 @@ $(BIN_DIR)/micros-%: $(SRC_DIR)/%.zig | $(BIN_DIR)
 	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
 
 # Launcher symlinks
+micros-audit-minimality: $(BIN_DIR)/micros-audit-minimality
+	ln -sf $< $@
+
 micros-bundle: $(BIN_DIR)/micros-bundle
 	ln -sf $< $@
 

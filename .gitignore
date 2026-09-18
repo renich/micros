@@ -8,6 +8,7 @@ test_*.zig
 !src/sys/*_test.zig
 !src/macros/*_test.zig
 tools/bin/
+tools/micros-audit-minimality
 tools/micros-bundle
 tools/micros-fb-verify
 tools/micros-lint

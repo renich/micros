@@ -151,3 +151,92 @@ test "CSpace allocation, insertion, validation, grant, and revocation" {
     try cspace1.revoke(handle1);
     try std.testing.expect(cspace1.get(handle1) == null);
 }
+
+test "SPEC-TECH-MIN-001: Formal Attenuation Matrix & Monotonic Security Gate Audit" {
+    const allocator = std.testing.allocator;
+    var root_cspace = try CSpace.init(allocator, 32);
+    defer root_cspace.deinit(allocator);
+
+    var child_cspace = try CSpace.init(allocator, 32);
+    defer child_cspace.deinit(allocator);
+
+    // 1. memory_extent: READ | WRITE | EXECUTE | GRANT -> attenuated to READ | EXECUTE
+    const mem_cap = Capability{
+        .cap_type = .memory_extent,
+        .rights = Rights.READ | Rights.WRITE | Rights.EXECUTE | Rights.GRANT,
+        .object_id = 1,
+        .data_addr = 0x4000_0000,
+        .data_size = 4096 * 16,
+    };
+    const mem_h = try root_cspace.insert(mem_cap);
+    const child_mem_h = try root_cspace.grant(mem_h, child_cspace, Rights.READ | Rights.EXECUTE);
+    const child_mem = child_cspace.get(child_mem_h).?;
+    try std.testing.expect(child_mem.hasRight(Rights.READ | Rights.EXECUTE));
+    try std.testing.expect(!child_mem.hasRight(Rights.WRITE));
+    try std.testing.expect(!child_mem.hasRight(Rights.GRANT));
+    try std.testing.expectEqual(mem_cap.rights, child_mem.rights | mem_cap.rights);
+
+    // 2. ipc_ring: ALL -> attenuated to READ
+    const ring_cap = Capability{
+        .cap_type = .ipc_ring,
+        .rights = Rights.ALL,
+        .object_id = 2,
+        .data_addr = 0x5000_0000,
+        .data_size = 4096,
+    };
+    const ring_h = try root_cspace.insert(ring_cap);
+    const child_ring_h = try root_cspace.grant(ring_h, child_cspace, Rights.READ);
+    const child_ring = child_cspace.get(child_ring_h).?;
+    try std.testing.expect(child_ring.hasRight(Rights.READ));
+    try std.testing.expect(!child_ring.hasRight(Rights.WRITE));
+
+    // 3. irq_endpoint: only WRITE (signal & ack), reject unheld rights
+    const irq_cap = Capability{
+        .cap_type = .irq_endpoint,
+        .rights = Rights.WRITE | Rights.GRANT,
+        .object_id = 11,
+        .data_addr = 0,
+        .data_size = 0,
+    };
+    const irq_h = try root_cspace.insert(irq_cap);
+    try std.testing.expectError(CapError.PermissionDenied, root_cspace.grant(irq_h, child_cspace, Rights.EXECUTE));
+
+    // 4. framebuffer: READ | WRITE (reject EXECUTE)
+    const fb_cap = Capability{
+        .cap_type = .framebuffer,
+        .rights = Rights.READ | Rights.WRITE | Rights.GRANT,
+        .object_id = 3,
+        .data_addr = 0xE000_0000,
+        .data_size = 1280 * 800 * 4,
+    };
+    const fb_h = try root_cspace.insert(fb_cap);
+    try std.testing.expectError(CapError.PermissionDenied, root_cspace.grant(fb_h, child_cspace, Rights.EXECUTE));
+
+    // 5. storage_device: READ | WRITE | ALL -> attenuated to READ (read-only mount)
+    const storage_cap = Capability{
+        .cap_type = .storage_device,
+        .rights = Rights.ALL,
+        .object_id = 4,
+        .data_addr = 0,
+        .data_size = 1048576,
+    };
+    const stor_h = try root_cspace.insert(storage_cap);
+    const ro_stor_h = try root_cspace.grant(stor_h, child_cspace, Rights.READ);
+    const ro_stor = child_cspace.get(ro_stor_h).?;
+    try std.testing.expect(ro_stor.hasRight(Rights.READ));
+    try std.testing.expect(!ro_stor.hasRight(Rights.WRITE));
+
+    // 6. actor_control: WRITE (spawn, kill, suspend)
+    const actor_cap = Capability{
+        .cap_type = .actor_control,
+        .rights = Rights.WRITE | Rights.GRANT,
+        .object_id = 5,
+        .data_addr = 0,
+        .data_size = 0,
+    };
+    const act_h = try root_cspace.insert(actor_cap);
+    const delegated_act_h = try root_cspace.grant(act_h, child_cspace, Rights.WRITE);
+    const delegated_act = child_cspace.get(delegated_act_h).?;
+    try std.testing.expect(delegated_act.hasRight(Rights.WRITE));
+    try std.testing.expect(!delegated_act.hasRight(Rights.GRANT));
+}

@@ -108,6 +108,7 @@ pub fn build(b: *std.Build) void {
         src: []const u8,
     };
     const tools = [_]ToolDef{
+        .{ .name = "micros-audit-minimality", .src = "tools/src/audit_minimality.zig" },
         .{ .name = "micros-bundle", .src = "tools/src/bundle.zig" },
         .{ .name = "micros-fb-verify", .src = "tools/src/fb_verify.zig" },
         .{ .name = "micros-lint", .src = "tools/src/lint.zig" },
