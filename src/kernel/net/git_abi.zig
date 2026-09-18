@@ -340,7 +340,9 @@ pub fn nativeSysGitReceivePack(vm_ptr: *anyopaque, args: []Value) anyerror!Value
 
     var resp_buf: [2048]u8 = undefined;
     const len = processReceivePack(vm.allocator, args[0].string, args[1].string, &resp_buf) catch {
-        return Value{ .string = "" };
+        const err_len = git_transport.buildReportStatusBody("refs/heads/master", false, "unpack failed", &resp_buf) catch return Value{ .string = "" };
+        const duped = try vm.allocator.dupe(u8, resp_buf[0..err_len]);
+        return Value{ .string = duped };
     };
     const duped = try vm.allocator.dupe(u8, resp_buf[0..len]);
     return Value{ .string = duped };

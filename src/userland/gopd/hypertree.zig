@@ -140,9 +140,31 @@ pub const HyperTree = struct {
         };
     }
 
+    pub fn compactPayloads(self: *HyperTree) void {
+        var new_arena = [_]u8{0} ** MAX_PAYLOAD_BYTES;
+        var new_used: usize = 0;
+        for (0..MAX_NODES) |i| {
+            if (self.node_active[i]) {
+                var n = &self.nodes[i];
+                if (n.payload_len > 0) {
+                    const plen: usize = n.payload_len;
+                    const poff: usize = n.payload_offset;
+                    @memcpy(new_arena[new_used .. new_used + plen], self.payload_arena[poff .. poff + plen]);
+                    n.payload_offset = @intCast(new_used);
+                    new_used += plen;
+                }
+            }
+        }
+        @memcpy(self.payload_arena[0..new_used], new_arena[0..new_used]);
+        self.payload_used = new_used;
+    }
+
     pub fn insertNode(self: *HyperTree, node: HyperNode, payload: []const u8) !u32 {
         if (self.node_count >= MAX_NODES) return error.TreeFull;
-        if (self.payload_used + payload.len > MAX_PAYLOAD_BYTES) return error.PayloadOutOfMemory;
+        if (self.payload_used + payload.len > MAX_PAYLOAD_BYTES) {
+            self.compactPayloads();
+            if (self.payload_used + payload.len > MAX_PAYLOAD_BYTES) return error.PayloadOutOfMemory;
+        }
 
         var slot: ?usize = null;
         for (0..MAX_NODES) |i| {
@@ -209,6 +231,8 @@ pub const HyperTree = struct {
         }
         if (self.node_count == 0) {
             self.payload_used = 0;
+        } else if (self.payload_used > MAX_PAYLOAD_BYTES * 8 / 10) {
+            self.compactPayloads();
         }
     }
 

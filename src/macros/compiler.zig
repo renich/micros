@@ -311,9 +311,11 @@ pub const Compiler = struct {
 
         self.scope_depth += 1;
         const old_count = self.local_count;
+        if (self.local_count >= 256) return error.TooManyLocals;
         self.locals[self.local_count] = func.name;
         self.local_count += 1;
         for (func.params) |param| {
+            if (self.local_count >= 256) return error.TooManyLocals;
             self.locals[self.local_count] = param;
             self.local_count += 1;
         }

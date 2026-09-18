@@ -132,8 +132,19 @@ pub const GopDaemon = struct {
         var i: usize = 0;
         while (i < self.wm.window_count) : (i += 1) {
             const win = self.wm.windows[i] orelse continue;
-            if (win.surface.actor_id == commit.surface.actor_id) {
-                self.wm.commitSurface(win, commit);
+            if (win.surface.actor_id == commit.actor_id and win.surface.id == commit.surface_id) {
+                if (!commit.damage.isEmpty()) {
+                    const wx: u32 = @intCast(@max(0, win.x));
+                    const wy: u32 = @intCast(@max(0, win.y));
+                    self.canvas.damage.addRect(
+                        wx + commit.damage.min_x,
+                        wy + commit.damage.min_y,
+                        commit.damage.width(),
+                        commit.damage.height(),
+                        self.canvas.width,
+                        self.canvas.height,
+                    );
+                }
                 return true;
             }
         }
@@ -440,4 +451,41 @@ test "GopDaemon HyperTree reactive rendering and event hit-testing" {
     const hit = daemon.dispatchUiEvent(ev);
     try std.testing.expectEqual(@as(?u32, btn_id), hit);
     try std.testing.expectEqual(@as(?u32, btn_id), daemon.tree.focused_node_id);
+}
+
+test "GopDaemon surface commit propagates damage to canvas" {
+    const allocator = std.testing.allocator;
+    const fb_info = boot_info_mod.FramebufferInfo{
+        .base_addr = 0xE000_0000,
+        .size_bytes = 400 * 300 * 4,
+        .width = 400,
+        .height = 300,
+        .stride = 400,
+        .format = .rgb_888,
+    };
+    const cap = cap_mod.Capability{
+        .cap_type = .framebuffer,
+        .rights = cap_mod.Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 400 * 300 * 4,
+    };
+    var daemon = try GopDaemon.init(allocator, fb_info, cap);
+    defer daemon.deinit();
+
+    _ = try daemon.createWindow(1, "Test Window", 100, 100, .floating);
+    const win = daemon.wm.windows[0].?;
+    daemon.canvas.damage.reset();
+
+    var dmg = compositor_mod.DamageRect.empty();
+    dmg.addPoint(10, 10);
+    const commit = compositor_mod.SurfaceCommit{
+        .surface_id = win.surface.id,
+        .actor_id = win.surface.actor_id,
+        .damage = dmg,
+        .timestamp = 500,
+    };
+
+    try std.testing.expect(daemon.commitSurface(commit));
+    try std.testing.expect(!daemon.canvas.damage.isEmpty());
 }

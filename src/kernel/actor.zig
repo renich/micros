@@ -151,11 +151,16 @@ pub const Actor = struct {
 
     pub fn authorizesPhysicalExtent(self: *const Actor, phys: u64, size: u64, required_rights: u16) bool {
         if (self.id == GENESIS_ACTOR_ID) return true;
+        if (size == 0) return true;
+        if (size > std.math.maxInt(u64) - phys) return false;
+        const phys_end = phys + size;
         var i: usize = 0;
         while (i < self.cspace.capacity) : (i += 1) {
             const entry = self.cspace.entries[i];
             if (entry.isValid() and entry.cap_type == .memory_extent and entry.hasRight(required_rights)) {
-                if (phys >= entry.data_addr and (phys + size) <= (entry.data_addr + entry.data_size)) {
+                if (entry.data_size > std.math.maxInt(u64) - entry.data_addr) continue;
+                const entry_end = entry.data_addr + entry.data_size;
+                if (phys >= entry.data_addr and phys_end <= entry_end) {
                     return true;
                 }
             }
@@ -395,4 +400,6 @@ test "Actor physical memory extent capability authorization" {
     try std.testing.expect(!actor.authorizesPhysicalExtent(0x22000, 4096, Rights.WRITE));
     // Overlapping boundary overflow: unauthorized
     try std.testing.expect(!actor.authorizesPhysicalExtent(0x21000, 8192, Rights.WRITE));
+    // Integer overflow attempts: unauthorized
+    try std.testing.expect(!actor.authorizesPhysicalExtent(std.math.maxInt(u64) - 100, 200, Rights.WRITE));
 }

@@ -14,6 +14,7 @@ const tcp_mod = @import("tcp.zig");
 const virtio_net_mod = @import("../drivers/virtio_net.zig");
 const serial = @import("../serial.zig");
 const io = @import("../arch/x86_64/io.zig");
+const apic = @import("../arch/x86_64/apic.zig");
 
 pub const IP_BROADCAST: [4]u8 = [_]u8{ 255, 255, 255, 255 };
 pub const IP_ZERO: [4]u8 = [_]u8{ 0, 0, 0, 0 };
@@ -549,7 +550,8 @@ pub const NetworkStack = struct {
         }
         const listen_port = port orelse return null;
         for (&self.server_conns) |*conn| {
-            if (conn.state == .established and conn.local_port == listen_port and conn.owner_actor == owner_actor) {
+            if (conn.state == .established and conn.local_port == listen_port and conn.owner_actor == owner_actor and !conn.accepted) {
+                conn.accepted = true;
                 return conn.id;
             }
         }
@@ -593,6 +595,17 @@ pub const NetworkStack = struct {
 
     pub fn pollTcpServer(self: *NetworkStack) void {
         _ = self.poll();
+        const current_ticks = apic.total_ticks;
+        for (&self.server_conns) |*conn| {
+            if (conn.state == .established and conn.tx_sent > 0 and conn.unacked_seq != conn.local_seq) {
+                if (current_ticks - conn.last_activity_ticks > tcp_mod.TCP_RTO_TICKS) {
+                    conn.tx_sent = 0;
+                    conn.last_activity_ticks = current_ticks;
+                    conn.retries +%= 1;
+                    if (conn.retries > tcp_mod.TCP_MAX_RETRIES) conn.state = .closed;
+                }
+            }
+        }
     }
 
     pub fn poll(self: *NetworkStack) usize {

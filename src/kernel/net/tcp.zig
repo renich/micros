@@ -387,6 +387,7 @@ pub const TcpServerConn = struct {
     tx_len: usize = 0,
     tx_sent: usize = 0,
     owner_actor: u32 = 0,
+    accepted: bool = false,
 
     pub fn init(
         id: u32,
@@ -410,6 +411,7 @@ pub const TcpServerConn = struct {
             .remote_seq = client_isn +% 1,
             .remote_ack = initial_seq +% 1,
             .owner_actor = owner_actor,
+            .accepted = false,
         };
         conn.rx_head = 0;
         conn.rx_tail = 0;

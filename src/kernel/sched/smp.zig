@@ -1,5 +1,5 @@
 // MicrOS (µOS) Preemptive Symmetric Multiprocessing (SMP) Scheduler
-// Manages multi-core topology, per-core runqueues, lock-free work-stealing, and APIC timer preemption.
+// Manages multi-core topology, per-core runqueues, interrupt-safe work-stealing, and APIC timer quantum accounting.
 
 const std = @import("std");
 const builtin = @import("builtin");

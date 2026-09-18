@@ -19,6 +19,11 @@ pub const BundleWriterError = error{
     BundleTooLarge,
 };
 
+fn align64Safe(val: u64) BundleWriterError!u64 {
+    if (val > std.math.maxInt(u64) - 63) return BundleWriterError.BundleTooLarge;
+    return std.mem.alignForward(u64, val, 64);
+}
+
 fn align64(val: u64) u64 {
     return std.mem.alignForward(u64, val, 64);
 }
@@ -27,14 +32,14 @@ fn entryLessThan(_: void, a: EntryInput, b: EntryInput) bool {
     return std.mem.order(u8, a.tag, b.tag) == .lt;
 }
 
-fn computeTotalSize(entries: []const EntryInput) u64 {
+fn computeTotalSize(entries: []const EntryInput) BundleWriterError!u64 {
     const table_bytes = @sizeOf(bundle.BundleHeader) + (entries.len * @sizeOf(bundle.BundleEntry));
-    var cur_pos: u64 = align64(table_bytes);
+    var cur_pos: u64 = try align64Safe(table_bytes);
     for (entries) |e| {
-        cur_pos = align64(cur_pos);
-        cur_pos += e.data.len;
+        cur_pos = try align64Safe(cur_pos);
+        cur_pos = std.math.add(u64, cur_pos, e.data.len) catch return BundleWriterError.BundleTooLarge;
     }
-    return align64(cur_pos);
+    return try align64Safe(cur_pos);
 }
 
 fn validateEntries(entries: []const EntryInput) BundleWriterError!void {
@@ -90,7 +95,7 @@ pub fn packBundle(allocator: std.mem.Allocator, raw_entries: []const EntryInput)
 
     try validateEntries(sorted);
 
-    const total_size = computeTotalSize(sorted);
+    const total_size = try computeTotalSize(sorted);
     if (total_size > std.math.maxInt(usize)) return BundleWriterError.BundleTooLarge;
 
     const out_buf = try allocator.alloc(u8, @intCast(total_size));
