@@ -24,6 +24,8 @@ pub const MessageType = enum(u16) {
     chunk_response = 7,
     actor_dispatch = 8,
     actor_result = 9,
+    merkle_sync_request = 10,
+    merkle_sync_response = 11,
 };
 
 pub const FrameHeader = extern struct {

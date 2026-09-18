@@ -16,7 +16,7 @@ Milestones & Deliverables
    - **Blocked By**: Phase 6 (M25 storaged, M26 microkernel stability).
    - **Unblocks**: M31, M32.
 
-* **Milestone 31: Distributed Content-Addressed Storage & Merkle Sync** [SCHEDULED]
+* **Milestone 31: Distributed Content-Addressed Storage & Merkle Sync** [COMPLETED]
    - **Decentralized CAS Replication**: Stream 256-bit BLAKE3 chunks across peer nodes on-demand with cryptographic integrity verification.
    - **Workspace Merkle Difference Exchange**: Compare workspace manifest trees across nodes and synchronize missing chunks efficiently.
    - **Offline-First OCC Reconciliation**: Resolve concurrent distributed workspace edits using monotonic generation counters and conflict-free data types.
