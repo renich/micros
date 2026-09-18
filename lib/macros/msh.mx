@@ -100,10 +100,12 @@ fn cmd_actors() {
         st = sys_actor_state(i);
         if (st >= 0) {
             nm = sys_actor_name(i);
-            st_str = "ready";
-            if (st == 1) { st_str = "running"; }
-            if (st == 2) { st_str = "blocked"; }
-            if (st == 3) { st_str = "dead"; }
+            st_str = "inactive";
+            if (st == 1) { st_str = "ready"; }
+            if (st == 2) { st_str = "running"; }
+            if (st == 3) { st_str = "paused"; }
+            if (st == 4) { st_str = "faulted"; }
+            if (st == 5) { st_str = "stopped"; }
             console_writeln("  [" + int_to_str(i) + "] " + nm + " (" + st_str + ")");
         }
         i = i + 1;
@@ -168,6 +170,7 @@ fn cmd_harness() {
         return 0;
     }
     console_writeln("Launching Visual Studio...");
+    sys_fb_clear(CLR_BG);
     h_id = sys_actor_spawn_code("harness", h_src);
     if (h_id < 0) {
         console_writeln("Error: Failed to spawn harness actor.");
@@ -241,9 +244,14 @@ fn eval_command(cmd) {
     if (is_prefix(cmd, "persist ")) { return cmd_persist(substr(cmd, 8, len(cmd))); }
     if (is_prefix(cmd, "spawn_cas ")) { return cmd_spawn_cas(substr(cmd, 10, len(cmd))); }
     if (is_prefix(cmd, "kill ")) {
-        target = substr(cmd, 5, len(cmd));
-        sys_actor_terminate(str_to_int(target));
-        console_writeln("Terminated Actor " + target);
+        target_s = substr(cmd, 5, len(cmd));
+        target_id = str_to_int(target_s);
+        if (target_id < 0) {
+            console_writeln("Error: Invalid actor ID '" + target_s + "'");
+            return 0;
+        }
+        sys_actor_terminate(target_id);
+        console_writeln("Terminated Actor " + target_s);
         return 0;
     }
     console_writeln("Unknown command: '" + cmd + "' (type 'help')");

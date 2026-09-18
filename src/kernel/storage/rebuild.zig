@@ -91,13 +91,12 @@ pub const RebuildEngine = struct {
         const target_path = if (target_slot == 'A') "/EFI/BOOT/SLOT_A.EFI" else "/EFI/BOOT/SLOT_B.EFI";
 
         try fat32.writeFile(dev, target_path, kernel_data);
-        try fat32.writeFile(dev, "/EFI/BOOT/BOOTX64.EFI", kernel_data);
 
         var new_state = [_]u8{ target_slot, '\n' };
-        _ = fat32.writeFile(dev, "/EFI/BOOT/BOOTSTATE.DAT", &new_state) catch {};
+        try fat32.writeFile(dev, "/EFI/BOOT/BOOTSTATE.DAT", &new_state);
 
         var trial_marker = [_]u8{'1'};
-        _ = fat32.writeFile(dev, "/EFI/BOOT/TRIAL.DAT", &trial_marker) catch {};
+        try fat32.writeFile(dev, "/EFI/BOOT/TRIAL.DAT", &trial_marker);
     }
 
     pub fn setEspDevice(self: *RebuildEngine, esp_dev: ?*block.BlockDevice) void {
@@ -167,7 +166,7 @@ pub const RebuildEngine = struct {
 
         if (self.esp_dev) |edev| {
             var trial_marker = [_]u8{'0'};
-            _ = fat32.writeFile(edev, "/EFI/BOOT/TRIAL.DAT", &trial_marker) catch {};
+            try fat32.writeFile(edev, "/EFI/BOOT/TRIAL.DAT", &trial_marker);
         }
 
         try self.cas.setRootHash(&updated_hash, self.dev);
@@ -189,12 +188,20 @@ pub const RebuildEngine = struct {
         try prev_manifest.validate();
 
         if (self.esp_dev) |edev| {
+            const active_slot = getActiveSlot(edev, allocator);
+            const fallback_slot: u8 = if (active_slot == 'A') 'B' else 'A';
+            const fallback_path = if (fallback_slot == 'A') "/EFI/BOOT/SLOT_A.EFI" else "/EFI/BOOT/SLOT_B.EFI";
+
             const kernel_buf = try allocator.alloc(u8, cas_mod.MAX_CHUNK_PAYLOAD_SIZE);
             defer allocator.free(kernel_buf);
             const k_len = try self.cas.getChunk(&prev_manifest.kernel_hash, kernel_buf, self.dev);
-            try fat32.writeFile(edev, "/EFI/BOOT/BOOTX64.EFI", kernel_buf[0..k_len]);
+            try fat32.writeFile(edev, fallback_path, kernel_buf[0..k_len]);
+
+            var new_state = [_]u8{ fallback_slot, '\n' };
+            try fat32.writeFile(edev, "/EFI/BOOT/BOOTSTATE.DAT", &new_state);
+
             var trial_marker = [_]u8{'0'};
-            _ = fat32.writeFile(edev, "/EFI/BOOT/TRIAL.DAT", &trial_marker) catch {};
+            try fat32.writeFile(edev, "/EFI/BOOT/TRIAL.DAT", &trial_marker);
         }
 
         try self.cas.setRootHash(&active.prev_manifest_hash, self.dev);

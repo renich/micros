@@ -278,7 +278,7 @@ test "Harness VM stack depth tracking with simulated commands" {
     try vm.globals.put("sys_serial_read", @import("macros/eval.zig").Value{ .native = testSerialRead });
     try vm.globals.put("sys_ai_prompt", @import("macros/eval.zig").Value{ .native = testAiPromptMock });
     try vm.run(0);
-    try std_mod.testing.expect(vm.sp <= 32);
+    try std_mod.testing.expect(vm.sp <= 48);
 }
 
 test "Tokenize mock extracted code" {

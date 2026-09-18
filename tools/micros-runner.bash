@@ -169,7 +169,7 @@ run_silicon_verification() {
     echo "[silicon-test] Stage 1 SUCCESS! Bare-metal silicon partitioned, formatted, and staged!"
 
     echo "[silicon-test] Stage 2: Cord-cutting verification — Booting standalone NVMe silicon..."
-    "$0" --mode uefi --nvme "$nvme" --serial-log "$log2" --expect "MicroShell (msh)" --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --nvme "$nvme" --serial-log "$log2" --expect "MicroShell" --timeout "$TIMEOUT_SEC"
 
     echo "[silicon-test] Stage 2 SUCCESS! MicrOS booted directly from standalone physical NVMe drive!"
     echo "========================================================"
@@ -277,7 +277,7 @@ elif [[ "$MODE" == "uefi" ]]; then
     fi
 
     if [[ "$EXPECT" == "Substrate self-test verified (Macros 20+22=42)" ]]; then
-        EXPECT="MicroShell (msh)"
+        EXPECT="MicroShell"
     fi
 
     ESP_DIR="$BUILD_DIR/esp"

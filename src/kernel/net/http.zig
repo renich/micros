@@ -97,7 +97,7 @@ pub fn parseHeaderLine(line: []const u8, resp: *HttpResponse) void {
         const val_part = std.mem.trim(u8, line[15..], " \t\r\n");
         resp.content_length = std.fmt.parseInt(usize, val_part, 10) catch null;
     } else if (std.ascii.startsWithIgnoreCase(line, "transfer-encoding:")) {
-        if (std.mem.indexOf(u8, line, "chunked") != null) {
+        if (std.ascii.indexOfIgnoreCase(line, "chunked") != null) {
             resp.is_chunked = true;
         }
     } else if (std.ascii.startsWithIgnoreCase(line, "content-type:")) {
@@ -155,12 +155,16 @@ fn parseChunkSize(line: []const u8) !usize {
 pub fn decodeChunkedBody(src: []const u8, dest: []u8) !usize {
     var s_pos: usize = 0;
     var d_pos: usize = 0;
+    var saw_terminal = false;
     while (s_pos < src.len) {
         const delim = "\r\n";
         const eol = std.mem.indexOfPos(u8, src, s_pos, delim) orelse return error.ResponseTruncated;
         const chunk_size = try parseChunkSize(src[s_pos..eol]);
         s_pos = eol + delim.len;
-        if (chunk_size == 0) return d_pos;
+        if (chunk_size == 0) {
+            saw_terminal = true;
+            return d_pos;
+        }
 
         if (s_pos + chunk_size > src.len) return error.ResponseTruncated;
         if (d_pos + chunk_size > dest.len) return error.BufferTooSmall;
@@ -173,8 +177,11 @@ pub fn decodeChunkedBody(src: []const u8, dest: []u8) !usize {
             s_pos += 2;
         } else if (s_pos < src.len and src[s_pos] == '\n') {
             s_pos += 1;
+        } else {
+            return error.ResponseTruncated;
         }
     }
+    if (!saw_terminal) return error.ResponseTruncated;
     return d_pos;
 }
 
@@ -200,32 +207,29 @@ pub fn extractJsonCandidateText(json_payload: []const u8, out_buf: []u8) ?usize 
 fn unescapeJsonSubstring(src: []const u8, out_buf: []u8) usize {
     var out_idx: usize = 0;
     var i: usize = 0;
+    var in_escape: bool = false;
     while (i < src.len and out_idx < out_buf.len) {
         const c = src[i];
-        if (c == '"' and (i == 0 or src[i - 1] != '\\')) break;
-        if (c == '\\' and i + 1 < src.len) {
-            const next_c = src[i + 1];
-            if (next_c == 'n') {
+        if (!in_escape and c == '"') break;
+        if (!in_escape and c == '\\') {
+            in_escape = true;
+            i += 1;
+            continue;
+        }
+        if (in_escape) {
+            in_escape = false;
+            if (c == 'n') {
                 out_buf[out_idx] = '\n';
-                out_idx += 1;
-                i += 2;
-                continue;
-            } else if (next_c == 'r') {
+            } else if (c == 'r') {
                 out_buf[out_idx] = '\r';
-                out_idx += 1;
-                i += 2;
-                continue;
-            } else if (next_c == 't') {
+            } else if (c == 't') {
                 out_buf[out_idx] = '\t';
-                out_idx += 1;
-                i += 2;
-                continue;
-            } else if (next_c == '"' or next_c == '\\') {
-                out_buf[out_idx] = next_c;
-                out_idx += 1;
-                i += 2;
-                continue;
+            } else {
+                out_buf[out_idx] = c;
             }
+            out_idx += 1;
+            i += 1;
+            continue;
         }
         out_buf[out_idx] = c;
         out_idx += 1;

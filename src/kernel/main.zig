@@ -802,6 +802,18 @@ fn bundleReadBridge(name: []const u8) ?[]const u8 {
     return reader.findData(name);
 }
 
+fn getCurrentActorBridge() ?*actor_mod.Actor {
+    if (global_sched) |sched| {
+        if (sched.current) |fib| {
+            if (fib.user_data) |ud| {
+                const act_ctx = @as(*ActorThreadContext, @ptrCast(@alignCast(ud)));
+                return act_ctx.actor;
+            }
+        }
+    }
+    return null;
+}
+
 fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*chunk_mod.Chunk {
     const raw_bundle: []const u8 = if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0)
         @as([*]const u8, @ptrFromInt(boot_info.bundle_base))[0..boot_info.bundle_size]
@@ -889,6 +901,7 @@ fn setupAbiEnvironment(
         .draw_canvas_fn = drawCanvasBridge,
         .telemetry_fn = telemetryBridge,
         .bundle_read_fn = bundleReadBridge,
+        .current_actor_fn = getCurrentActorBridge,
     };
     abi_mod.setContext(&global_abi_ctx.?);
     abi_mod.registerSyscalls(vm) catch kernelPanic("abi_syscalls");

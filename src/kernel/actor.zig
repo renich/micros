@@ -132,6 +132,17 @@ pub const Actor = struct {
     ) cspace_mod.CapError!Capability {
         return self.cspace.validate(handle, expected_type, required_rights);
     }
+
+    pub fn hasCap(self: *const Actor, cap_type: CapType, required_rights: u16) bool {
+        var i: usize = 0;
+        while (i < self.cspace.capacity) : (i += 1) {
+            const entry = self.cspace.entries[i];
+            if (entry.isValid() and entry.cap_type == cap_type and entry.hasRight(required_rights)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 pub const ActorRegistry = struct {

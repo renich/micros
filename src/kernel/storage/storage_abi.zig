@@ -17,11 +17,27 @@ const pe_emitter = @import("../../boot/pe_emitter.zig");
 const bundle_writer = @import("bundle_writer.zig");
 const kernel_synthesizer = @import("kernel_synthesizer.zig");
 const io = @import("../arch/x86_64/io.zig");
+const cap_mod = @import("../cap/capability.zig");
+const CapType = cap_mod.CapType;
+const Rights = cap_mod.Rights;
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
 var registered_devices: [MAX_BLOCK_DEVICES]?*block.BlockDevice = [_]?*block.BlockDevice{null} ** MAX_BLOCK_DEVICES;
 var registered_count: usize = 0;
 var active_rebuild_engine: ?*rebuild.RebuildEngine = null;
+pub var caller_auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool = null;
+
+fn verifyStorageAuthority() !void {
+    if (caller_auth_fn) |auth| {
+        if (!auth(.storage_device, Rights.WRITE)) return error.PermissionDenied;
+    }
+}
+
+fn verifyRebootAuthority() !void {
+    if (caller_auth_fn) |auth| {
+        if (!auth(.actor_control, Rights.EXECUTE)) return error.PermissionDenied;
+    }
+}
 
 pub fn registerBlockDevice(dev: *block.BlockDevice) void {
     if (registered_count < MAX_BLOCK_DEVICES) {
@@ -48,6 +64,16 @@ pub fn setRebuildEngine(engine: *rebuild.RebuildEngine) void {
     active_rebuild_engine = engine;
 }
 
+fn castToUsize(val: i64) ?usize {
+    if (val < 0 or val > std.math.maxInt(usize)) return null;
+    return @intCast(val);
+}
+
+fn castToU64(val: i64) ?u64 {
+    if (val < 0 or val > std.math.maxInt(u64)) return null;
+    return @intCast(val);
+}
+
 fn nativeSysBlockDevCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
@@ -57,7 +83,7 @@ fn nativeSysBlockDevCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysBlockDevName(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     const len = std.mem.indexOfScalar(u8, &dev.name, 0) orelse dev.name.len;
     const duped = try vm.allocator.dupe(u8, dev.name[0..len]);
@@ -67,7 +93,7 @@ fn nativeSysBlockDevName(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysBlockDevSectors(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     return Value{ .integer = @intCast(dev.total_sectors) };
 }
@@ -75,16 +101,17 @@ fn nativeSysBlockDevSectors(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysBlockDevIsBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     return Value{ .boolean = dev.is_boot_media };
 }
 
 fn nativeSysDiskGptFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
+    try verifyStorageAuthority();
     if (args.len != 2 or args[0] != .integer or args[1] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
-    const esp_sectors: u64 = @intCast(args[1].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
+    const esp_sectors = castToU64(args[1].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
@@ -94,8 +121,9 @@ fn nativeSysDiskGptFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysDiskEspFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
+    try verifyStorageAuthority();
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
@@ -112,7 +140,7 @@ fn nativeSysDiskEspFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysDiskEspWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 3 or args[0] != .integer or args[1] != .string or args[2] != .string) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
@@ -129,7 +157,7 @@ fn nativeSysDiskEspWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysDiskEspStageBootloader(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
@@ -155,8 +183,9 @@ fn nativeSysDiskEspStageBootloader(vm_ptr: *anyopaque, args: []Value) anyerror!V
 
 fn nativeSysDiskCasFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    try verifyStorageAuthority();
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx: usize = @intCast(args[0].integer);
+    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
@@ -227,6 +256,7 @@ fn nativeSysRebuildStatus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysReboot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
+    try verifyRebootAuthority();
     io.outb(0x64, 0xFE);
     while (true) {
         asm volatile ("hlt");
@@ -389,4 +419,22 @@ test "storage abi sys_kernel_synthesize generates valid PE image" {
     try kernel_synthesizer.validatePeImage(kernel_res.string);
     try std.testing.expect(kernel_res.string.len >= 512);
     try std.testing.expectEqual(@as(usize, 0), kernel_res.string.len % pe_emitter.FILE_ALIGNMENT);
+}
+
+fn testRejectAuth(cap_type: CapType, rights: u16) bool {
+    _ = cap_type;
+    _ = rights;
+    return false;
+}
+
+test "storage abi rejects unprivileged callers" {
+    caller_auth_fn = testRejectAuth;
+    defer {
+        caller_auth_fn = null;
+    }
+
+    var dummy: usize = 0;
+    var args = [_]Value{ Value{ .integer = 1 }, Value{ .integer = 614400 } };
+    try std.testing.expectError(error.PermissionDenied, nativeSysDiskGptFormat(&dummy, &args));
+    try std.testing.expectError(error.PermissionDenied, nativeSysReboot(&dummy, &args));
 }

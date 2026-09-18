@@ -6,7 +6,10 @@ print("uOS 0.15.0: System supervisor online.");
 
 fn supervisor_loop(child_id) {
     while (true) {
-        st = sys_actor_state(child_id);
+        st = -1;
+        if (child_id >= 0) {
+            st = sys_actor_state(child_id);
+        }
         if (st == 5) {
             print("[init] Shell exited. Respawning...");
             msh_src = sys_bundle_read("msh.mx");

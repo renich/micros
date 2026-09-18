@@ -49,18 +49,34 @@ pub const AbiContext = struct {
     draw_canvas_fn: ?*const fn (x: u32, y: u32, w: u32, h: u32, color: u32) void = null,
     telemetry_fn: ?*const fn () ai_mod.tools.TelemetrySnapshot = null,
     bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
+    current_actor_fn: ?*const fn () ?*Actor = null,
 };
 
 pub const HarnessContext = AbiContext;
 
 var active_ctx: ?*AbiContext = null;
 
+fn checkCallerAuthority(cap_type: @import("cap/capability.zig").CapType, rights: u16) bool {
+    const ctx = active_ctx orelse return true;
+    const get_actor = ctx.current_actor_fn orelse return true;
+    const actor = get_actor() orelse return true;
+    if (actor.id == 0) return true;
+    return actor.hasCap(cap_type, rights);
+}
+
 pub fn setContext(ctx: *AbiContext) void {
     active_ctx = ctx;
+    storage_abi.caller_auth_fn = checkCallerAuthority;
 }
 
 pub fn clearContext() void {
     active_ctx = null;
+    storage_abi.caller_auth_fn = null;
+}
+
+fn castToU32(val: i64) ?u32 {
+    if (val < 0 or val > std.math.maxInt(u32)) return null;
+    return @intCast(val);
 }
 
 fn nativeSysActorCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -88,7 +104,7 @@ fn nativeSysActorTerminate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
-    const id: u32 = @intCast(args[0].integer);
+    const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
     try ctx.registry.terminate(vm.allocator, id);
     return Value{ .boolean = true };
 }
@@ -363,6 +379,7 @@ fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return Value{ .string = "" };
     };
 
+    const caller = if (ctx.current_actor_fn) |get_fn| (get_fn() orelse ctx.supervisor) else ctx.supervisor;
     const disp_ctx = ai_mod.dispatcher.DispatcherContext{
         .spawn_fn = ctx.spawn_code_fn,
         .grant_fn = ctx.grant_cap_fn,
@@ -372,7 +389,7 @@ fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .telemetry_fn = ctx.telemetry_fn,
     };
     const disp = ai_mod.dispatcher.ToolDispatcher.init(
-        ctx.supervisor.cspace,
+        caller.cspace,
         vm.allocator,
         disp_ctx,
         &ai_tool_storage_buf,
@@ -407,7 +424,7 @@ fn nativeSysActorName(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const reg = ctx.registry;
-    const id: u32 = @intCast(args[0].integer);
+    const id = castToU32(args[0].integer) orelse return Value{ .string = "" };
     if (reg.get(id)) |actor| {
         return Value{ .string = actor.getName() };
     }
@@ -419,7 +436,7 @@ fn nativeSysActorState(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const reg = ctx.registry;
-    const id: u32 = @intCast(args[0].integer);
+    const id = castToU32(args[0].integer) orelse return Value{ .integer = -1 };
     if (reg.get(id)) |actor| {
         return Value{ .integer = @as(i64, @intFromEnum(actor.state)) };
     }
@@ -454,7 +471,7 @@ fn nativeSysActorPersist(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
     const persist_fn = ctx.persist_actor_fn orelse return error.NoStorageHandler;
-    const id: u32 = @intCast(args[0].integer);
+    const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
     var hex_buf: [64]u8 = undefined;
     persist_fn(id, &hex_buf) catch return Value{ .string = "" };
     const duped = try vm.allocator.dupe(u8, &hex_buf);
@@ -486,7 +503,7 @@ fn nativeSysActorWait(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const ctx = active_ctx orelse return error.NoContext;
-    const target_id: u32 = @intCast(args[0].integer);
+    const target_id = castToU32(args[0].integer) orelse return Value{ .boolean = false };
 
     while (true) {
         const actor = ctx.registry.get(target_id);
