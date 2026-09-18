@@ -108,6 +108,27 @@ pub fn invalidateTlb(virt: u64) void {
         : .{ .memory = true });
 }
 
+pub fn virtToPhys(pml4_phys: u64, virt: u64) ?u64 {
+    const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
+    const pml4e = pml4.entries[(virt >> 39) & 0x1FF];
+    if ((pml4e & PAGE_PRESENT) == 0) return null;
+
+    const pdpt: *PageTable = @ptrFromInt((pml4e & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pdpte = pdpt.entries[(virt >> 30) & 0x1FF];
+    if ((pdpte & PAGE_PRESENT) == 0) return null;
+
+    const pd: *PageTable = @ptrFromInt((pdpte & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pde = pd.entries[(virt >> 21) & 0x1FF];
+    if ((pde & PAGE_PRESENT) == 0) return null;
+    if ((pde & PAGE_HUGE) != 0) return (pde & 0x000F_FFFF_FFE0_0000) | (virt & 0x1F_FFFF);
+
+    const pt: *PageTable = @ptrFromInt((pde & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pte = pt.entries[(virt >> 12) & 0x1FF];
+    if ((pte & PAGE_PRESENT) == 0) return null;
+
+    return (pte & 0x000F_FFFF_FFFF_F000) | (virt & 0xFFF);
+}
+
 pub fn loadPageTable(pml4_phys: u64) void {
     if (builtin.is_test) return;
     asm volatile ("movq %[cr3], %%cr3"
@@ -190,10 +211,13 @@ pub fn map_pages(addr: ?*anyopaque, length: usize, flags: u64) !*anyopaque {
         break :blk v;
     };
 
+    const cr3 = readCr3();
+    const active_pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
+
     var i: usize = 0;
     while (i < num_pages) : (i += 1) {
         const phys = pmm.allocPage() orelse return error.NoMemory;
-        if (!mapPage(kernel_pml4_phys, vaddr + i * 4096, phys, flags)) {
+        if (!mapPage(active_pml4, vaddr + i * 4096, phys, flags)) {
             return error.NoMemory;
         }
     }
@@ -272,4 +296,35 @@ test "vmm page mapping and unmapping with tlb invalidation" {
     const unmapped = unmapPage(pml4_phys, test_virt);
     try std.testing.expect(unmapped);
     try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx]);
+}
+
+test "vmm virtToPhys translates 4-level virtual page address to physical" {
+    var pml4 align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pdpt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pd align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+
+    const saved_hhdm = hhdm_base;
+    defer hhdm_base = saved_hhdm;
+    hhdm_base = 0;
+
+    const pml4_phys = @intFromPtr(&pml4);
+    const pdpt_phys = @intFromPtr(&pdpt);
+    const pd_phys = @intFromPtr(&pd);
+    const pt_phys = @intFromPtr(&pt);
+
+    const test_virt: u64 = 0x0000_0000_4000_0123;
+    const pml4_idx = (test_virt >> 39) & 0x1FF;
+    const pdpt_idx = (test_virt >> 30) & 0x1FF;
+    const pd_idx = (test_virt >> 21) & 0x1FF;
+    const pt_idx = (test_virt >> 12) & 0x1FF;
+
+    pml4.entries[pml4_idx] = pdpt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pdpt.entries[pdpt_idx] = pd_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pd.entries[pd_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pt.entries[pt_idx] = 0x8000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+
+    const phys = virtToPhys(pml4_phys, test_virt);
+    try std.testing.expect(phys != null);
+    try std.testing.expectEqual(@as(u64, 0x8123), phys.?);
 }

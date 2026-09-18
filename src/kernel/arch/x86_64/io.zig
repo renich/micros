@@ -61,6 +61,29 @@ pub inline fn pause() void {
     asm volatile ("pause" ::: .{ .memory = true });
 }
 
+pub inline fn pushfqAndCli() u64 {
+    if (builtin.is_test) return 0;
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\pushfq
+        \\popq %[rflags]
+        \\cli
+        : [rflags] "=r" (rflags),
+        :
+        : .{ .memory = true });
+    return rflags;
+}
+
+pub inline fn popfq(rflags: u64) void {
+    if (builtin.is_test) return;
+    asm volatile (
+        \\pushq %[rflags]
+        \\popfq
+        :
+        : [rflags] "r" (rflags),
+        : .{ .memory = true });
+}
+
 pub inline fn rdtsc() u64 {
     var rax_val: u64 = undefined;
     var rdx_val: u64 = undefined;

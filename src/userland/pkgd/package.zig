@@ -171,6 +171,28 @@ pub const PackageRegistry = struct {
     }
 };
 
+pub const PackageDaemon = struct {
+    registry: PackageRegistry,
+    active: bool,
+
+    pub fn init() PackageDaemon {
+        return PackageDaemon{
+            .registry = PackageRegistry.init(),
+            .active = true,
+        };
+    }
+
+    pub fn packageCount(self: *const PackageDaemon) usize {
+        return self.registry.count;
+    }
+};
+
+test "PackageDaemon lifecycle" {
+    var daemon = PackageDaemon.init();
+    try std.testing.expect(daemon.active);
+    try std.testing.expectEqual(@as(usize, 0), daemon.packageCount());
+}
+
 test "PackageHeader size and alignment invariant" {
     try std.testing.expectEqual(PACKAGE_HEADER_SIZE, @sizeOf(PackageHeader));
     try std.testing.expectEqual(@as(usize, 512), @sizeOf(PackageHeader));

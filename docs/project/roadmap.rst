@@ -41,59 +41,45 @@ Phase Progression & Document Index
    roadmaps/phase-7-declarative-hypermedia-ui
    roadmaps/phase-8-p2p-federation-cas
    roadmaps/phase-9-self-hosting-silicon
+   roadmaps/phase-10-hardening-cluster-mesh
 
-Completed Foundations (Phases 0 through 5)
+Completed Foundations (Phases 0 through 9)
 ==========================================
 
 * **Phase 0: Userspace Sandbox on Fedora Launchpad** [COMPLETE & VERIFIED]
-  - Established direct Linux x86_64 syscall harness without libc, ``micros-init`` (PID 1), ``msh`` interactive shell, and single-binary Unified Kernel Image (UKI) delivery under QEMU.
+   - Established direct Linux x86_64 syscall harness without libc, ``micros-init`` (PID 1), ``msh`` interactive shell, and single-binary Unified Kernel Image (UKI) delivery under QEMU.
 * **Phase 1: The Bare-Metal Substrate (UEFI & Microkernel)** [COMPLETE & VERIFIED]
-  - Severed host kernel dependency. Booted directly from UEFI firmware (``boot.efi``), 4-level paging VMM, physical memory bitmap PMM, IDT exceptions, APIC/TSC timers, and VirtIO PCI drivers.
+   - Severed host kernel dependency. Booted directly from UEFI firmware (``boot.efi``), 4-level paging VMM, physical memory bitmap PMM, IDT exceptions, APIC/TSC timers, and VirtIO PCI drivers.
 * **Phase 2: Language & Runtime Factory (Macros)** [COMPLETE & VERIFIED]
-  - Implemented Macros language AST, lexer, parser, compiler, 32 KiB block Immix mark-region GC, cooperative green-thread fibers, x86_64 JIT codegen, and pure Macros Stage 1 self-hosting compiler.
+   - Implemented Macros language AST, lexer, parser, compiler, 32 KiB block Immix mark-region GC, cooperative green-thread fibers, x86_64 JIT codegen, and pure Macros Stage 1 self-hosting compiler.
 * **Phase 3: Subsystems & Reactive Vector Compositor** [COMPLETE & VERIFIED]
-  - Implemented VirtIO-Blk & CAS storage, VirtIO-Net, TLS 1.3, resident AI integration, 4-layer process hierarchy (kernel -> init -> msh -> harness), and double-buffered GOP vector compositor with AABB damage tracking.
+   - Implemented VirtIO-Blk & CAS storage, VirtIO-Net, TLS 1.3, resident AI integration, 4-layer process hierarchy (kernel -> init -> msh -> harness), and double-buffered GOP vector compositor with AABB damage tracking.
 * **Phase 4: Sovereign Cord-Cutting & Bit-for-Bit Self-Rebuilding Pipeline** [COMPLETE & VERIFIED]
-  - Delivered in-system MCB synthesizer, PE32+ kernel synthesizer, fail-safe dual-slot A/B staging, polled PCIe NVMe 1.4 driver, GPT partitioning, FAT32 ESP driver, and proven bit-for-bit rebuild reproducibility.
+   - Delivered in-system MCB synthesizer, PE32+ kernel synthesizer, fail-safe dual-slot A/B staging, polled PCIe NVMe 1.4 driver, GPT partitioning, FAT32 ESP driver, and proven bit-for-bit rebuild reproducibility.
 * **Phase 5: Sovereign Networking, Workspace & Pure Microkernel Decoupling** [COMPLETE & VERIFIED]
-  - Delivered fast-path TCP server, Git smart HTTP transport & packfile CAS ingestion, Merkle workspace catalog, ``vedit`` visual editor, content-addressed module system, and decoupled ``netd`` and ``aid`` into userland actors over SPSC IPC rings.
+   - Delivered fast-path TCP server, Git smart HTTP transport & packfile CAS ingestion, Merkle workspace catalog, ``vedit`` visual editor, content-addressed module system, and decoupled ``netd`` and ``aid`` into userland actors over SPSC IPC rings.
+* **Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP)** [COMPLETE & VERIFIED]
+   - Delivered 64-bit Task State Segment (TSS) with per-core ``RSP0`` stacks, fast ``syscall``/``sysretq`` MSR configuration, per-actor CR3 virtual address spaces, Local APIC timer interrupts (1000Hz quantum), secondary CPU core AP bringup, MPSC IPC rings, ``gopd`` display server, ``storaged`` NVMe/CAS storage daemon, and microkernel minimality audit (< 2,000 LOC Ring 0).
+* **Phase 7: Declarative Hypermedia UI & Vector Graphics Substrate** [COMPLETE & VERIFIED]
+   - Delivered binary component tree streaming protocol (µHTML / HyperTree) over shared-memory IPC rings, 16.16 fixed-point SDF vector rasterizer with glyph atlas caching, and pure Macros sovereign desktop environment (``desk.mx``).
+* **Phase 8: Autonomous Peer-to-Peer Federation & Distributed CAS** [COMPLETE & VERIFIED]
+   - Delivered mutual TLS 1.3 / Noise wire handshake over TCP port 8080, Ed25519 node identities, decentralized BLAKE3 CAS chunk replication, Merkle tree sync with OCC reconciliation, and attenuated 192-byte capability tokens for remote actor compute.
+* **Phase 9: In-System Self-Hosting & Complete Silicon Independence** [COMPLETE & VERIFIED]
+   - Delivered pure in-system native machine code 64-bit ELF object synthesizer (``ElfEmitter``), sovereign package federation registry (``pkgd``) with Ed25519 cryptographic signing, and enterprise Intel e1000e/igb Gigabit Ethernet and USB 3.0 xHCI host controller drivers.
 
-Active Target: Phase 6 (Pure Microkernel & Preemptive SMP)
-==========================================================
+Active Operational Frontier: Phase 10 (Hardening, Daemon Handoff & Virtual Cluster Mesh)
+========================================================================================
 
-The current active operational frontier addresses the hardware privilege, preemption, and driver isolation boundaries:
+The current operational frontier focuses on hardening, full userland service handoff, and virtual multi-node orchestration under QEMU:
 
-1. **Milestone 23a: Hardware Ring 3 & Syscall Substrate**:
-   - Establish 64-bit Task State Segment (TSS) with per-core ``RSP0`` stacks; execute ``ltr``.
-   - Configure MSRs (``EFER.SCE``, ``STAR``, ``LSTAR``, ``SFMASK``) for fast userland ``syscall``/``sysret`` transitions.
-   - Implement per-actor CR3 virtual address spaces with strict user/supervisor bit protection.
-2. **Milestone 23b: Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate**:
-   - Initialize Local APIC timer interrupts (1000Hz quantum) via IDT vector ``0x20`` for hardware preemption.
-   - Bootstrap secondary CPU cores (APs) via APIC INIT-SIPI-SIPI into 64-bit Long Mode.
-   - Implement Multi-Producer Single-Consumer (MPSC) lock-free IPC rings and per-core work-stealing scheduling.
-3. **Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)**:
-   - Migrate GOP linear framebuffer mapping, AABB dirty-rect clipping, and window manager into userland actor ``gopd``.
-   - Integrate PS/2 mouse and baseline xHCI USB HID pointer/keyboard decoding into ``gopd`` input ingress.
-4. **Milestone 25: Pure Microkernel Storage Decoupling (storaged)**:
-   - Migrate PCIe NVMe 1.4, VirtIO-Blk, GPT, FAT32, and CAS into userland actor ``storaged``.
-   - Implement ``sys_dma_pin`` capability syscall for physical frame validation and PRP list construction.
-   - Implement hardware controller reset and request replay on driver fault recovery.
-5. **Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation**:
-   - Verify functional purity: Zero drivers, zero network stacks, zero filesystems in Ring 0 (< 2,000 LOC ceiling).
-   - Validate live boot, SMP execution, and driver stability on physical x86_64 bare-metal test hardware.
-
-Future Horizons (Phases 7 through 9)
-====================================
-
-* **Phase 7: Declarative Hypermedia UI & Vector Graphics Substrate**:
-  - Binary component tree streaming protocol (µHTML / HyperTree) over shared-memory IPC rings.
-  - AABB-bounded Signed Distance Field (SDF) vector rasterizer with glyph atlas caching and scalable typography.
-  - Sovereign Desktop Environment (``desk.mx`` glass desktop with full multi-window pointer interaction).
-* **Phase 8: Autonomous Peer-to-Peer Federation & Distributed CAS**:
-  - Mutual TLS 1.3 / Noise wire protocol peering across nodes over TCP port 8080.
-  - Decentralized BLAKE3 CAS chunk replication and Merkle workspace synchronization with offline-first OCC.
-  - Cryptographic capability delegation tokens (Macaroons / Ed25519) for secure remote actor execution.
-* **Phase 9: In-System Self-Hosting & Complete Silicon Independence**:
-  - Pure in-system native machine code compiler backend compiling Zig/Macros directly on raw silicon.
-  - Sovereign package and module federation registry with Ed25519 cryptographic signing.
-  - Enterprise bare-metal hardware validation across diverse physical server boards and network controllers.
+1. **Milestone 36: Full Userland Service Daemon Integration & Startup Handoff**:
+   - Integrate the full suite of userland daemons (``gopd``, ``storaged``, ``netd``, ``aid``, ``p2pd``, ``pkgd``) into default boot sequencing.
+   - Mediate interactive graphics, block I/O, network traffic, AI inference, and P2P communication purely across zero-copy IPC rings.
+   - Expose live daemon telemetry and peer discovery status via ``msh`` and ``harness`` shell interfaces.
+2. **Milestone 37: Virtual Multi-Node P2P Cluster Mesh under QEMU**:
+   - Implement dual-node QEMU automation (``tools/micros-cluster.bash``, ``make qemu-cluster``) linking independent instances over a shared virtual network.
+   - Demonstrate autonomous node discovery, Ed25519 handshake, live 256-bit BLAKE3 CAS replication, and remote actor dispatch over port 8080.
+3. **Milestone 38: Zero-Trust System Hardening, Self-Healing & Polish**:
+   - Audit IPC ring bounds, wire decoders, and capability checks against malformed packet streams.
+   - Verify supervisory self-healing in ``init.mx`` with automatic recovery upon actor fault.
+   - Polish interactive UX, conversational prompt ergonomics, and terminal ANSI rendering in ``harness.mx``.

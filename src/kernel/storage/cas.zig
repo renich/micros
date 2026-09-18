@@ -64,6 +64,7 @@ pub const CasEngine = struct {
 
         const start_sec = self.superblock.next_free_sector;
         try writeChunkData(self.cache, start_sec, hash, chunk_type, payload, dev);
+        try self.cache.flush(dev);
 
         self.superblock.next_free_sector += sectors_needed;
         self.superblock.generation += 1;

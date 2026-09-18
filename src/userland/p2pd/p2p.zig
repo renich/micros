@@ -223,22 +223,85 @@ pub fn parseFrame(
     out_header: *FrameHeader,
 ) ![]const u8 {
     if (in_buf.len < @sizeOf(FrameHeader)) return error.BufferTooShort;
-    const hdr: *const FrameHeader = @ptrCast(in_buf[0..@sizeOf(FrameHeader)]);
-    if (!hdr.isValid()) return error.InvalidFrameHeader;
+    const hdr_bytes: *[@sizeOf(FrameHeader)]u8 = @ptrCast(out_header);
+    @memcpy(hdr_bytes, in_buf[0..@sizeOf(FrameHeader)]);
+    if (!out_header.isValid()) return error.InvalidFrameHeader;
 
-    const total_len = @sizeOf(FrameHeader) + hdr.payload_len;
+    const total_len = @sizeOf(FrameHeader) + out_header.payload_len;
     if (in_buf.len < total_len) return error.IncompletePayload;
 
     const payload = in_buf[@sizeOf(FrameHeader)..total_len];
-    if (computeChecksum(payload) != hdr.checksum) {
+    if (computeChecksum(payload) != out_header.checksum) {
         return error.ChecksumMismatch;
     }
 
-    out_header.* = hdr.*;
     return payload;
 }
 
+pub const P2pDaemon = struct {
+    allocator: std.mem.Allocator,
+    identity: NodeIdentity,
+    peers: PeerTable,
+    port: u16,
+    active: bool,
+    beacon_sequence: u32 = 0,
+
+    pub fn init(allocator: std.mem.Allocator, seed: [32]u8, port: u16) !P2pDaemon {
+        const id = try NodeIdentity.fromSeed(seed);
+        return P2pDaemon{
+            .allocator = allocator,
+            .identity = id,
+            .peers = PeerTable.init(),
+            .port = port,
+            .active = true,
+        };
+    }
+
+    pub fn formatBeacon(self: *P2pDaemon, out_buf: *[74]u8) void {
+        const beacon = DiscoveryBeacon{
+            .node_id = self.identity.node_id,
+            .pubkey = self.identity.key_pair.public_key.bytes,
+            .port = self.port,
+        };
+        beacon.serialize(out_buf);
+        self.beacon_sequence +%= 1;
+    }
+
+    pub fn handleIncomingBeacon(self: *P2pDaemon, in_buf: *const [74]u8, src_ip: [4]u8, current_ticks: u64) !bool {
+        const beacon = DiscoveryBeacon.deserialize(in_buf) orelse return false;
+        try self.peers.upsert(.{
+            .node_id = beacon.node_id,
+            .pubkey = beacon.pubkey,
+            .ip = src_ip,
+            .port = beacon.port,
+            .capabilities = beacon.capability_mask,
+            .last_seen_ticks = current_ticks,
+            .authenticated = false,
+        });
+        return true;
+    }
+
+    pub fn peerCount(self: *const P2pDaemon) usize {
+        return self.peers.count;
+    }
+};
+
 // === Colocated Unit Tests ===
+
+test "P2pDaemon lifecycle and beacon exchange" {
+    const seed = [_]u8{0x77} ** 32;
+    var daemon = try P2pDaemon.init(std.testing.allocator, seed, 8080);
+    try std.testing.expect(daemon.active);
+    try std.testing.expectEqual(@as(usize, 0), daemon.peerCount());
+
+    var beacon_buf: [74]u8 = undefined;
+    daemon.formatBeacon(&beacon_buf);
+    try std.testing.expectEqual(@as(u32, 1), daemon.beacon_sequence);
+
+    const handled = try daemon.handleIncomingBeacon(&beacon_buf, [_]u8{ 192, 168, 100, 2 }, 100);
+    try std.testing.expect(handled);
+    try std.testing.expectEqual(@as(usize, 1), daemon.peerCount());
+}
 
 test "P2P node identity generation and signature verification" {
     const seed = [_]u8{0x42} ** 32;

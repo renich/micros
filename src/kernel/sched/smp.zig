@@ -4,6 +4,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const apic = @import("../arch/x86_64/apic.zig");
+const io = @import("../arch/x86_64/io.zig");
 
 pub const MAX_CORES: u32 = 16;
 pub const MAX_TASKS_PER_CORE: u32 = 32;
@@ -24,6 +25,7 @@ pub const CpuCore = struct {
     current_actor_id: u32,
     timeslice_remaining: u32,
     total_ticks: u64,
+    lock: std.atomic.Value(bool),
     runqueue: [MAX_TASKS_PER_CORE]u32,
     rq_head: u32,
     rq_tail: u32,
@@ -38,6 +40,7 @@ pub const CpuCore = struct {
             .current_actor_id = 0,
             .timeslice_remaining = DEFAULT_TIMESLICE,
             .total_ticks = 0,
+            .lock = std.atomic.Value(bool).init(false),
             .runqueue = [_]u32{0} ** MAX_TASKS_PER_CORE,
             .rq_head = 0,
             .rq_tail = 0,
@@ -45,7 +48,22 @@ pub const CpuCore = struct {
         };
     }
 
+    pub fn acquireLock(self: *CpuCore) u64 {
+        const rflags = io.pushfqAndCli();
+        while (self.lock.swap(true, .acquire)) {
+            io.pause();
+        }
+        return rflags;
+    }
+
+    pub fn releaseLock(self: *CpuCore, rflags: u64) void {
+        self.lock.store(false, .release);
+        io.popfq(rflags);
+    }
+
     pub fn enqueue(self: *CpuCore, actor_id: u32) bool {
+        const rflags = self.acquireLock();
+        defer self.releaseLock(rflags);
         if (self.rq_count >= MAX_TASKS_PER_CORE) return false;
         self.runqueue[self.rq_tail] = actor_id;
         self.rq_tail = (self.rq_tail + 1) % MAX_TASKS_PER_CORE;
@@ -54,6 +72,8 @@ pub const CpuCore = struct {
     }
 
     pub fn dequeue(self: *CpuCore) ?u32 {
+        const rflags = self.acquireLock();
+        defer self.releaseLock(rflags);
         if (self.rq_count == 0) return null;
         const task = self.runqueue[self.rq_head];
         self.rq_head = (self.rq_head + 1) % MAX_TASKS_PER_CORE;

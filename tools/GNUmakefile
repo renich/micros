@@ -29,7 +29,8 @@ BINARIES := \
 SCRIPTS := \
 	micros-inspect.bash \
 	micros-runner.bash \
-	micros-spec-trace.bash
+	micros-spec-trace.bash \
+	micros-cluster.bash
 
 # Symlink launchers
 SYMLINKS := \
@@ -38,6 +39,7 @@ SYMLINKS := \
 	micros-inspect \
 	micros-runner \
 	micros-spec-trace \
+	micros-cluster \
 	micros-fb-verify \
 	micros-lint \
 	micros-sym \
@@ -86,6 +88,9 @@ micros-runner: micros-runner.bash
 	ln -sf $< $@
 
 micros-spec-trace: micros-spec-trace.bash
+	ln -sf $< $@
+
+micros-cluster: micros-cluster.bash
 	ln -sf $< $@
 
 micros-fb-verify: $(BIN_DIR)/micros-fb-verify
@@ -142,7 +147,7 @@ fmt-check:
 ## clean: Remove tool binaries, caches, and binary symlinks
 clean:
 	@echo "=> Cleaning tools workspace..."
-	rm -rf $(BIN_DIR) $(CACHE_DIR) micros-bundle micros-fb-verify micros-lint micros-sym micros-addr2line micros-telem
+	rm -rf $(BIN_DIR) $(CACHE_DIR) micros-bundle micros-fb-verify micros-lint micros-sym micros-addr2line micros-telem micros-cluster
 	@echo "=> Tools clean complete."
 
 ## help: Print this help message

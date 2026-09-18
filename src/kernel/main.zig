@@ -43,6 +43,8 @@ const netd_mod = @import("../userland/netd/netd.zig");
 const aid_mod = @import("../userland/aid/aid.zig");
 const gopd_mod = @import("../userland/gopd/gopd.zig");
 const storaged_mod = @import("../userland/storaged/storaged.zig");
+const p2pd_mod = @import("../userland/p2pd/p2p.zig");
+const pkgd_mod = @import("../userland/pkgd/package.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
@@ -76,6 +78,8 @@ var global_tls_adapter: net_mod.tls_stream.TcpStreamAdapter = undefined;
 var global_aid: ?aid_mod.AiDaemon = null;
 var global_gopd: ?gopd_mod.GopDaemon = null;
 var global_storaged: ?storaged_mod.StorageDaemon = null;
+var global_p2pd: ?p2pd_mod.P2pDaemon = null;
+var global_pkgd: ?pkgd_mod.PackageDaemon = null;
 var global_ai_req_ring = ipc_mod.SpscRingBuffer.init();
 var global_ai_resp_ring = ipc_mod.SpscRingBuffer.init();
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
@@ -174,7 +178,10 @@ fn dmaPinBridge(virt_addr: usize, len_bytes: usize) ?u64 {
     const USERLAND_MAX: usize = 0x0000_7FFF_FFFF_FFFF;
     if (virt_addr >= USERLAND_MAX or len_bytes > USERLAND_MAX - virt_addr) return null;
     if (virt_addr % 4096 != 0 or len_bytes % 512 != 0) return null;
-    return @as(u64, @intCast(virt_addr));
+    const cr3 = vmm.readCr3();
+    const pml4 = if (cr3 != 0) cr3 else vmm.kernel_pml4_phys;
+    if (pml4 == 0) return @as(u64, @intCast(virt_addr));
+    return vmm.virtToPhys(pml4, @as(u64, @intCast(virt_addr)));
 }
 
 fn initNetDaemon(allocator: std.mem.Allocator) void {
@@ -194,16 +201,25 @@ fn initNetDaemon(allocator: std.mem.Allocator) void {
     };
     const virt_ptr = if (global_virtio_net != null) &global_virtio_net.? else null;
     global_netd = netd_mod.NetDaemon.init(allocator, virt_ptr, net_cap, irq_cap);
-    if (global_netd) |*netd| {
-        if (netd.virtio_dev != null) {
-            const bound = netd.startDhcp() catch false;
-            if (bound) {
-                serial.writeStatusOk("dhcp", "Network IPv4 lease acquired via VirtIO-Net");
-            } else {
-                serial.writeString("  \x1b[90m[\x1b[93m warn \x1b[90m]\x1b[0m \x1b[96mdhcp\x1b[90m: \x1b[93mDHCP lease timeout (offline fallback)\x1b[0m\n");
-            }
-        }
+    const netd = &(global_netd orelse return);
+    const vdev = netd.virtio_dev orelse return;
+    const bound = netd.startDhcp() catch false;
+    if (bound) {
+        serial.writeStatusOk("dhcp", "Network IPv4 lease acquired via VirtIO-Net");
+        return;
     }
+    if (netd.stack) |st| {
+        st.dhcp_config = .{
+            .ip = [4]u8{ 192, 168, 100, vdev.mac[5] },
+            .subnet_mask = [4]u8{ 255, 255, 255, 0 },
+            .gateway = [4]u8{ 192, 168, 100, 1 },
+            .dns_server = [4]u8{ 1, 1, 1, 1 },
+            .server_id = [4]u8{ 192, 168, 100, 1 },
+            .lease_seconds = 86400,
+            .bound = true,
+        };
+    }
+    serial.writeStatusOk("dhcp", "Assigned link-local mesh IPv4 (192.168.100.x)");
 }
 
 fn initAiDaemon(allocator: std.mem.Allocator) void {
@@ -241,9 +257,25 @@ fn initAiDaemon(allocator: std.mem.Allocator) void {
     }
 }
 
+fn initP2pDaemon(allocator: std.mem.Allocator) void {
+    var seed = [_]u8{0x42} ** 32;
+    if (global_virtio_net) |vdev| @memcpy(seed[0..6], &vdev.mac);
+    global_p2pd = p2pd_mod.P2pDaemon.init(allocator, seed, 8080) catch null;
+    if (global_p2pd != null) {
+        serial.writeStatusOk("p2pd", "P2P mesh discovery daemon active (Noise/mTLS :8080)");
+    }
+}
+
+fn initPackageDaemon() void {
+    global_pkgd = pkgd_mod.PackageDaemon.init();
+    serial.writeStatusOk("pkgd", "Sovereign package federation registry active (SPK1)");
+}
+
 fn initUserlandServices(allocator: std.mem.Allocator) void {
     initNetDaemon(allocator);
     initAiDaemon(allocator);
+    initP2pDaemon(allocator);
+    initPackageDaemon();
 }
 
 fn aiInferenceBridge(prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize {
@@ -665,33 +697,9 @@ fn initGenesisDisplay(boot_info: *const BootInfo) void {
     framebuffer.clear(COLOR_BG);
 }
 
-fn registerNetworkCap(genesis: *actor_mod.Actor) !void {
-    if (global_virtio_net != null) {
-        _ = try genesis.insertCap(cap_mod.Capability{
-            .cap_type = .network_device,
-            .rights = cap_mod.Rights.ALL,
-            .object_id = CAP_OBJ_NETWORK,
-            .data_addr = @intFromPtr(&global_virtio_net.?),
-            .data_size = @sizeOf(virtio_net_mod.VirtioNetDevice),
-        });
-    }
-}
-
-fn registerStorageCap(genesis: *actor_mod.Actor) !void {
-    if ((global_virtio_blk != null or global_nvme != null) and global_cas != null) {
-        _ = try genesis.insertCap(cap_mod.Capability{
-            .cap_type = .storage_device,
-            .rights = cap_mod.Rights.ALL,
-            .object_id = CAP_OBJ_STORAGE,
-            .data_addr = @intFromPtr(&global_cas.?),
-            .data_size = @sizeOf(cas_mod.CasEngine),
-        });
-    }
-}
-
-fn registerDisplayCap(genesis: *actor_mod.Actor, boot_info: *const BootInfo) !void {
+fn registerIoCapabilities(genesis: *actor_mod.Actor, boot_info: *const BootInfo, ring: *ipc_mod.RingBuffer) !void {
     if (boot_info.framebuffer.base_addr != 0) {
-        _ = try genesis.insertCap(cap_mod.Capability{
+        _ = try genesis.insertCap(.{
             .cap_type = .framebuffer,
             .rights = cap_mod.Rights.ALL,
             .object_id = CAP_OBJ_FRAMEBUFFER,
@@ -699,11 +707,8 @@ fn registerDisplayCap(genesis: *actor_mod.Actor, boot_info: *const BootInfo) !vo
             .data_size = boot_info.framebuffer.size_bytes,
         });
     }
-}
-
-fn registerBundleCap(genesis: *actor_mod.Actor, boot_info: *const BootInfo) !void {
     if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0) {
-        _ = try genesis.insertCap(cap_mod.Capability{
+        _ = try genesis.insertCap(.{
             .cap_type = .memory_extent,
             .rights = cap_mod.Rights.READ,
             .object_id = CAP_OBJ_BUNDLE,
@@ -711,6 +716,41 @@ fn registerBundleCap(genesis: *actor_mod.Actor, boot_info: *const BootInfo) !voi
             .data_size = boot_info.bundle_size,
         });
     }
+    _ = try genesis.insertCap(.{
+        .cap_type = .ipc_ring,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = CAP_OBJ_IPC_RING,
+        .data_addr = @intFromPtr(ring),
+        .data_size = @sizeOf(ipc_mod.RingBuffer),
+    });
+}
+
+fn registerDeviceCapabilities(genesis: *actor_mod.Actor) !void {
+    if (global_virtio_net != null) {
+        _ = try genesis.insertCap(.{
+            .cap_type = .network_device,
+            .rights = cap_mod.Rights.ALL,
+            .object_id = CAP_OBJ_NETWORK,
+            .data_addr = @intFromPtr(&global_virtio_net.?),
+            .data_size = @sizeOf(virtio_net_mod.VirtioNetDevice),
+        });
+    }
+    if ((global_virtio_blk != null or global_nvme != null) and global_cas != null) {
+        _ = try genesis.insertCap(.{
+            .cap_type = .storage_device,
+            .rights = cap_mod.Rights.ALL,
+            .object_id = CAP_OBJ_STORAGE,
+            .data_addr = @intFromPtr(&global_cas.?),
+            .data_size = @sizeOf(cas_mod.CasEngine),
+        });
+    }
+    _ = try genesis.insertCap(.{
+        .cap_type = .actor_control,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = CAP_OBJ_ACTOR_CTRL,
+        .data_addr = 0,
+        .data_size = 0,
+    });
 }
 
 fn registerGenesisCapabilities(
@@ -718,27 +758,8 @@ fn registerGenesisCapabilities(
     boot_info: *const BootInfo,
     ring: *ipc_mod.RingBuffer,
 ) !void {
-    try registerDisplayCap(genesis, boot_info);
-    try registerBundleCap(genesis, boot_info);
-
-    _ = try genesis.insertCap(cap_mod.Capability{
-        .cap_type = .ipc_ring,
-        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
-        .object_id = CAP_OBJ_IPC_RING,
-        .data_addr = @intFromPtr(ring),
-        .data_size = @sizeOf(ipc_mod.RingBuffer),
-    });
-
-    try registerNetworkCap(genesis);
-    try registerStorageCap(genesis);
-
-    _ = try genesis.insertCap(cap_mod.Capability{
-        .cap_type = .actor_control,
-        .rights = cap_mod.Rights.ALL,
-        .object_id = CAP_OBJ_ACTOR_CTRL,
-        .data_addr = 0,
-        .data_size = 0,
-    });
+    try registerIoCapabilities(genesis, boot_info, ring);
+    try registerDeviceCapabilities(genesis);
 }
 
 fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {

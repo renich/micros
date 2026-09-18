@@ -29,7 +29,7 @@ CACHE_DIR := .zig-cache
 # Default goal
 .DEFAULT_GOAL := all
 
-.PHONY: all clean test help run run-msh qemu-msh uefi-boot uefi-disk-image qemu-uefi tools fmt fmt-check lint spec-trace check
+.PHONY: all clean test help run run-msh qemu-msh uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
 all: tools src/kernel/genesis.mcb
@@ -130,6 +130,14 @@ qemu-uefi: uefi-boot
 		-device virtio-vga,xres=1280,yres=800 \
 		-display gtk,zoom-to-fit=on \
 		-serial stdio
+
+## qemu-cluster: Boot virtual dual-node P2P cluster mesh in QEMU with live display
+qemu-cluster: uefi-boot
+	@./tools/micros-cluster.bash --mode interactive
+
+## qemu-cluster-verify: Headless verification of dual-node P2P cluster mesh startup
+qemu-cluster-verify: uefi-boot
+	@./tools/micros-cluster.bash --mode verify
 
 ## tools: Compile the substrate toolchain
 tools:
