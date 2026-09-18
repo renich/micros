@@ -52,8 +52,6 @@ const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
 
 const COLOR_BG: u32 = 0x000000;
-const COLOR_TITLE: u32 = 0xE6EDF3;
-const COLOR_SUBTITLE: u32 = 0x7D8590;
 
 const CAP_OBJ_FRAMEBUFFER: u32 = 1;
 const CAP_OBJ_IPC_RING: u32 = 2;
@@ -181,7 +179,14 @@ fn dmaPinBridge(virt_addr: usize, len_bytes: usize) ?u64 {
     const cr3 = vmm.readCr3();
     const pml4 = if (cr3 != 0) cr3 else vmm.kernel_pml4_phys;
     if (pml4 == 0) return @as(u64, @intCast(virt_addr));
-    return vmm.virtToPhys(pml4, @as(u64, @intCast(virt_addr)));
+    const first_phys = vmm.virtToPhys(pml4, @as(u64, @intCast(virt_addr))) orelse return null;
+    var offset: usize = 4096;
+    while (offset < len_bytes) : (offset += 4096) {
+        const expected = first_phys + offset;
+        const page_phys = vmm.virtToPhys(pml4, @as(u64, @intCast(virt_addr + offset))) orelse return null;
+        if (page_phys != expected) return null;
+    }
+    return first_phys;
 }
 
 fn initNetDaemon(allocator: std.mem.Allocator) void {
@@ -387,9 +392,19 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
     }
 }
 
-fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8) !void {
+fn isVerifiedSystemScript(name: []const u8, source: []const u8) bool {
+    const bsrc = bundleReadBridge(name) orelse return false;
+    if (!std.mem.eql(u8, bsrc, source)) return false;
+    const sys_names = [_][]const u8{ "msh", "harness", "installer", "rebuild", "httpd", "web", "vedit" };
+    for (sys_names) |sname| {
+        if (std.mem.eql(u8, name, sname)) return true;
+    }
+    return false;
+}
+
+fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []const u8) !void {
     if (global_fb) |*fb| {
-        _ = try child.insertCap(cap_mod.Capability{
+        _ = try child.insertCap(.{
             .cap_type = .framebuffer,
             .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
             .object_id = CAP_OBJ_FRAMEBUFFER,
@@ -397,33 +412,10 @@ fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8) !void {
             .data_size = @sizeOf(fb_mod.Framebuffer),
         });
     }
-    const is_sys = std.mem.eql(u8, name, "msh") or std.mem.eql(u8, name, "harness") or
-        std.mem.eql(u8, name, "installer") or std.mem.eql(u8, name, "rebuild") or
-        std.mem.eql(u8, name, "httpd") or std.mem.eql(u8, name, "web") or
-        std.mem.eql(u8, name, "vedit");
-    if (is_sys) {
-        _ = try child.insertCap(cap_mod.Capability{
-            .cap_type = .actor_control,
-            .rights = cap_mod.Rights.ALL,
-            .object_id = CAP_OBJ_ACTOR_CTRL,
-            .data_addr = 0,
-            .data_size = 0,
-        });
-        _ = try child.insertCap(cap_mod.Capability{
-            .cap_type = .storage_device,
-            .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
-            .object_id = CAP_OBJ_STORAGE,
-            .data_addr = 0,
-            .data_size = 0,
-        });
-        _ = try child.insertCap(cap_mod.Capability{
-            .cap_type = .network_device,
-            .rights = cap_mod.Rights.ALL,
-            .object_id = CAP_OBJ_NETWORK,
-            .data_addr = 0,
-            .data_size = 0,
-        });
-    }
+    if (!isVerifiedSystemScript(name, source)) return;
+    _ = try child.insertCap(.{ .cap_type = .actor_control, .rights = cap_mod.Rights.ALL, .object_id = CAP_OBJ_ACTOR_CTRL, .data_addr = 0, .data_size = 0 });
+    _ = try child.insertCap(.{ .cap_type = .storage_device, .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE, .object_id = CAP_OBJ_STORAGE, .data_addr = 0, .data_size = 0 });
+    _ = try child.insertCap(.{ .cap_type = .network_device, .rights = cap_mod.Rights.ALL, .object_id = CAP_OBJ_NETWORK, .data_addr = 0, .data_size = 0 });
 }
 
 fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
@@ -443,7 +435,7 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
         global_registry.terminate(allocator, child.id) catch {};
     }
 
-    try delegateInitialCaps(child, name);
+    try delegateInitialCaps(child, name, persistent_source);
     try attachActorVm(allocator, child, chunk);
     if (child.id < actor_mod.MAX_ACTORS) {
         global_actor_sources[child.id] = persistent_source;
@@ -697,35 +689,7 @@ fn initGenesisDisplay(boot_info: *const BootInfo) void {
     framebuffer.clear(COLOR_BG);
 }
 
-fn registerIoCapabilities(genesis: *actor_mod.Actor, boot_info: *const BootInfo, ring: *ipc_mod.RingBuffer) !void {
-    if (boot_info.framebuffer.base_addr != 0) {
-        _ = try genesis.insertCap(.{
-            .cap_type = .framebuffer,
-            .rights = cap_mod.Rights.ALL,
-            .object_id = CAP_OBJ_FRAMEBUFFER,
-            .data_addr = boot_info.framebuffer.base_addr,
-            .data_size = boot_info.framebuffer.size_bytes,
-        });
-    }
-    if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0) {
-        _ = try genesis.insertCap(.{
-            .cap_type = .memory_extent,
-            .rights = cap_mod.Rights.READ,
-            .object_id = CAP_OBJ_BUNDLE,
-            .data_addr = boot_info.bundle_base,
-            .data_size = boot_info.bundle_size,
-        });
-    }
-    _ = try genesis.insertCap(.{
-        .cap_type = .ipc_ring,
-        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
-        .object_id = CAP_OBJ_IPC_RING,
-        .data_addr = @intFromPtr(ring),
-        .data_size = @sizeOf(ipc_mod.RingBuffer),
-    });
-}
-
-fn registerDeviceCapabilities(genesis: *actor_mod.Actor) !void {
+fn registerGenesisHardwareCaps(genesis: *actor_mod.Actor) !void {
     if (global_virtio_net != null) {
         _ = try genesis.insertCap(.{
             .cap_type = .network_device,
@@ -758,8 +722,32 @@ fn registerGenesisCapabilities(
     boot_info: *const BootInfo,
     ring: *ipc_mod.RingBuffer,
 ) !void {
-    try registerIoCapabilities(genesis, boot_info, ring);
-    try registerDeviceCapabilities(genesis);
+    if (boot_info.framebuffer.base_addr != 0) {
+        _ = try genesis.insertCap(.{
+            .cap_type = .framebuffer,
+            .rights = cap_mod.Rights.ALL,
+            .object_id = CAP_OBJ_FRAMEBUFFER,
+            .data_addr = boot_info.framebuffer.base_addr,
+            .data_size = boot_info.framebuffer.size_bytes,
+        });
+    }
+    if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0) {
+        _ = try genesis.insertCap(.{
+            .cap_type = .memory_extent,
+            .rights = cap_mod.Rights.READ,
+            .object_id = CAP_OBJ_BUNDLE,
+            .data_addr = boot_info.bundle_base,
+            .data_size = boot_info.bundle_size,
+        });
+    }
+    _ = try genesis.insertCap(.{
+        .cap_type = .ipc_ring,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = CAP_OBJ_IPC_RING,
+        .data_addr = @intFromPtr(ring),
+        .data_size = @sizeOf(ipc_mod.RingBuffer),
+    });
+    try registerGenesisHardwareCaps(genesis);
 }
 
 fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {
@@ -971,10 +959,22 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     sched.on_context_switch = onFiberContextSwitch;
     global_sched = &sched;
     _ = sched.spawn(vmThread, genesis_vm) catch kernelPanic("fiber_spawn");
+    _ = sched.spawn(serviceWorker, null) catch kernelPanic("service_spawn");
     sched.run();
 
     serial.writeString("[kernel] Event loop terminated. Halting.\n");
     haltLoop();
+}
+
+fn serviceWorker(ctx: ?*anyopaque) void {
+    _ = ctx;
+    while (true) {
+        var work: usize = 0;
+        if (global_netd) |*netd| work += netd.poll();
+        if (global_aid) |*aid| work += aid.processClientIpc();
+        if (work == 0) io.pause();
+        fiber_mod.yield();
+    }
 }
 
 fn vmThread(ctx: ?*anyopaque) void {

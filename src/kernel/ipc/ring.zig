@@ -156,16 +156,16 @@ test "RingBuffer 64-byte frame push, pop, and SPSC lock-free ordering" {
 pub const SPSC_BUFFER_CAPACITY: usize = 3840;
 
 pub const SpscRingBuffer = extern struct {
-    head: u32 align(64),
-    tail: u32 align(64),
+    head: std.atomic.Value(u32) align(64),
+    tail: std.atomic.Value(u32) align(64),
     capacity: u32 align(64),
     reserved: u32 align(64),
     buffer: [SPSC_BUFFER_CAPACITY]u8,
 
     pub fn init() SpscRingBuffer {
         return .{
-            .head = 0,
-            .tail = 0,
+            .head = std.atomic.Value(u32).init(0),
+            .tail = std.atomic.Value(u32).init(0),
             .capacity = @intCast(SPSC_BUFFER_CAPACITY),
             .reserved = 0,
             .buffer = [_]u8{0} ** SPSC_BUFFER_CAPACITY,
@@ -173,24 +173,32 @@ pub const SpscRingBuffer = extern struct {
     }
 
     pub fn isFull(self: *const SpscRingBuffer) bool {
-        return ((self.tail + 1) % self.capacity) == self.head;
+        const t = self.tail.load(.acquire);
+        const h = self.head.load(.acquire);
+        return ((t + 1) % self.capacity) == h;
     }
 
     pub fn isEmpty(self: *const SpscRingBuffer) bool {
-        return self.head == self.tail;
+        const h = self.head.load(.acquire);
+        const t = self.tail.load(.acquire);
+        return h == t;
     }
 
     pub fn writeByte(self: *SpscRingBuffer, byte: u8) bool {
-        if (self.isFull()) return false;
-        self.buffer[self.tail] = byte;
-        self.tail = (self.tail + 1) % self.capacity;
+        const t = self.tail.load(.monotonic);
+        const h = self.head.load(.acquire);
+        if (((t + 1) % self.capacity) == h) return false;
+        self.buffer[t] = byte;
+        self.tail.store((t + 1) % self.capacity, .release);
         return true;
     }
 
     pub fn readByte(self: *SpscRingBuffer) ?u8 {
-        if (self.isEmpty()) return null;
-        const b = self.buffer[self.head];
-        self.head = (self.head + 1) % self.capacity;
+        const h = self.head.load(.monotonic);
+        const t = self.tail.load(.acquire);
+        if (h == t) return null;
+        const b = self.buffer[h];
+        self.head.store((h + 1) % self.capacity, .release);
         return b;
     }
 };

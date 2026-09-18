@@ -9,6 +9,7 @@ pub const PAGE_PRESENT: u64 = 1 << 0;
 pub const PAGE_WRITABLE: u64 = 1 << 1;
 pub const PAGE_USER: u64 = 1 << 2;
 pub const PAGE_HUGE: u64 = 1 << 7;
+pub const PAGE_ANON: u64 = 1 << 9;
 pub const PAGE_NO_EXECUTE: u64 = 1 << 63;
 
 pub const PageTable = extern struct {
@@ -95,9 +96,62 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     const pt: *PageTable = @ptrFromInt((pd.entries[pd_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
     if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return false;
 
+    const pte = pt.entries[pt_idx];
+    if ((pte & PAGE_ANON) != 0) {
+        pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
+    }
+
     pt.entries[pt_idx] = 0;
     invalidateTlb(virt);
     return true;
+}
+
+pub fn protectPage(pml4_phys: u64, virt: u64, prot: usize) bool {
+    const pml4_idx = (virt >> 39) & 0x1FF;
+    const pdpt_idx = (virt >> 30) & 0x1FF;
+    const pd_idx = (virt >> 21) & 0x1FF;
+    const pt_idx = (virt >> 12) & 0x1FF;
+
+    const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
+    if ((pml4.entries[pml4_idx] & PAGE_PRESENT) == 0) return false;
+
+    const pdpt: *PageTable = @ptrFromInt((pml4.entries[pml4_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    if ((pdpt.entries[pdpt_idx] & PAGE_PRESENT) == 0) return false;
+
+    const pd: *PageTable = @ptrFromInt((pdpt.entries[pdpt_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    if ((pd.entries[pd_idx] & PAGE_PRESENT) == 0) return false;
+
+    const pt: *PageTable = @ptrFromInt((pd.entries[pd_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return false;
+
+    var pte = pt.entries[pt_idx];
+    if ((prot & 2) != 0) {
+        pte |= PAGE_WRITABLE;
+    } else {
+        pte &= ~PAGE_WRITABLE;
+    }
+    if ((prot & 4) != 0) {
+        pte &= ~PAGE_NO_EXECUTE;
+    } else {
+        pte |= PAGE_NO_EXECUTE;
+    }
+    pt.entries[pt_idx] = pte;
+    invalidateTlb(virt);
+    return true;
+}
+
+pub fn protectPages(addr: *anyopaque, length: usize, prot: usize) !void {
+    if (length == 0 or length > std.math.maxInt(usize) - 4095) return error.InvalidArgs;
+    const cr3 = readCr3();
+    const pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
+    const start_vaddr = @intFromPtr(addr) & ~@as(u64, 0xFFF);
+    const end_vaddr = std.mem.alignForward(u64, @intFromPtr(addr) + length, 4096);
+    const num_pages = (end_vaddr - start_vaddr) / 4096;
+    for (0..num_pages) |i| {
+        if (!protectPage(pml4, start_vaddr + i * 4096, prot)) {
+            return error.PageNotMapped;
+        }
+    }
 }
 
 pub fn invalidateTlb(virt: u64) void {
@@ -116,6 +170,7 @@ pub fn virtToPhys(pml4_phys: u64, virt: u64) ?u64 {
     const pdpt: *PageTable = @ptrFromInt((pml4e & 0x000F_FFFF_FFFF_F000) + hhdm_base);
     const pdpte = pdpt.entries[(virt >> 30) & 0x1FF];
     if ((pdpte & PAGE_PRESENT) == 0) return null;
+    if ((pdpte & PAGE_HUGE) != 0) return (pdpte & 0x000F_FFFF_C000_0000) | (virt & 0x3FFF_FFFF);
 
     const pd: *PageTable = @ptrFromInt((pdpte & 0x000F_FFFF_FFFF_F000) + hhdm_base);
     const pde = pd.entries[(virt >> 21) & 0x1FF];
@@ -168,6 +223,12 @@ pub fn createActorAddressSpace() ?u64 {
 fn freePt(pd_entry: u64) void {
     if ((pd_entry & PAGE_PRESENT) == 0 or (pd_entry & PAGE_HUGE) != 0) return;
     const pt_phys = pd_entry & 0x000F_FFFF_FFFF_F000;
+    const pt: *PageTable = @ptrFromInt(pt_phys + hhdm_base);
+    for (pt.entries) |pte| {
+        if ((pte & PAGE_PRESENT) != 0 and (pte & PAGE_USER) != 0 and (pte & PAGE_ANON) != 0) {
+            pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
+        }
+    }
     pmm.freePage(pt_phys);
 }
 
@@ -202,22 +263,41 @@ pub fn destroyActorAddressSpace(actor_pml4_phys: u64) void {
 
 var next_heap_vaddr: u64 = 0x0000_1000_0000_0000;
 
+fn rollbackMapPages(pml4: u64, base_vaddr: u64, count: usize) void {
+    var j: usize = 0;
+    while (j < count) : (j += 1) {
+        const roll_vaddr = base_vaddr + j * 4096;
+        _ = unmapPage(pml4, roll_vaddr);
+    }
+}
+
 pub fn map_pages(addr: ?*anyopaque, length: usize, flags: u64) !*anyopaque {
+    if (length == 0 or length > std.math.maxInt(usize) - 4095) return error.InvalidArgs;
     const num_pages = (length + 4095) / 4096;
 
-    const vaddr = if (addr) |a| @intFromPtr(a) else blk: {
+    const cr3 = readCr3();
+    const active_pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
+
+    const vaddr = if (addr) |a| blk: {
+        const raw = @intFromPtr(a);
+        if ((raw & 0xFFF) != 0) return error.InvalidArgs;
+        if ((flags & PAGE_USER) != 0 and raw + num_pages * 4096 > 0x0000_8000_0000_0000) return error.InvalidArgs;
+        break :blk raw;
+    } else blk: {
         const v = next_heap_vaddr;
         next_heap_vaddr += num_pages * 4096;
         break :blk v;
     };
 
-    const cr3 = readCr3();
-    const active_pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
-
     var i: usize = 0;
     while (i < num_pages) : (i += 1) {
-        const phys = pmm.allocPage() orelse return error.NoMemory;
-        if (!mapPage(active_pml4, vaddr + i * 4096, phys, flags)) {
+        const phys = pmm.allocPage() orelse {
+            rollbackMapPages(active_pml4, vaddr, i);
+            return error.NoMemory;
+        };
+        if (!mapPage(active_pml4, vaddr + i * 4096, phys, flags | PAGE_ANON)) {
+            pmm.freePage(phys);
+            rollbackMapPages(active_pml4, vaddr, i);
             return error.NoMemory;
         }
     }
@@ -327,4 +407,41 @@ test "vmm virtToPhys translates 4-level virtual page address to physical" {
     const phys = virtToPhys(pml4_phys, test_virt);
     try std.testing.expect(phys != null);
     try std.testing.expectEqual(@as(u64, 0x8123), phys.?);
+}
+
+test "vmm protectPage modifies W^X permission flags on leaf PTE" {
+    var pml4 align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pdpt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pd align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+
+    const saved_hhdm = hhdm_base;
+    defer hhdm_base = saved_hhdm;
+    hhdm_base = 0;
+
+    const pml4_phys = @intFromPtr(&pml4);
+    const pdpt_phys = @intFromPtr(&pdpt);
+    const pd_phys = @intFromPtr(&pd);
+    const pt_phys = @intFromPtr(&pt);
+
+    const test_virt: u64 = 0x0000_0000_4000_0000;
+    const pml4_idx = (test_virt >> 39) & 0x1FF;
+    const pdpt_idx = (test_virt >> 30) & 0x1FF;
+    const pd_idx = (test_virt >> 21) & 0x1FF;
+    const pt_idx = (test_virt >> 12) & 0x1FF;
+
+    pml4.entries[pml4_idx] = pdpt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pdpt.entries[pdpt_idx] = pd_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pd.entries[pd_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pt.entries[pt_idx] = 0x5000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+
+    // Set to Read-Only + Executable (prot = 1 | 4 = 5)
+    try std.testing.expect(protectPage(pml4_phys, test_virt, 5));
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_WRITABLE) == 0);
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_NO_EXECUTE) == 0);
+
+    // Set to Read-Write + No-Execute (prot = 1 | 2 = 3)
+    try std.testing.expect(protectPage(pml4_phys, test_virt, 3));
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_WRITABLE) != 0);
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_NO_EXECUTE) != 0);
 }

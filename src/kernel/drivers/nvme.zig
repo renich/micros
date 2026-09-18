@@ -200,12 +200,12 @@ pub const NvmeQueue = struct {
         }
         asm volatile ("lfence" ::: .{ .memory = true });
         const cqe = self.cq_entries[self.cq_head];
-        if (cqe.cid != cid) return error.CommandIdMismatch;
-        if (!cqe.isSuccess()) return error.NvmeCommandFailed;
-
         self.cq_head = (self.cq_head + 1) % self.size;
         if (self.cq_head == 0) self.cq_phase ^= 1;
         writeMmio32(mmio_base + self.cq_doorbell, self.cq_head);
+
+        if (cqe.cid != cid) return error.CommandIdMismatch;
+        if (!cqe.isSuccess()) return error.NvmeCommandFailed;
         return cqe;
     }
 };
@@ -225,6 +225,20 @@ pub const NvmeDevice = struct {
     prp_list_virt: [*]u64,
     next_cid: u16,
     initialized: bool,
+    lock: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    pub fn acquireLock(self: *NvmeDevice) u64 {
+        const rflags = io.pushfqAndCli();
+        while (self.lock.swap(true, .acquire)) {
+            io.pause();
+        }
+        return rflags;
+    }
+
+    pub fn releaseLock(self: *NvmeDevice, rflags: u64) void {
+        self.lock.store(false, .release);
+        io.popfq(rflags);
+    }
 
     pub fn init(
         pci_dev: pci.PciDevice,
@@ -368,6 +382,9 @@ pub const NvmeDevice = struct {
     }
 
     pub fn readSectors(self: *NvmeDevice, lba: u64, count: usize, buf: []u8) !void {
+        const rflags = self.acquireLock();
+        defer self.releaseLock(rflags);
+
         if (count == 0 or count > MAX_BATCH_SECTORS) return error.InvalidSectorCount;
         if (buf.len < count * self.sector_size) return error.BufferTooSmall;
         if (lba + count > self.total_sectors) return error.SectorOutOfBounds;
@@ -389,6 +406,9 @@ pub const NvmeDevice = struct {
     }
 
     pub fn writeSectors(self: *NvmeDevice, lba: u64, count: usize, buf: []const u8) !void {
+        const rflags = self.acquireLock();
+        defer self.releaseLock(rflags);
+
         if (count == 0 or count > MAX_BATCH_SECTORS) return error.InvalidSectorCount;
         if (buf.len < count * self.sector_size) return error.BufferTooSmall;
         if (lba + count > self.total_sectors) return error.SectorOutOfBounds;
@@ -410,6 +430,9 @@ pub const NvmeDevice = struct {
     }
 
     pub fn flush(self: *NvmeDevice) !void {
+        const rflags = self.acquireLock();
+        defer self.releaseLock(rflags);
+
         const cid = self.allocCid();
         const cmd = NvmeSqe.make(NVME_NVM_FLUSH, 0, cid, self.nsid);
         self.io_q.submit(cmd, self.mmio_base);

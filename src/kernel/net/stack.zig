@@ -306,8 +306,8 @@ pub const NetworkStack = struct {
         try self.sendArpRequest(self.dhcp_config.gateway);
         var iter: usize = 0;
         while (self.arp_table.lookup(self.dhcp_config.gateway) == null and iter < 50_000) : (iter += 1) {
-            self.poll();
-            io.ioWait();
+            _ = self.poll();
+            io.pause();
         }
     }
 
@@ -341,8 +341,8 @@ pub const NetworkStack = struct {
             const wait_iters = 100_000 * (attempt + 1);
             var iter: usize = 0;
             while (self.dns_result == null and iter < wait_iters) : (iter += 1) {
-                self.poll();
-                io.ioWait();
+                _ = self.poll();
+                io.pause();
             }
 
             if (self.dns_result) |ip| return ip;
@@ -375,8 +375,8 @@ pub const NetworkStack = struct {
             const wait_iters = BASE_SYN_ITERS * (attempt + 1);
             var iter: usize = 0;
             while (self.tcp_client.?.state != .established and iter < wait_iters) : (iter += 1) {
-                self.poll();
-                io.ioWait();
+                _ = self.poll();
+                io.pause();
             }
 
             if (self.tcp_client.?.state == .established) return;
@@ -414,8 +414,8 @@ pub const NetworkStack = struct {
             const wait_iters = BASE_CHUNK_ITERS * (attempt + 1);
             var iter: usize = 0;
             while (!tcp_mod.isSeqGe(client.unacked_seq, target_seq) and iter < wait_iters) : (iter += 1) {
-                self.poll();
-                io.ioWait();
+                _ = self.poll();
+                io.pause();
             }
 
             if (tcp_mod.isSeqGe(client.unacked_seq, target_seq)) return;
@@ -592,16 +592,19 @@ pub const NetworkStack = struct {
     }
 
     pub fn pollTcpServer(self: *NetworkStack) void {
-        self.poll();
+        _ = self.poll();
     }
 
-    pub fn poll(self: *NetworkStack) void {
+    pub fn poll(self: *NetworkStack) usize {
         var rx_buf: [1514]u8 = undefined;
+        var count: usize = 0;
         while (self.device.pollReceive(&rx_buf)) |len| {
             if (len > 0) {
                 self.handleIncoming(rx_buf[0..len]);
+                count += 1;
             }
         }
+        return count;
     }
 };
 

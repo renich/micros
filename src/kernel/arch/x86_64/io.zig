@@ -81,7 +81,7 @@ pub inline fn popfq(rflags: u64) void {
         \\popfq
         :
         : [rflags] "r" (rflags),
-        : .{ .memory = true });
+        : .{ .memory = true, .cc = true });
 }
 
 pub inline fn rdtsc() u64 {

@@ -200,6 +200,7 @@ fn handleCapRevoke(cap_slot: u64) i64 {
 
 fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
     if (!checkCallerAuthority(.memory_extent, Rights.WRITE)) return -1;
+    if (virt >= 0x0000_8000_0000_0000 or (virt & 0xFFF) != 0) return -4;
     const caller = getCallerActor() orelse return -1;
     if (caller.page_table_base == 0) return -2;
     const user_flags = flags | vmm.PAGE_PRESENT | vmm.PAGE_USER;

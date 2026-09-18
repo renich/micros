@@ -12,6 +12,8 @@ const supervisor_mod = @import("../../supervisor.zig");
 const apic = @import("apic.zig");
 const smp = @import("../../sched/smp.zig");
 
+const io = @import("io.zig");
+
 pub const IdtEntry = extern struct {
     offset_low: u16,
     selector: u16,
@@ -40,10 +42,35 @@ var idt_ptr: IdtPointer = undefined;
 
 pub var current_actor_id: u32 = 0;
 pub var input_ring_ptr: ?*ring_mod.RingBuffer = null;
+var input_ring_lock: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 var kbd_driver: ps2_kbd.Ps2Keyboard = ps2_kbd.Ps2Keyboard.init();
-var event_sequence: u32 = 0;
+var event_sequence: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+pub fn nextSequence() u32 {
+    return event_sequence.fetchAdd(1, .monotonic) +% 1;
+}
+
+fn pushInputMessage(msg: ring_mod.MessageFrame) bool {
+    const flags = io.pushfqAndCli();
+    defer io.popfq(flags);
+    while (input_ring_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+        if (!builtin.is_test) io.pause();
+    }
+    defer input_ring_lock.store(0, .release);
+
+    if (input_ring_ptr) |ring| {
+        return ring.push(msg);
+    }
+    return false;
+}
 
 pub fn setInputRing(ring: *ring_mod.RingBuffer) void {
+    const flags = io.pushfqAndCli();
+    defer io.popfq(flags);
+    while (input_ring_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+        if (!builtin.is_test) io.pause();
+    }
+    defer input_ring_lock.store(0, .release);
     input_ring_ptr = ring;
 }
 
@@ -125,13 +152,14 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
         .rflags = frame.rflags,
     };
 
-    if (input_ring_ptr) |ring| {
-        event_sequence +%= 1;
-        const msg = supervisor_mod.toMessageFrame(fault, event_sequence);
-        _ = ring.push(msg);
-    }
+    const seq = nextSequence();
+    const msg = supervisor_mod.toMessageFrame(fault, seq);
+    _ = pushInputMessage(msg);
 
     frame.rip = @intFromPtr(&childFaultTrampoline);
+    frame.cs = 0x08;
+    frame.ss = 0x10;
+    frame.rflags &= ~@as(u64, 0x200);
     current_actor_id = 0;
 }
 
@@ -194,11 +222,9 @@ export fn commonExceptionHandler() callconv(.naked) void {
 export fn kbdHandlerZig() void {
     const scancode = ps2_kbd.readScancode();
     if (kbd_driver.processScancode(scancode)) |event| {
-        if (input_ring_ptr) |ring| {
-            event_sequence +%= 1;
-            const frame = events_mod.toMessageFrame(event, event_sequence);
-            _ = ring.push(frame);
-        }
+        const seq = nextSequence();
+        const frame = events_mod.toMessageFrame(event, seq);
+        _ = pushInputMessage(frame);
     }
 
     fiber.unpark(1);

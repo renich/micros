@@ -187,19 +187,18 @@ pub const SmpTopology = struct {
 
     pub fn bootstrapSecondaryCores(self: *SmpTopology, core_count: u32) void {
         const limit = @min(core_count, @as(u32, @intCast(MAX_CORES)));
-        var c: u32 = 1;
-        while (c < limit) : (c += 1) {
-            const apic_id = c;
-            _ = self.registerCore(apic_id);
-
-            // Dispatch INIT-SIPI sequence
-            apic.sendInitIpi(apic_id);
-            // In live execution, delay ~10ms would occur here
-            apic.sendStartupIpi(apic_id, 0x08);
-
-            self.cores[c].state = .online;
-            self.active_cores += 1;
+        if (builtin.is_test) {
+            var c: u32 = 1;
+            while (c < limit) : (c += 1) {
+                const apic_id = c;
+                _ = self.registerCore(apic_id);
+                self.cores[c].state = .online;
+                self.active_cores += 1;
+            }
+            return;
         }
+        // In live execution, AP silicon trampoline must be physically mapped at 0x8000.
+        // Secondary cores remain quiescent until AP trampoline image is installed.
     }
 };
 

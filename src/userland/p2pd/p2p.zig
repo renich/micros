@@ -155,7 +155,17 @@ pub const PeerTable = struct {
             self.count += 1;
             return;
         }
-        return error.PeerTableFull;
+        var oldest_idx: usize = 0;
+        var oldest_ticks: u64 = std.math.maxInt(u64);
+        for (0..self.count) |i| {
+            if (self.peers[i]) |p| {
+                if (p.last_seen_ticks < oldest_ticks) {
+                    oldest_ticks = p.last_seen_ticks;
+                    oldest_idx = i;
+                }
+            }
+        }
+        self.peers[oldest_idx] = entry;
     }
 
     pub fn pruneStale(self: *PeerTable, current_ticks: u64, timeout_ticks: u64) usize {

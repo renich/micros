@@ -152,7 +152,7 @@ fn isTcpEof(adapter: *const TcpStreamAdapter) bool {
 fn waitForRx(adapter: *TcpStreamAdapter) std.Io.Reader.StreamError!void {
     var iters: usize = 0;
     while (adapter.stack.tcp_rx_len == 0 and iters < DRAIN_TIMEOUT_ITERS) : (iters += 1) {
-        adapter.stack.poll();
+        _ = adapter.stack.poll();
         io.ioWait();
         if (isTcpEof(adapter)) break;
     }

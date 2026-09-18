@@ -300,6 +300,23 @@ test "Compiles and executes MOCK_RESPONSE code block" {
     }
     try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
 
+    var registry = @import("kernel/actor.zig").ActorRegistry.init();
+    var sup_actor = try @import("kernel/actor.zig").Actor.init(std_mod.testing.allocator, 0, "genesis", 16, 0);
+    defer sup_actor.deinit(std_mod.testing.allocator);
+    _ = try sup_actor.cspace.insert(@import("kernel/cap/capability.zig").Capability{
+        .cap_type = .framebuffer,
+        .rights = @import("kernel/cap/capability.zig").Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+    var ctx = @import("kernel/harness_bindings.zig").HarnessContext{
+        .registry = &registry,
+        .supervisor = sup_actor,
+    };
+    @import("kernel/harness_bindings.zig").setContext(&ctx);
+    defer @import("kernel/harness_bindings.zig").clearContext();
+
     var vm = try @import("macros/vm.zig").VM.init(std_mod.testing.allocator, &chunk);
     defer vm.deinit();
     try @import("kernel/harness_bindings.zig").registerBindings(&vm);
@@ -362,6 +379,21 @@ test "Harness VM stack depth tracking with simulated commands" {
     var registry = @import("kernel/actor.zig").ActorRegistry.init();
     var sup_actor = try @import("kernel/actor.zig").Actor.init(std_mod.heap.page_allocator, 0, "genesis", 16, 0);
     defer sup_actor.deinit(std_mod.heap.page_allocator);
+
+    _ = try sup_actor.cspace.insert(@import("kernel/cap/capability.zig").Capability{
+        .cap_type = .framebuffer,
+        .rights = @import("kernel/cap/capability.zig").Rights.ALL,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+    _ = try sup_actor.cspace.insert(@import("kernel/cap/capability.zig").Capability{
+        .cap_type = .actor_control,
+        .rights = @import("kernel/cap/capability.zig").Rights.ALL,
+        .object_id = 2,
+        .data_addr = 0,
+        .data_size = 0,
+    });
 
     var ctx = @import("kernel/harness_bindings.zig").HarnessContext{
         .registry = &registry,

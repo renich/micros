@@ -102,7 +102,7 @@ pub const NetDaemon = struct {
             self.stack.?.startDhcp() catch continue;
             var iter: usize = 0;
             while (!self.stack.?.dhcp_config.bound and iter < 100_000) : (iter += 1) {
-                self.stack.?.poll();
+                _ = self.stack.?.poll();
                 io.ioWait();
             }
         }
@@ -111,11 +111,13 @@ pub const NetDaemon = struct {
         return self.stack.?.dhcp_config.bound;
     }
 
-    pub fn poll(self: *NetDaemon) void {
+    pub fn poll(self: *NetDaemon) usize {
         if (self.stack) |st| {
-            st.poll();
-            self.rx_packet_count +%= 1;
+            const reaped = st.poll();
+            self.rx_packet_count +%= reaped;
+            return reaped;
         }
+        return 0;
     }
 
     pub fn resolveDns(self: *NetDaemon, host: []const u8) ![4]u8 {
@@ -158,7 +160,7 @@ pub const NetDaemon = struct {
     }
 
     pub fn step(self: *NetDaemon) void {
-        self.poll();
+        _ = self.poll();
         _ = self.processClientIpc();
     }
 
@@ -215,7 +217,7 @@ pub const NetDaemon = struct {
     }
 
     fn handlePoll(self: *NetDaemon) void {
-        self.poll();
+        _ = self.poll();
         if (self.client_tx_ring) |tx| {
             _ = tx.writeByte(@intFromEnum(self.state));
         }
@@ -247,7 +249,7 @@ test "NetDaemon: offline initialization and status dispatch" {
     var daemon = NetDaemon.init(std.testing.allocator, null, null_cap, null_cap);
     try std.testing.expectEqual(DaemonState.offline, daemon.state);
 
-    daemon.poll();
+    _ = daemon.poll();
     try std.testing.expectEqual(@as(u64, 0), daemon.rx_packet_count);
 }
 

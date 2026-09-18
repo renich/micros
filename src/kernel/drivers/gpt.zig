@@ -215,7 +215,9 @@ fn writeGptHeaders(dev: *block.BlockDevice, array_crc: u32, backup_lba: u64) !vo
 }
 
 pub fn formatDisk(dev: *block.BlockDevice, esp_sectors: u64) !void {
-    if (dev.total_sectors < DEFAULT_ALIGNMENT_SECTORS + esp_sectors + 68) {
+    if (esp_sectors == 0) return error.InvalidPartitionSize;
+    const min_required: u64 = DEFAULT_ALIGNMENT_SECTORS + 68;
+    if (dev.total_sectors < min_required or esp_sectors > dev.total_sectors - min_required) {
         return error.DiskTooSmall;
     }
 

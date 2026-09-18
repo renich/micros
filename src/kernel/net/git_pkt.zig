@@ -101,18 +101,14 @@ pub fn parsePktLine(data: []const u8) ?PktLine {
     };
 }
 
-pub fn parsePushCommand(payload: []const u8) ?RefLine {
-    // Format: "<old_sha> <new_sha> <ref_name>\0<capabilities>\n" or without \0
-    if (payload.len < 82) return null; // 40 + 1 + 40 + 1
-    const old_id = payload[0..40];
-    if (payload[40] != ' ') return null;
-    const new_id = payload[41..81];
-    if (payload[81] != ' ') return null;
+const Delimiters = struct {
+    nul_idx: ?usize,
+    end_idx: usize,
+};
 
-    const rest = payload[82..];
+fn findDelimiters(rest: []const u8) Delimiters {
     var nul_idx: ?usize = null;
     var newline_idx: ?usize = null;
-
     for (rest, 0..) |c, i| {
         if (c == 0 and nul_idx == null) {
             nul_idx = i;
@@ -121,21 +117,35 @@ pub fn parsePushCommand(payload: []const u8) ?RefLine {
             break;
         }
     }
+    var end_idx = newline_idx orelse rest.len;
+    if (end_idx > 0 and rest[end_idx - 1] == '\r') {
+        end_idx -= 1;
+    }
+    return .{ .nul_idx = nul_idx, .end_idx = end_idx };
+}
 
-    const end_idx = newline_idx orelse rest.len;
-    if (nul_idx) |n_idx| {
+pub fn parsePushCommand(payload: []const u8) ?RefLine {
+    // Format: "<old_sha> <new_sha> <ref_name>\0<capabilities>\n" or without \0
+    if (payload.len < 82 or payload[40] != ' ' or payload[81] != ' ') return null;
+    const old_id = payload[0..40];
+    const new_id = payload[41..81];
+    const rest = payload[82..];
+
+    const delims = findDelimiters(rest);
+    if (delims.nul_idx) |n_idx| {
+        const raw_caps = if (n_idx + 1 <= delims.end_idx) rest[n_idx + 1 .. delims.end_idx] else "";
         return RefLine{
             .old_id = old_id,
             .new_id = new_id,
             .ref_name = rest[0..n_idx],
-            .capabilities = rest[n_idx + 1 .. end_idx],
+            .capabilities = std.mem.trimEnd(u8, raw_caps, "\r"),
         };
     }
 
     return RefLine{
         .old_id = old_id,
         .new_id = new_id,
-        .ref_name = rest[0..end_idx],
+        .ref_name = std.mem.trimEnd(u8, rest[0..delims.end_idx], "\r"),
         .capabilities = "",
     };
 }
@@ -178,4 +188,9 @@ test "pkt-line push command parsing" {
     try std.testing.expectEqualStrings("1234567890abcdef1234567890abcdef12345678", parsed.new_id);
     try std.testing.expectEqualStrings("refs/heads/master", parsed.ref_name);
     try std.testing.expectEqualStrings("report-status side-band-64k", parsed.capabilities);
+
+    const raw_trailing_nul = "0000000000000000000000000000000000000000 1234567890abcdef1234567890abcdef12345678 refs/heads/main\x00";
+    const parsed2 = parsePushCommand(raw_trailing_nul).?;
+    try std.testing.expectEqualStrings("refs/heads/main", parsed2.ref_name);
+    try std.testing.expectEqualStrings("", parsed2.capabilities);
 }

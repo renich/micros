@@ -17,15 +17,19 @@ pub fn mmap(addr: ?*anyopaque, length: usize, prot: usize, flags: usize, fd: i32
 }
 
 pub fn munmap(addr: *anyopaque, length: usize) !void {
-    _ = addr;
-    _ = length;
-    // Stub
+    if (length == 0 or length > std.math.maxInt(usize) - 4095) return error.InvalidArgs;
+    const cr3 = vmm.readCr3();
+    const pml4 = if (cr3 != 0) cr3 else vmm.kernel_pml4_phys;
+    const start_vaddr = @intFromPtr(addr) & ~@as(u64, 0xFFF);
+    const end_vaddr = std.mem.alignForward(u64, @intFromPtr(addr) + length, 4096);
+    const num_pages = (end_vaddr - start_vaddr) / 4096;
+    for (0..num_pages) |i| {
+        _ = vmm.unmapPage(pml4, start_vaddr + i * 4096);
+    }
 }
 
 pub fn mprotect(addr: *anyopaque, length: usize, prot: usize) !void {
-    _ = addr;
-    _ = length;
-    _ = prot;
+    return vmm.protectPages(addr, length, prot);
 }
 
 pub fn read(fd: i32, buf: []u8) !usize {

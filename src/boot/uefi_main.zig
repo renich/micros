@@ -90,5 +90,16 @@ pub fn main() uefi.Status {
     _ = con_out.outputString(&[_:0]u16{ '[', 'b', 'o', 'o', 't', ']', ' ', 'B', 'o', 'o', 't', 'I', 'n', 'f', 'o', ' ', 'P', 'r', 'e', 'p', 'a', 'r', 'e', 'd', '\r', '\n', 0 }) catch false;
     _ = con_out.outputString(&[_:0]u16{ '[', 'b', 'o', 'o', 't', ']', ' ', 'J', 'u', 'm', 'p', 'i', 'n', 'g', ' ', 't', 'o', ' ', 'K', 'e', 'r', 'n', 'e', 'l', '.', '.', '.', '\r', '\n', 0 }) catch false;
 
+    if (uefi.system_table.boot_services) |bs| {
+        var retries: usize = 0;
+        while (retries < 3) : (retries += 1) {
+            initMemoryMap(bs, &global_boot_info);
+            const mmap = bs.getMemoryMap(&uefi_mmap_buffer) catch break;
+            if (bs.exitBootServices(uefi.handle, mmap.info.key)) |_| {
+                break;
+            } else |_| {}
+        }
+    }
+
     kernel_main.kmain(&global_boot_info);
 }

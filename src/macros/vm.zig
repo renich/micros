@@ -110,10 +110,10 @@ pub const VM = struct {
 
         const res = self.run(self.frame_count);
 
+        while (self.frame_count > old_frame_count) self.popFrame();
         self.chunk = old_chunk;
         self.ip = old_ip;
         self.sp = old_sp;
-        while (self.frame_count > old_frame_count) self.popFrame();
 
         try res;
     }

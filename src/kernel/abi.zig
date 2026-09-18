@@ -69,15 +69,19 @@ pub const HarnessContext = AbiContext;
 
 var active_ctx: ?*AbiContext = null;
 
-fn checkCallerAuthority(cap_type: @import("cap/capability.zig").CapType, rights: u16) bool {
-    const ctx = active_ctx orelse return true;
-    const get_actor = ctx.current_actor_fn orelse return true;
-    const actor = get_actor() orelse return true;
-    if (actor.id == 0) return true;
+pub const window_abi = @import("compositor/window_abi.zig");
+pub const ai_abi = @import("ai/ai_abi.zig");
+
+var win_ctx: window_abi.WindowContext = .{};
+var ai_ctx: ai_abi.AiContext = .{};
+
+pub fn checkCallerAuthority(cap_type: @import("cap/capability.zig").CapType, rights: u16) bool {
+    const ctx = active_ctx orelse return false;
+    const actor = if (ctx.current_actor_fn) |get_act| (get_act() orelse ctx.supervisor) else ctx.supervisor;
     return actor.hasCap(cap_type, rights);
 }
 
-fn getCallerActorId() u32 {
+pub fn getCallerActorId() u32 {
     const ctx = active_ctx orelse return 0;
     const get_actor = ctx.current_actor_fn orelse return ctx.supervisor.id;
     const actor = get_actor() orelse return ctx.supervisor.id;
@@ -92,6 +96,32 @@ pub fn setContext(ctx: *AbiContext) void {
     git_abi.setCasContext(ctx.cas_put_fn, ctx.cas_get_fn);
     git_abi.setCallerAuth(checkCallerAuthority);
     cap_abi.setCapAbiContext(checkCallerAuthority, ctx.frame_info_fn, ctx.irq_ack_fn, ctx.dma_pin_fn);
+
+    win_ctx = .{
+        .wm = ctx.wm,
+        .canvas = ctx.canvas,
+        .pointer = ctx.pointer,
+        .framebuffer = ctx.framebuffer,
+        .supervisor_id = ctx.supervisor.id,
+        .check_auth_fn = checkCallerAuthority,
+    };
+    window_abi.setWindowContext(&win_ctx);
+
+    ai_ctx = .{
+        .ai_inference_fn = ctx.ai_inference_fn,
+        .spawn_code_fn = ctx.spawn_code_fn,
+        .grant_cap_fn = ctx.grant_cap_fn,
+        .cas_put_fn = ctx.cas_put_fn,
+        .cas_get_fn = ctx.cas_get_fn,
+        .draw_canvas_fn = ctx.draw_canvas_fn,
+        .telemetry_fn = ctx.telemetry_fn,
+        .bundle_read_fn = ctx.bundle_read_fn,
+        .bundle_list_fn = ctx.bundle_list_fn,
+        .current_actor_fn = ctx.current_actor_fn,
+        .supervisor = ctx.supervisor,
+        .check_auth_fn = checkCallerAuthority,
+    };
+    ai_abi.setAiContext(&ai_ctx);
 }
 
 pub fn clearContext() void {
@@ -101,6 +131,8 @@ pub fn clearContext() void {
     net_abi.clearNetworkContext();
     git_abi.clearGitContext();
     cap_abi.clearCapAbiContext();
+    window_abi.clearWindowContext();
+    ai_abi.clearAiContext();
 }
 
 fn castToU32(val: i64) ?u32 {
@@ -118,10 +150,12 @@ fn nativeSysActorCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysActorSpawn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.actor_control, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
+    const caller_id = getCallerActorId();
     const child = try ctx.registry.spawn(
         vm.allocator,
-        ctx.supervisor.id,
+        caller_id,
         args[0].string,
         32,
         0,
@@ -132,6 +166,7 @@ fn nativeSysActorSpawn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysActorTerminate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    if (!checkCallerAuthority(.actor_control, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
     try ctx.registry.terminate(vm.allocator, id);
@@ -141,6 +176,7 @@ fn nativeSysActorTerminate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysFbClear(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return Value{ .nil = {} };
     if (ctx.framebuffer) |fb| {
         fb.clear(@intCast(args[0].integer));
@@ -155,6 +191,7 @@ fn nativeSysFbDrawString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     {
         return error.InvalidArgs;
     }
+    if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return Value{ .nil = {} };
     if (ctx.framebuffer) |fb| {
         fb.drawString(
@@ -175,6 +212,7 @@ fn nativeSysFbDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     {
         return error.InvalidArgs;
     }
+    if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return Value{ .nil = {} };
     if (ctx.framebuffer) |fb| {
         fb.drawRect(
@@ -186,120 +224,6 @@ fn nativeSysFbDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         );
     }
     return Value{ .nil = {} };
-}
-
-fn nativeSysWindowCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 4 or args[0] != .string or args[1] != .integer or
-        args[2] != .integer or args[3] != .integer)
-    {
-        return error.InvalidArgs;
-    }
-    const ctx = active_ctx orelse return Value{ .integer = -1 };
-    const wm = ctx.wm orelse return Value{ .integer = -1 };
-
-    const w: u32 = @intCast(@max(0, args[1].integer));
-    const h: u32 = @intCast(@max(0, args[2].integer));
-    const mode: WindowMode = if (args[3].integer == 1) .floating else .tiled;
-
-    const win = wm.createWindow(ctx.supervisor.id, args[0].string, w, h, mode) catch {
-        return Value{ .integer = -1 };
-    };
-    return Value{ .integer = @intCast(win.id) };
-}
-
-fn nativeSysWindowClose(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const ctx = active_ctx orelse return Value{ .boolean = false };
-    const wm = ctx.wm orelse return Value{ .boolean = false };
-
-    wm.closeWindow(@intCast(args[0].integer));
-    return Value{ .boolean = true };
-}
-
-fn nativeSysWindowFocus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const ctx = active_ctx orelse return Value{ .boolean = false };
-    const wm = ctx.wm orelse return Value{ .boolean = false };
-
-    wm.focusWindow(@intCast(args[0].integer));
-    return Value{ .boolean = true };
-}
-
-fn nativeSysWindowDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 6 or args[0] != .integer or args[1] != .integer or
-        args[2] != .integer or args[3] != .integer or args[4] != .integer or
-        args[5] != .integer)
-    {
-        return error.InvalidArgs;
-    }
-    const ctx = active_ctx orelse return Value{ .nil = {} };
-    const wm = ctx.wm orelse return Value{ .nil = {} };
-
-    const win_id: u32 = @intCast(args[0].integer);
-    const idx = wm.findWindowIndex(win_id) orelse return Value{ .nil = {} };
-    const win = wm.windows[idx] orelse return Value{ .nil = {} };
-
-    const x: u32 = @intCast(@max(0, args[1].integer));
-    const y: u32 = @intCast(@max(0, args[2].integer));
-    const w: u32 = @intCast(@max(0, args[3].integer));
-    const h: u32 = @intCast(@max(0, args[4].integer));
-    const color: u32 = @intCast(args[5].integer);
-
-    win.surface.drawRect(x, y, w, h, color);
-    return Value{ .nil = {} };
-}
-
-fn nativeSysWindowDrawString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 6 or args[0] != .integer or args[1] != .integer or
-        args[2] != .integer or args[3] != .string or args[4] != .integer or
-        args[5] != .integer)
-    {
-        return error.InvalidArgs;
-    }
-    const ctx = active_ctx orelse return Value{ .nil = {} };
-    const wm = ctx.wm orelse return Value{ .nil = {} };
-
-    const win_id: u32 = @intCast(args[0].integer);
-    const idx = wm.findWindowIndex(win_id) orelse return Value{ .nil = {} };
-    const win = wm.windows[idx] orelse return Value{ .nil = {} };
-
-    const x: u32 = @intCast(@max(0, args[1].integer));
-    const y: u32 = @intCast(@max(0, args[2].integer));
-    const fg: u32 = @intCast(args[4].integer);
-    const bg: u32 = @intCast(args[5].integer);
-
-    win.surface.drawString(x, y, args[3].string, fg, bg);
-    return Value{ .nil = {} };
-}
-
-fn nativeSysCompositorFlush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    _ = args;
-    const ctx = active_ctx orelse return Value{ .boolean = false };
-    const wm = ctx.wm orelse return Value{ .boolean = false };
-    const canvas = ctx.canvas orelse return Value{ .boolean = false };
-
-    wm.compose(canvas);
-    if (ctx.framebuffer) |fb| {
-        canvas.flush(fb);
-    }
-    return Value{ .boolean = true };
-}
-
-fn nativeSysPointerRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    _ = args;
-    const ctx = active_ctx orelse return Value{ .integer = -1 };
-    const ptr = ctx.pointer orelse return Value{ .integer = -1 };
-    const px: i64 = @as(u16, @bitCast(@as(i16, @truncate(ptr.x))));
-    const py: i64 = @as(u16, @bitCast(@as(i16, @truncate(ptr.y))));
-    const packed_coords = px | (py << 16);
-    return Value{ .integer = packed_coords };
 }
 
 fn nativeSysIpcRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -342,8 +266,6 @@ fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
     return Value{ .integer = 0 };
 }
-
-var ai_prompt_resp_buf: [8192]u8 = undefined;
 
 fn decodeAnsiParam(b3: u8) ?i64 {
     return switch (b3) {
@@ -426,72 +348,10 @@ fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .integer = -1 };
 }
 
-fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
-    const ctx = active_ctx orelse return error.NoContext;
-    const infer_fn = ctx.ai_inference_fn orelse return error.NoAiHandler;
-    const prompt = args[0].string;
-    const len = infer_fn(prompt.ptr, prompt.len, &ai_prompt_resp_buf, ai_prompt_resp_buf.len);
-    if (len == 0) return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, ai_prompt_resp_buf[0..len]);
-    return Value{ .string = duped };
-}
-
-var ai_extract_buf: [8192]u8 = undefined;
-
-fn nativeSysAiExtractCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
-    const resp = args[0].string;
-    if (ai_mod.client.AiClient.extractCodeBlock(resp, &ai_extract_buf)) |len| {
-        const duped = try vm.allocator.dupe(u8, ai_extract_buf[0..len]);
-        return Value{ .string = duped };
-    }
-    return Value{ .string = "" };
-}
-
-var ai_tool_scratch: [8192]u8 = undefined;
-var ai_tool_res_buf: [1024]u8 = undefined;
-var ai_tool_storage_buf: [1024]u8 = undefined;
-
-fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
-    const resp = args[0].string;
-    const ctx = active_ctx orelse return error.NoContext;
-
-    const call = ai_mod.tool_parser.extractToolCall(resp, &ai_tool_scratch) orelse {
-        return Value{ .string = "" };
-    };
-
-    const caller = if (ctx.current_actor_fn) |get_fn| (get_fn() orelse ctx.supervisor) else ctx.supervisor;
-    const disp_ctx = ai_mod.dispatcher.DispatcherContext{
-        .spawn_fn = ctx.spawn_code_fn,
-        .grant_fn = ctx.grant_cap_fn,
-        .cas_put_fn = ctx.cas_put_fn,
-        .cas_get_fn = ctx.cas_get_fn,
-        .draw_canvas_fn = ctx.draw_canvas_fn,
-        .telemetry_fn = ctx.telemetry_fn,
-        .bundle_read_fn = ctx.bundle_read_fn,
-        .bundle_list_fn = ctx.bundle_list_fn,
-    };
-    const disp = ai_mod.dispatcher.ToolDispatcher.init(
-        caller.cspace,
-        vm.allocator,
-        disp_ctx,
-        &ai_tool_storage_buf,
-    );
-
-    const result = disp.dispatch(call);
-    const len = try ai_mod.tool_parser.formatResultJson(result, &ai_tool_res_buf);
-    const duped = try vm.allocator.dupe(u8, ai_tool_res_buf[0..len]);
-    return Value{ .string = duped };
-}
-
 fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.actor_control, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const spawn_fn = ctx.spawn_code_fn orelse return error.NoSpawnHandler;
     const name = args[0].string;
@@ -539,6 +399,7 @@ fn nativeSysActorState(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysCasPut(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.storage_device, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const put_fn = ctx.cas_put_fn orelse return error.NoStorageHandler;
     var hex_buf: [64]u8 = undefined;
@@ -547,21 +408,23 @@ fn nativeSysCasPut(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .string = duped };
 }
 
-var cas_resp_buf: [4096]u8 = undefined;
-
 fn nativeSysCasGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.storage_device, cap_mod.Rights.READ)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const get_fn = ctx.cas_get_fn orelse return error.NoStorageHandler;
-    const len = get_fn(args[0].string, &cas_resp_buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, cas_resp_buf[0..len]);
+    const buf = try vm.allocator.alloc(u8, 4096);
+    defer vm.allocator.free(buf);
+    const len = get_fn(args[0].string, buf) catch return Value{ .string = "" };
+    const duped = try vm.allocator.dupe(u8, buf[0..len]);
     return Value{ .string = duped };
 }
 
 fn nativeSysActorPersist(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    if (!checkCallerAuthority(.storage_device, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const persist_fn = ctx.persist_actor_fn orelse return error.NoStorageHandler;
     const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
@@ -574,6 +437,8 @@ fn nativeSysActorPersist(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysActorSpawnCas(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.actor_control, cap_mod.Rights.WRITE) or
+        !checkCallerAuthority(.storage_device, cap_mod.Rights.READ)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const spawn_cas_fn = ctx.spawn_cas_fn orelse return error.NoStorageHandler;
     const child_id = spawn_cas_fn(vm.allocator, args[0].string) catch return Value{ .integer = -1 };
@@ -636,9 +501,9 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_serial_read", Value{ .native = nativeSysSerialRead });
     try vm.globals.put("sys_kbd_read", Value{ .native = nativeSysKbdRead });
     try vm.globals.put("sys_kbd_layout", Value{ .native = nativeSysKbdLayout });
-    try vm.globals.put("sys_ai_prompt", Value{ .native = nativeSysAiPrompt });
-    try vm.globals.put("sys_ai_extract_code", Value{ .native = nativeSysAiExtractCode });
-    try vm.globals.put("sys_ai_tool_call", Value{ .native = nativeSysAiToolCall });
+    try vm.globals.put("sys_ai_prompt", Value{ .native = ai_abi.nativeSysAiPrompt });
+    try vm.globals.put("sys_ai_extract_code", Value{ .native = ai_abi.nativeSysAiExtractCode });
+    try vm.globals.put("sys_ai_tool_call", Value{ .native = ai_abi.nativeSysAiToolCall });
     try vm.globals.put("sys_actor_spawn_code", Value{ .native = nativeSysActorSpawnCode });
     try vm.globals.put("sys_yield", Value{ .native = nativeSysYield });
     try vm.globals.put("sys_actor_name", Value{ .native = nativeSysActorName });
@@ -649,13 +514,13 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_actor_spawn_cas", Value{ .native = nativeSysActorSpawnCas });
     try vm.globals.put("sys_bundle_read", Value{ .native = nativeSysBundleRead });
     try vm.globals.put("sys_actor_wait", Value{ .native = nativeSysActorWait });
-    try vm.globals.put("sys_window_create", Value{ .native = nativeSysWindowCreate });
-    try vm.globals.put("sys_window_close", Value{ .native = nativeSysWindowClose });
-    try vm.globals.put("sys_window_focus", Value{ .native = nativeSysWindowFocus });
-    try vm.globals.put("sys_window_draw_rect", Value{ .native = nativeSysWindowDrawRect });
-    try vm.globals.put("sys_window_draw_string", Value{ .native = nativeSysWindowDrawString });
-    try vm.globals.put("sys_compositor_flush", Value{ .native = nativeSysCompositorFlush });
-    try vm.globals.put("sys_pointer_read", Value{ .native = nativeSysPointerRead });
+    try vm.globals.put("sys_window_create", Value{ .native = window_abi.nativeSysWindowCreate });
+    try vm.globals.put("sys_window_close", Value{ .native = window_abi.nativeSysWindowClose });
+    try vm.globals.put("sys_window_focus", Value{ .native = window_abi.nativeSysWindowFocus });
+    try vm.globals.put("sys_window_draw_rect", Value{ .native = window_abi.nativeSysWindowDrawRect });
+    try vm.globals.put("sys_window_draw_string", Value{ .native = window_abi.nativeSysWindowDrawString });
+    try vm.globals.put("sys_compositor_flush", Value{ .native = window_abi.nativeSysCompositorFlush });
+    try vm.globals.put("sys_pointer_read", Value{ .native = window_abi.nativeSysPointerRead });
     try storage_abi.registerStorageSyscalls(vm);
     try catalog_abi.registerCatalogSyscalls(vm);
     try net_abi.registerNetworkSyscalls(vm);
@@ -718,6 +583,14 @@ test "ABI actor lifecycle native bindings" {
     var registry = ActorRegistry.init();
     var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
     defer supervisor.deinit(allocator);
+
+    _ = try supervisor.cspace.insert(cap_mod.Capability{
+        .cap_type = .actor_control,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
 
     var ctx = AbiContext{
         .registry = &registry,
@@ -791,6 +664,21 @@ test "ABI native CAS storage and persistence bindings" {
     var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
     defer supervisor.deinit(allocator);
 
+    _ = try supervisor.cspace.insert(cap_mod.Capability{
+        .cap_type = .storage_device,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+    _ = try supervisor.cspace.insert(cap_mod.Capability{
+        .cap_type = .actor_control,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = 2,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+
     var ctx = AbiContext{
         .registry = &registry,
         .supervisor = supervisor,
@@ -836,6 +724,14 @@ test "ABI native AI extract and fault-tolerant spawn" {
     var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
     defer supervisor.deinit(allocator);
 
+    _ = try supervisor.cspace.insert(cap_mod.Capability{
+        .cap_type = .actor_control,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+
     var ctx = AbiContext{
         .registry = &registry,
         .supervisor = supervisor,
@@ -846,12 +742,12 @@ test "ABI native AI extract and fault-tolerant spawn" {
 
     const md_input = "Here is the code:\n```macros\nvar z = 99;\n```\nDone.";
     var extract_args = [_]Value{Value{ .string = md_input }};
-    const ext_val = try nativeSysAiExtractCode(&vm, &extract_args);
+    const ext_val = try ai_abi.nativeSysAiExtractCode(&vm, &extract_args);
     defer allocator.free(ext_val.string);
     try std.testing.expectEqualStrings("var z = 99;\n", ext_val.string);
 
     var no_code_args = [_]Value{Value{ .string = "Plain prose without code." }};
-    const ext_empty = try nativeSysAiExtractCode(&vm, &no_code_args);
+    const ext_empty = try ai_abi.nativeSysAiExtractCode(&vm, &no_code_args);
     try std.testing.expectEqualStrings("", ext_empty.string);
 
     var fail_args = [_]Value{ Value{ .string = "broken" }, Value{ .string = "syntax error!!" } };
@@ -889,13 +785,13 @@ test "ABI native AI tool call execution" {
 
     const tool_json = "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"spawn_actor\",\"args\":{\"name\":\"w\",\"source\":\"sys_actor_count();\"}}}]}}]}";
     var args = [_]Value{Value{ .string = tool_json }};
-    const res_val = try nativeSysAiToolCall(&vm, &args);
+    const res_val = try ai_abi.nativeSysAiToolCall(&vm, &args);
     defer allocator.free(res_val.string);
     try std.testing.expect(std.mem.indexOf(u8, res_val.string, "\"status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, res_val.string, "\"actor_id\":7") != null);
 
     var no_tool_args = [_]Value{Value{ .string = "Plain prose" }};
-    const empty_val = try nativeSysAiToolCall(&vm, &no_tool_args);
+    const empty_val = try ai_abi.nativeSysAiToolCall(&vm, &no_tool_args);
     try std.testing.expectEqualStrings("", empty_val.string);
 }
 
@@ -910,6 +806,14 @@ test "ABI window and compositor native bindings" {
     var registry = ActorRegistry.init();
     var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
     defer supervisor.deinit(allocator);
+
+    _ = try supervisor.cspace.insert(cap_mod.Capability{
+        .cap_type = .framebuffer,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 0,
+    });
 
     var wm = WindowManager.init(allocator, 640, 480);
     defer wm.deinit();
@@ -937,7 +841,7 @@ test "ABI window and compositor native bindings" {
         Value{ .integer = 240 },
         Value{ .integer = 0 },
     };
-    const win_id_val = try nativeSysWindowCreate(&vm, &create_args);
+    const win_id_val = try window_abi.nativeSysWindowCreate(&vm, &create_args);
     try std.testing.expectEqual(@as(i64, 1), win_id_val.integer);
 
     var drect_args = [_]Value{
@@ -948,7 +852,7 @@ test "ABI window and compositor native bindings" {
         Value{ .integer = 50 },
         Value{ .integer = 0x00FF_0000 },
     };
-    _ = try nativeSysWindowDrawRect(&vm, &drect_args);
+    _ = try window_abi.nativeSysWindowDrawRect(&vm, &drect_args);
 
     var dstr_args = [_]Value{
         Value{ .integer = 1 },
@@ -958,21 +862,21 @@ test "ABI window and compositor native bindings" {
         Value{ .integer = 0x00FF_FFFF },
         Value{ .integer = 0x0000_0000 },
     };
-    _ = try nativeSysWindowDrawString(&vm, &dstr_args);
+    _ = try window_abi.nativeSysWindowDrawString(&vm, &dstr_args);
 
     var flush_args = [_]Value{};
-    const flush_val = try nativeSysCompositorFlush(&vm, &flush_args);
+    const flush_val = try window_abi.nativeSysCompositorFlush(&vm, &flush_args);
     try std.testing.expect(flush_val.boolean);
 
-    const ptr_val = try nativeSysPointerRead(&vm, &flush_args);
+    const ptr_val = try window_abi.nativeSysPointerRead(&vm, &flush_args);
     try std.testing.expect(ptr_val.integer != -1);
 
     var focus_args = [_]Value{Value{ .integer = 1 }};
-    const focus_val = try nativeSysWindowFocus(&vm, &focus_args);
+    const focus_val = try window_abi.nativeSysWindowFocus(&vm, &focus_args);
     try std.testing.expect(focus_val.boolean);
 
     var close_args = [_]Value{Value{ .integer = 1 }};
-    const close_val = try nativeSysWindowClose(&vm, &close_args);
+    const close_val = try window_abi.nativeSysWindowClose(&vm, &close_args);
     try std.testing.expect(close_val.boolean);
 }
 

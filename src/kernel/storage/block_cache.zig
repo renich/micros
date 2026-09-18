@@ -91,6 +91,7 @@ pub const BlockCache = struct {
                 entry.dirty = false;
             }
         }
+        try d.flush();
     }
 
     fn tick(self: *BlockCache) u64 {
