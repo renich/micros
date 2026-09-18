@@ -2,7 +2,7 @@ Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)
 ====================================================================
 
 :Objective: Excise the GOP framebuffer double backbuffer, AABB dirty rectangle blitter, window manager, and input ingress from Ring 0 microkernel memory into an isolated userland display server actor (``gopd``), and integrate PS/2 mouse and baseline xHCI USB HID pointer/keyboard parsing.
-:Status: Scheduled
+:Status: Completed & Verified
 :Specification: SPEC-TECH-COMPOSITOR-002
 :Traced Stories: [US-REN-001], [US-REN-006], [US-GEM-001], [US-GEM-006], [US-GEM-010]
 
