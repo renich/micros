@@ -39,6 +39,7 @@ Technical Sub-Specifications
    specs/sovereign-ai-tool-synthesis
    specs/content-addressed-modules
    specs/microkernel-network-decoupling
+   specs/hardware-ring3-syscall
 
 Engineering & Coding Guides
 ===========================
