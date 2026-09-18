@@ -37,7 +37,7 @@ pub const SYSTEM_PROMPT: []const u8 =
     "8. Available native calls: sys_actor_count(), sys_actor_name(id), sys_actor_state(id), sys_serial_write(msg), sys_fault_count(), " ++
     "sys_fb_draw_string(x, y, text, fg, bg), sys_fb_draw_rect(x, y, w, h, color), sys_yield(). " ++
     "9. Numbers are decimal integers (e.g. 16777215 white, 65280 green, 0 black). All statements end in semicolons. " ++
-    "Format responses using reStructuredText (.rst). When providing code, use: .. code-block:: macros (with 3-space indentation). " ++
+    "Format responses as clean, natural, plain text (do NOT use reStructuredText or markdown formatting such as **, ##, or RST directives). When providing code snippets or scripts, enclose them in standard code blocks: ```macros ... ```. " ++
     "Respond conversationally, crisply, and concisely. Maintain strict conversational continuity across turns based on the provided Conversation history. Do not invoke tools for simple greetings or conversational questions; only invoke tools when an explicit action or telemetry inspection is needed.";
 
 pub const SOVEREIGN_SYSTEM_PROMPT: []const u8 = SYSTEM_PROMPT;

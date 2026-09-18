@@ -80,6 +80,14 @@ pub fn readChar() ?u8 {
     return b1;
 }
 
+pub fn readCharTimeout(timeout_cycles: u32) ?u8 {
+    var timeout = timeout_cycles;
+    while (!hasChar() and timeout > 0) : (timeout -= 1) {
+        asm volatile ("pause");
+    }
+    return readChar();
+}
+
 pub fn writeRawChar(c: u8) void {
     if (builtin.is_test) return;
     var timeout: u32 = 100_000;
@@ -239,4 +247,8 @@ test "serial Latin-1 and UTF-8 Spanish roundtrip" {
     const len_a = encodeLatin1ToUtf8('A', &out);
     try std.testing.expectEqual(@as(usize, 1), len_a);
     try std.testing.expectEqual(@as(u8, 'A'), out[0]);
+}
+
+test "serial readCharTimeout returns null when no char available in test" {
+    try std.testing.expectEqual(@as(?u8, null), readCharTimeout(10));
 }

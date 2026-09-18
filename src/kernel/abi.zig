@@ -345,11 +345,7 @@ fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 var ai_prompt_resp_buf: [8192]u8 = undefined;
 
-fn decodeSerialEscape() ?i64 {
-    if (!serial.hasChar()) return null;
-    const b2 = serial.readChar() orelse return null;
-    if (b2 != '[') return @as(i64, b2);
-    const b3 = serial.readChar() orelse return null;
+fn decodeAnsiParam(b3: u8) ?i64 {
     return switch (b3) {
         'A' => ps2_mod.KeyCode.UP,
         'B' => ps2_mod.KeyCode.DOWN,
@@ -358,11 +354,44 @@ fn decodeSerialEscape() ?i64 {
         'H' => ps2_mod.KeyCode.HOME,
         'F' => ps2_mod.KeyCode.END,
         '3' => blk: {
-            _ = serial.readChar();
+            _ = serial.readCharTimeout(30_000);
             break :blk ps2_mod.KeyCode.DELETE;
+        },
+        '4', '8' => blk: {
+            _ = serial.readCharTimeout(30_000);
+            break :blk ps2_mod.KeyCode.END;
+        },
+        '5' => blk: {
+            _ = serial.readCharTimeout(30_000);
+            break :blk ps2_mod.KeyCode.PAGE_UP;
+        },
+        '6' => blk: {
+            _ = serial.readCharTimeout(30_000);
+            break :blk ps2_mod.KeyCode.PAGE_DOWN;
         },
         else => null,
     };
+}
+
+fn decodeSerialEscape() ?i64 {
+    const b2 = serial.readCharTimeout(30_000) orelse return null;
+    if (b2 == 'O') {
+        const b3 = serial.readCharTimeout(30_000) orelse return null;
+        return decodeAnsiParam(b3);
+    }
+    if (b2 != '[') return @as(i64, b2);
+    const b3 = serial.readCharTimeout(30_000) orelse return null;
+    if (b3 == '1' or b3 == '7') {
+        const b4 = serial.readCharTimeout(30_000) orelse return ps2_mod.KeyCode.HOME;
+        if (b4 == '~') return ps2_mod.KeyCode.HOME;
+        if (b4 == ';') {
+            _ = serial.readCharTimeout(30_000);
+            const b6 = serial.readCharTimeout(30_000) orelse return null;
+            return decodeAnsiParam(b6);
+        }
+        return null;
+    }
+    return decodeAnsiParam(b3);
 }
 
 fn nativeSysSerialRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -945,4 +974,14 @@ test "ABI window and compositor native bindings" {
     var close_args = [_]Value{Value{ .integer = 1 }};
     const close_val = try nativeSysWindowClose(&vm, &close_args);
     try std.testing.expect(close_val.boolean);
+}
+
+test "decodeAnsiParam maps escape sequence characters to keycodes" {
+    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.UP), decodeAnsiParam('A'));
+    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.DOWN), decodeAnsiParam('B'));
+    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.RIGHT), decodeAnsiParam('C'));
+    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.LEFT), decodeAnsiParam('D'));
+    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.HOME), decodeAnsiParam('H'));
+    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.END), decodeAnsiParam('F'));
+    try std.testing.expectEqual(@as(?i64, null), decodeAnsiParam('Z'));
 }
