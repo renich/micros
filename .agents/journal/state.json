@@ -1,6 +1,6 @@
 {
   "current_phase": 5,
   "journal_version": "0.2.0",
-  "objective": "Phase 8: Autonomous Peer-to-Peer Federation & Distributed CAS - Milestone 31: Distributed CAS & Merkle Sync",
+  "objective": "Phase 8: Autonomous Peer-to-Peer Federation & Distributed CAS - Milestone 32: Cryptographic Capability Delegation & Remote Actor Compute",
   "pjp_version": "0.10.1"
 }

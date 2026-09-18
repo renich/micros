@@ -2,7 +2,7 @@ Phase 8: Autonomous Peer-to-Peer Federation & Distributed CAS
 ============================================================
 
 :Objective: Expand MicrOS from an isolated single-node operating system into a decentralized, sovereign peer-to-peer compute and storage mesh communicating over mutual TLS and Noise protocols without centralized cloud providers or registries.
-:Status: In Progress
+:Status: Completed
 :Specifications: `SPEC-TECH-P2P-001`, `SPEC-TECH-P2P-002`, `SPEC-TECH-P2P-003`
 :Critical Path: M30 -> M31 -> M32
 
@@ -23,7 +23,7 @@ Milestones & Deliverables
    - **Blocked By**: M30.
    - **Unblocks**: M32, Phase 9 (Module Federation).
 
-* **Milestone 32: Cryptographic Capability Delegation & Remote Actor Compute** [SCHEDULED]
+* **Milestone 32: Cryptographic Capability Delegation & Remote Actor Compute** [COMPLETED]
    - **Cryptographic Capability Tokens**: Implement attenuated, signed capability tokens (Macaroons/Ed25519) with monotonic expiration for cross-node operations.
    - **Remote Actor Dispatch**: Spawn and supervise sandboxed actors on remote cluster nodes with transparent network-boundary IPC message forwarding.
    - **Blocked By**: M31.
