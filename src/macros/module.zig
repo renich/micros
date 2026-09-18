@@ -203,7 +203,10 @@ pub const ModuleResolver = struct {
             .chunk = ch,
         });
 
-        try self.compileStatements(source, ch);
+        self.compileStatements(source, ch) catch |err| {
+            _ = self.entries.remove(hash);
+            return err;
+        };
 
         var exports_list: std.ArrayList(eval.Dict.Entry) = .empty;
         defer exports_list.deinit(self.allocator);
@@ -362,4 +365,27 @@ test "ModuleResolver end-to-end import and method invocation" {
     const res = vm.globals.get("res");
     try testing.expect(res != null);
     try testing.expectEqual(@as(i64, 42), res.?.integer);
+}
+
+test "ModuleResolver failed compile does not poison cache" {
+    const testing = std.testing;
+    var resolver = ModuleResolver.init(testing.allocator);
+    defer resolver.deinit();
+
+    const bad_src = "export fn syntax_error( { return; }";
+    try resolver.registerVirtualSource("bad.mx", bad_src);
+
+    var dummy_ch = Chunk.init();
+    defer dummy_ch.deinit(testing.allocator);
+    var vm = try vm_mod.VM.init(testing.allocator, &dummy_ch);
+    defer vm.deinit();
+
+    // First attempt fails with parse/syntax error
+    const failed = if (resolver.importModule(&vm, "bad.mx")) |_| false else |_| true;
+    try testing.expect(failed);
+
+    // Cache must NOT contain "bad.mx" with .compiling state
+    var hash: [HASH_SIZE]u8 = undefined;
+    std.crypto.hash.Blake3.hash("bad.mx", &hash, .{});
+    try testing.expect(!resolver.entries.contains(hash));
 }

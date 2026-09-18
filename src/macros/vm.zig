@@ -311,9 +311,14 @@ pub const VM = struct {
         if (constant != .function) return InterpretError.RuntimeError;
 
         var closure = try self.allocator.create(eval.Closure);
+        errdefer self.allocator.destroy(closure);
+
         closure.function = try self.allocator.create(eval.Function);
+        errdefer self.allocator.destroy(closure.function);
         closure.function.* = constant.function;
+
         closure.upvalues = try self.allocator.alloc(*eval.Upvalue, constant.function.upvalue_count);
+        errdefer self.allocator.free(closure.upvalues);
 
         var i: usize = 0;
         while (i < closure.function.upvalue_count) : (i += 1) {

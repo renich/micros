@@ -221,6 +221,9 @@ fn unpackObjects(
 ) !usize {
     var offset: usize = git_pack.PACK_HEADER_SIZE;
     var count: usize = 0;
+    errdefer {
+        for (0..count) |i| allocator.free(parsed_objs[i].data);
+    }
     while (count < obj_count and count < MAX_OBJECTS_PER_PACK) {
         if (offset >= pack_data.len) break;
         const obj_hdr = git_pack.parseObjectHeader(pack_data[offset..]) orelse return error.BadObjectHeader;

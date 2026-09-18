@@ -87,6 +87,7 @@ fn setGate(vec: u8, isr_addr: u64, flags: u8) void {
 }
 
 pub const ExceptionStackFrame = extern struct {
+    vector: u64,
     error_code: u64,
     rip: u64,
     cs: u64,
@@ -102,7 +103,9 @@ export fn childFaultTrampoline() noreturn {
 
 fn handleRootPanic(cr2: u64, frame: *const ExceptionStackFrame) noreturn {
     serial.writeString("\n[FATAL CPU EXCEPTION IN ACTOR 0]\n");
-    serial.writeString("[exception] CR2: 0x");
+    serial.writeString("[exception] VEC: 0x");
+    serial.writeHex(frame.vector);
+    serial.writeString(" CR2: 0x");
     serial.writeHex(cr2);
     serial.writeString("\n[exception] RIP: 0x");
     serial.writeHex(frame.rip);
@@ -119,7 +122,9 @@ fn handleRootPanic(cr2: u64, frame: *const ExceptionStackFrame) noreturn {
 fn logSupervisorTrap(actor_id: u32, rip: u64, cr2: u64, frame: *const ExceptionStackFrame) void {
     serial.writeString("\n[SUPERVISOR TRAP] Intercepted fault in Child Actor ");
     serial.writeHex(actor_id);
-    serial.writeString(" at RIP 0x");
+    serial.writeString(" (vector: 0x");
+    serial.writeHex(frame.vector);
+    serial.writeString(") at RIP 0x");
     serial.writeHex(rip);
     serial.writeString(" (CR2: 0x");
     serial.writeHex(cr2);
@@ -144,7 +149,7 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
 
     const fault = supervisor_mod.FaultFrame{
         .actor_id = current_actor_id,
-        .vector = supervisor_mod.FaultVector.GENERAL_PROTECTION,
+        .vector = @truncate(frame.vector),
         .error_code = @truncate(frame.error_code),
         .rip = rip,
         .rsp = frame.rsp,
@@ -170,21 +175,35 @@ fn isErrorCodeVector(vec: u8) bool {
     };
 }
 
-export fn exceptionHandlerWithError() callconv(.naked) void {
-    asm volatile (
-        \\ jmp *%[handler]
-        :
-        : [handler] "r" (&commonExceptionHandler),
-    );
-}
-
-export fn exceptionHandlerNoError() callconv(.naked) void {
-    asm volatile (
-        \\ pushq $0
-        \\ jmp *%[handler]
-        :
-        : [handler] "r" (&commonExceptionHandler),
-    );
+fn makeIsr(comptime vec: u8) *const fn () callconv(.naked) void {
+    if (comptime isErrorCodeVector(vec)) {
+        const Gen = struct {
+            fn isr() callconv(.naked) void {
+                asm volatile (
+                    \\ pushq %[v]
+                    \\ jmp *%[handler]
+                    :
+                    : [v] "n" (@as(u64, vec)),
+                      [handler] "r" (&commonExceptionHandler),
+                );
+            }
+        };
+        return &Gen.isr;
+    } else {
+        const Gen = struct {
+            fn isr() callconv(.naked) void {
+                asm volatile (
+                    \\ pushq $0
+                    \\ pushq %[v]
+                    \\ jmp *%[handler]
+                    :
+                    : [v] "n" (@as(u64, vec)),
+                      [handler] "r" (&commonExceptionHandler),
+                );
+            }
+        };
+        return &Gen.isr;
+    }
 }
 
 export fn commonExceptionHandler() callconv(.naked) void {
@@ -212,7 +231,7 @@ export fn commonExceptionHandler() callconv(.naked) void {
         \\ pop %%rdx
         \\ pop %%rcx
         \\ pop %%rax
-        \\ addq $8, %%rsp
+        \\ addq $16, %%rsp
         \\ iretq
         :
         : [handler] "r" (&exceptionHandlerZig),
@@ -310,13 +329,8 @@ pub fn init() void {
         entry.* = std.mem.zeroes(IdtEntry);
     }
 
-    var i: u8 = 0;
-    while (i < 32) : (i += 1) {
-        const handler_addr = if (isErrorCodeVector(i))
-            @intFromPtr(&exceptionHandlerWithError)
-        else
-            @intFromPtr(&exceptionHandlerNoError);
-        setGate(i, handler_addr, 0x8E);
+    inline for (0..32) |i| {
+        setGate(i, @intFromPtr(makeIsr(i)), 0x8E);
     }
 
     const apic_timer_addr = @intFromPtr(&apicTimerInterruptHandler);
@@ -347,4 +361,16 @@ test "IDT APIC timer gate 32 and interrupt vector layout" {
         (@as(u64, gate32.offset_mid) << 16) |
         (@as(u64, gate32.offset_high) << 32);
     try std.testing.expectEqual(apic_timer_addr, full_offset);
+}
+
+test "IDT exception gates have distinct vector ISR handlers" {
+    init();
+    const de_isr = @intFromPtr(makeIsr(0));
+    const ud_isr = @intFromPtr(makeIsr(6));
+    const gp_isr = @intFromPtr(makeIsr(13));
+    const pf_isr = @intFromPtr(makeIsr(14));
+
+    try std.testing.expect(de_isr != ud_isr);
+    try std.testing.expect(gp_isr != pf_isr);
+    try std.testing.expect(ud_isr != pf_isr);
 }

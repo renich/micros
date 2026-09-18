@@ -145,6 +145,20 @@ pub const Actor = struct {
         }
         return false;
     }
+
+    pub fn authorizesPhysicalExtent(self: *const Actor, phys: u64, size: u64, required_rights: u16) bool {
+        if (self.id == GENESIS_ACTOR_ID) return true;
+        var i: usize = 0;
+        while (i < self.cspace.capacity) : (i += 1) {
+            const entry = self.cspace.entries[i];
+            if (entry.isValid() and entry.cap_type == .memory_extent and entry.hasRight(required_rights)) {
+                if (phys >= entry.data_addr and (phys + size) <= (entry.data_addr + entry.data_size)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 };
 
 pub const ActorRegistry = struct {
@@ -349,4 +363,29 @@ test "Capability delegation between supervisor and child actor" {
         cspace_mod.CapError.PermissionDenied,
         supervisor.cspace.grant(sup_handle, child.cspace, Rights.EXECUTE),
     );
+}
+
+test "Actor physical memory extent capability authorization" {
+    const allocator = std.testing.allocator;
+    var actor = try Actor.init(allocator, 42, "sandboxed_actor", 32, 0x1000);
+    defer actor.deinit(allocator);
+
+    const mem_cap = Capability{
+        .cap_type = .memory_extent,
+        .rights = Rights.READ | Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0x20000,
+        .data_size = 8192, // 0x20000 .. 0x22000
+    };
+    _ = try actor.insertCap(mem_cap);
+
+    // Within bounds: authorized
+    try std.testing.expect(actor.authorizesPhysicalExtent(0x20000, 4096, Rights.WRITE));
+    try std.testing.expect(actor.authorizesPhysicalExtent(0x21000, 4096, Rights.WRITE));
+
+    // Outside bounds: unauthorized
+    try std.testing.expect(!actor.authorizesPhysicalExtent(0x1F000, 4096, Rights.WRITE));
+    try std.testing.expect(!actor.authorizesPhysicalExtent(0x22000, 4096, Rights.WRITE));
+    // Overlapping boundary overflow: unauthorized
+    try std.testing.expect(!actor.authorizesPhysicalExtent(0x21000, 8192, Rights.WRITE));
 }

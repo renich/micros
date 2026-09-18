@@ -432,9 +432,59 @@ fn resolveOrCreatePath(
     return error.EmptyPath;
 }
 
+fn freeClusterChain(dev: *block.BlockDevice, geom: *const Geometry, start_cluster: u32) !void {
+    var curr = start_cluster;
+    while (curr >= 2 and curr < FAT_CLUSTER_BAD) {
+        const next = try readFatEntry(dev, geom, curr);
+        try writeFatEntry(dev, geom, curr, FAT_CLUSTER_FREE);
+        curr = next;
+    }
+}
+
+fn deleteEntryInSector(
+    dev: *block.BlockDevice,
+    geom: *const Geometry,
+    sec: *[SECTOR_SIZE]u8,
+    sec_lba: u64,
+    name83: ShortName,
+) !bool {
+    var offset: usize = 0;
+    while (offset < SECTOR_SIZE) : (offset += @sizeOf(DirEntry)) {
+        if (sec[offset] == ENTRY_END) return false;
+        if (sec[offset] == ENTRY_FREE) continue;
+        const entry: *DirEntry = @ptrCast(@alignCast(&sec[offset]));
+        var full_name: ShortName = undefined;
+        @memcpy(full_name[0..8], &entry.name);
+        @memcpy(full_name[8..11], &entry.ext);
+        if (std.mem.eql(u8, &full_name, &name83)) {
+            const first_clus = entry.getCluster();
+            sec[offset] = ENTRY_FREE;
+            try dev.writeSector(sec_lba, sec);
+            try freeClusterChain(dev, geom, first_clus);
+            return true;
+        }
+    }
+    return false;
+}
+
+fn deleteExistingFile(dev: *block.BlockDevice, geom: *const Geometry, parent_cluster: u32, name83: ShortName) !void {
+    var curr_cluster = parent_cluster;
+    while (curr_cluster < FAT_CLUSTER_BAD) {
+        const base_lba = geom.clusterToLba(curr_cluster);
+        var sec_idx: usize = 0;
+        while (sec_idx < SECTORS_PER_CLUSTER) : (sec_idx += 1) {
+            var sec: [SECTOR_SIZE]u8 align(@alignOf(DirEntry)) = undefined;
+            try dev.readSector(base_lba + sec_idx, &sec);
+            if (try deleteEntryInSector(dev, geom, &sec, base_lba + sec_idx, name83)) return;
+        }
+        curr_cluster = try readFatEntry(dev, geom, curr_cluster);
+    }
+}
+
 pub fn writeFile(dev: *block.BlockDevice, path: []const u8, data: []const u8) !void {
     const geom = try calculateGeometry(dev.total_sectors);
     const target = try resolveOrCreatePath(dev, &geom, path);
+    try deleteExistingFile(dev, &geom, target.parent_cluster, target.target_name);
 
     const needed_clusters: usize = if (data.len == 0) 1 else (data.len + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
     var first_clus: ?u32 = null;
@@ -621,6 +671,13 @@ test "fat32 sparse block mock format and file roundtrip" {
 
     const read_back = try readFile(dev, "/EFI/BOOT/BOOTX64.EFI", std.testing.allocator);
     defer std.testing.allocator.free(read_back);
-
     try std.testing.expectEqualStrings(test_payload, read_back);
+
+    // Overwrite existing file with updated payload
+    const updated_payload = "MZP_MICROS_SOVEREIGN_UEFI_UPDATED_SLOT_B_BINARY_VALIDATED";
+    try writeFile(dev, "/EFI/BOOT/BOOTX64.EFI", updated_payload);
+
+    const read_updated = try readFile(dev, "/EFI/BOOT/BOOTX64.EFI", std.testing.allocator);
+    defer std.testing.allocator.free(read_updated);
+    try std.testing.expectEqualStrings(updated_payload, read_updated);
 }
