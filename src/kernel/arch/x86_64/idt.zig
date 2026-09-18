@@ -12,6 +12,7 @@ const supervisor_mod = @import("../../supervisor.zig");
 const actor_mod = @import("../../actor.zig");
 const apic = @import("apic.zig");
 const smp = @import("../../sched/smp.zig");
+const gdt = @import("gdt.zig");
 
 const io = @import("io.zig");
 
@@ -178,6 +179,10 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     frame.rip = @intFromPtr(&childFaultTrampoline);
     frame.cs = 0x08;
     frame.ss = 0x10;
+    const tss_rsp0 = gdt.getTss().rsp0;
+    if (tss_rsp0 != 0) {
+        frame.rsp = tss_rsp0;
+    }
     frame.rflags &= ~@as(u64, 0x200);
     core.current_actor_id = 0;
     current_actor_id = 0;
@@ -416,9 +421,13 @@ test "IDT exceptionHandlerZig transitions child actor to faulted in registry" {
         .ss = 0x1B,
     };
 
+    gdt.setKernelStack(0xFFFF_8000_0001_0000);
+    defer gdt.setKernelStack(0);
+
     current_actor_id = child.id;
     exceptionHandlerZig(&frame);
 
     try std.testing.expectEqual(actor_mod.ActorState.faulted, child.state);
     try std.testing.expectEqual(@intFromPtr(&childFaultTrampoline), frame.rip);
+    try std.testing.expectEqual(@as(u64, 0xFFFF_8000_0001_0000), frame.rsp);
 }

@@ -11,6 +11,7 @@ pub const PAGE_USER: u64 = 1 << 2;
 pub const PAGE_HUGE: u64 = 1 << 7;
 pub const PAGE_ANON: u64 = 1 << 9;
 pub const PAGE_MMIO: u64 = 1 << 10;
+pub const PAGE_PINNED: u64 = 1 << 11;
 pub const PAGE_NO_EXECUTE: u64 = 1 << 63;
 
 pub const PageTable = extern struct {
@@ -79,6 +80,7 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return false;
 
     const pte = pt.entries[pt_idx];
+    if ((pte & PAGE_PINNED) != 0) return false;
     if ((pte & PAGE_ANON) != 0 and (pte & PAGE_MMIO) == 0) {
         pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
     }
@@ -166,7 +168,7 @@ pub fn virtToPhys(pml4_phys: u64, virt: u64) ?u64 {
     return (pte & 0x000F_FFFF_FFFF_F000) | (virt & 0xFFF);
 }
 
-fn clearPageAnon(pml4_phys: u64, virt: u64) void {
+fn setPagePinned(pml4_phys: u64, virt: u64) void {
     const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
     const pml4e = pml4.entries[(virt >> 39) & 0x1FF];
     if ((pml4e & PAGE_PRESENT) == 0) return;
@@ -183,7 +185,27 @@ fn clearPageAnon(pml4_phys: u64, virt: u64) void {
     const pt_idx = (virt >> 12) & 0x1FF;
     if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return;
 
-    pt.entries[pt_idx] &= ~PAGE_ANON;
+    pt.entries[pt_idx] |= PAGE_PINNED;
+}
+
+fn clearPagePinned(pml4_phys: u64, virt: u64) void {
+    const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
+    const pml4e = pml4.entries[(virt >> 39) & 0x1FF];
+    if ((pml4e & PAGE_PRESENT) == 0) return;
+
+    const pdpt: *PageTable = @ptrFromInt((pml4e & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pdpte = pdpt.entries[(virt >> 30) & 0x1FF];
+    if ((pdpte & PAGE_PRESENT) == 0 or (pdpte & PAGE_HUGE) != 0) return;
+
+    const pd: *PageTable = @ptrFromInt((pdpte & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pde = pd.entries[(virt >> 21) & 0x1FF];
+    if ((pde & PAGE_PRESENT) == 0 or (pde & PAGE_HUGE) != 0) return;
+
+    const pt: *PageTable = @ptrFromInt((pde & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pt_idx = (virt >> 12) & 0x1FF;
+    if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return;
+
+    pt.entries[pt_idx] &= ~PAGE_PINNED;
 }
 
 pub fn pinDmaPages(pml4_phys: u64, virt_addr: u64, len_bytes: usize) ?u64 {
@@ -197,9 +219,16 @@ pub fn pinDmaPages(pml4_phys: u64, virt_addr: u64, len_bytes: usize) ?u64 {
     }
     offset = 0;
     while (offset < len_bytes) : (offset += 4096) {
-        clearPageAnon(pml4_phys, virt_addr + offset);
+        setPagePinned(pml4_phys, virt_addr + offset);
     }
     return first_phys;
+}
+
+pub fn unpinDmaPages(pml4_phys: u64, virt_addr: u64, len_bytes: usize) void {
+    var offset: usize = 0;
+    while (offset < len_bytes) : (offset += 4096) {
+        clearPagePinned(pml4_phys, virt_addr + offset);
+    }
 }
 
 pub fn loadPageTable(pml4_phys: u64) void {
@@ -500,7 +529,7 @@ test "vmm unmapPage preserves hardware MMIO physical frames" {
     try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx]);
 }
 
-test "vmm pinDmaPages verifies contiguity and clears PAGE_ANON" {
+test "vmm pinDmaPages sets PAGE_PINNED and rejects unmap until unpinned" {
     var pml4 align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
     var pdpt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
     var pd align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
@@ -530,6 +559,12 @@ test "vmm pinDmaPages verifies contiguity and clears PAGE_ANON" {
     const pinned = pinDmaPages(pml4_phys, test_virt, 8192);
     try std.testing.expect(pinned != null);
     try std.testing.expectEqual(@as(u64, 0x6000), pinned.?);
-    try std.testing.expect((pt.entries[pt_idx] & PAGE_ANON) == 0);
-    try std.testing.expect((pt.entries[pt_idx + 1] & PAGE_ANON) == 0);
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_PINNED) != 0);
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_ANON) != 0);
+
+    try std.testing.expect(!unmapPage(pml4_phys, test_virt));
+
+    unpinDmaPages(pml4_phys, test_virt, 8192);
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_PINNED) == 0);
+    try std.testing.expect(unmapPage(pml4_phys, test_virt));
 }

@@ -222,10 +222,13 @@ pub const AiDaemon = struct {
         var prompt_buf: [1024]u8 = undefined;
         var prompt_len: usize = 0;
 
-        while (!rx.isEmpty() and prompt_len < prompt_buf.len) : (prompt_len += 1) {
+        while (!rx.isEmpty()) {
             const b = rx.readByte() orelse break;
             if (b == 0) break;
-            prompt_buf[prompt_len] = b;
+            if (prompt_len < prompt_buf.len) {
+                prompt_buf[prompt_len] = b;
+                prompt_len += 1;
+            }
         }
 
         var resp_buf: [2048]u8 = undefined;
@@ -290,4 +293,34 @@ test "AiDaemon: SPSC IPC request and response streaming" {
     }
     try std.testing.expect(out_len > 0);
     try std.testing.expect(std.mem.indexOf(u8, out[0..out_len], "MOCK-0001") != null);
+}
+
+test "AiDaemon: oversized prompt drains null terminator without desync" {
+    const null_cap = cap_mod.Capability.NULL_CAP;
+    const cfg = ai_provider.ProviderConfig{
+        .provider_type = .mock,
+        .endpoint = "mock.local",
+        .port = 443,
+        .use_tls = false,
+        .model = "mock-model",
+    };
+
+    var aid = AiDaemon.init(std.testing.allocator, cfg, null, null_cap);
+    var rx_ring = SpscRingBuffer.init();
+    var tx_ring = SpscRingBuffer.init();
+    aid.setRings(&rx_ring, &tx_ring);
+
+    // Push oversized prompt (> 1024 bytes) terminated by 0
+    for (0..1200) |_| _ = rx_ring.writeByte('A');
+    _ = rx_ring.writeByte(0);
+
+    // Push second normal prompt
+    for ("second") |b| _ = rx_ring.writeByte(b);
+    _ = rx_ring.writeByte(0);
+
+    const first_len = aid.processClientIpc();
+    try std.testing.expect(first_len > 0);
+
+    const second_len = aid.processClientIpc();
+    try std.testing.expect(second_len > 0);
 }
