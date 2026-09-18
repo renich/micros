@@ -207,6 +207,16 @@ pub const HyperTree = struct {
                 try self.removeNode(@intCast(i + 1));
             }
         }
+        if (self.node_count == 0) {
+            self.payload_used = 0;
+        }
+    }
+
+    pub fn clear(self: *HyperTree) void {
+        self.node_count = 0;
+        self.payload_used = 0;
+        self.focused_node_id = null;
+        @memset(&self.node_active, false);
     }
 
     pub fn hitTest(self: *const HyperTree, px: i16, py: i16) ?u32 {
@@ -329,4 +339,32 @@ test "HyperTree insertion, mutation, hit-testing, and dirty damage computation" 
     try tree.removeNode(btn_id);
     try std.testing.expectEqual(@as(usize, 1), tree.node_count);
     try std.testing.expect(tree.getNode(btn_id) == null);
+
+    // Remove root node and verify payload_used reset
+    try tree.removeNode(root_id);
+    try std.testing.expectEqual(@as(usize, 0), tree.node_count);
+    try std.testing.expectEqual(@as(usize, 0), tree.payload_used);
+
+    // Test clear()
+    _ = try tree.insertNode(HyperNode{
+        .id = 0,
+        .parent_id = 0,
+        .node_type = .container,
+        .flags = 0,
+        .layout_dir = 0,
+        .reserved = 0,
+        .x = 0,
+        .y = 0,
+        .width = 10,
+        .height = 10,
+        .color_fg = 0,
+        .color_bg = 0,
+        .payload_len = 0,
+        .payload_offset = 0,
+    }, "sample");
+    try std.testing.expectEqual(@as(usize, 1), tree.node_count);
+    try std.testing.expect(tree.payload_used > 0);
+    tree.clear();
+    try std.testing.expectEqual(@as(usize, 0), tree.node_count);
+    try std.testing.expectEqual(@as(usize, 0), tree.payload_used);
 }

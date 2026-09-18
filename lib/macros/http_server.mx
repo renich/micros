@@ -9,7 +9,13 @@ fn http_send_response(conn, status_code, status_text, content_type, body) {
     resp = resp + "Content-Length: " + int_to_str(len(body)) + "\r\n";
     resp = resp + "Connection: close\r\n\r\n";
     resp = resp + body;
-    sys_net_send(conn, resp);
+    sent = 0;
+    while (sent < len(resp)) {
+        n = sys_net_send(conn, substr(resp, sent, len(resp)));
+        if (n <= 0) { break; }
+        sent = sent + n;
+        sys_yield();
+    }
     sys_net_close(conn);
     return 0;
 }
@@ -21,7 +27,13 @@ fn http_send_git_response(conn, content_type, body) {
     resp = resp + "Content-Length: " + int_to_str(len(body)) + "\r\n";
     resp = resp + "Connection: close\r\n\r\n";
     resp = resp + body;
-    sys_net_send(conn, resp);
+    sent = 0;
+    while (sent < len(resp)) {
+        n = sys_net_send(conn, substr(resp, sent, len(resp)));
+        if (n <= 0) { break; }
+        sent = sent + n;
+        sys_yield();
+    }
     sys_net_close(conn);
     return 0;
 }

@@ -175,8 +175,11 @@ pub fn nativeSysCatalogList(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const prefix = if (args.len >= 1 and args[0] == .string) args[0].string else "";
     if (!checkCallerAuthority(.storage_device, Rights.READ)) return Value{ .string = "" };
 
-    var scratch: [8192]u8 = undefined;
-    const n = global_catalog.formatList(prefix, &scratch) catch return Value{ .string = "" };
+    const max_list_size = manifest_mod.MAX_WORKSPACE_ENTRIES * 160;
+    const scratch = vm.allocator.alloc(u8, max_list_size) catch return Value{ .string = "" };
+    defer vm.allocator.free(scratch);
+
+    const n = global_catalog.formatList(prefix, scratch) catch return Value{ .string = "" };
     const duped = try vm.allocator.dupe(u8, scratch[0..n]);
     return Value{ .string = duped };
 }

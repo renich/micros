@@ -42,6 +42,7 @@ pub const Actor = struct {
     page_table_base: u64,
     restart_count: u32,
     fiber_ctx: ?*anyopaque,
+    source: ?[]const u8 = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -61,20 +62,17 @@ pub const Actor = struct {
         cspace_capacity: usize,
         page_table_base: u64,
     ) !*Actor {
-        if (page_table_base != 0 and (page_table_base & 0xFFF) != 0) {
-            return error.UnalignedPageTable;
-        }
-
-        const actor = try allocator.create(Actor);
-        errdefer allocator.destroy(actor);
+        if (id >= MAX_ACTORS) return ActorError.ActorNotFound;
         const cspace = try CSpace.init(allocator, cspace_capacity);
         errdefer cspace.deinit(allocator);
 
-        var name_buf: [32]u8 = [_]u8{0} ** 32;
+        const actor = try allocator.create(Actor);
+        errdefer allocator.destroy(actor);
+        var name_buf = [_]u8{0} ** 32;
         const copy_len = @min(name.len, 32);
         @memcpy(name_buf[0..copy_len], name[0..copy_len]);
 
-        actor.* = Actor{
+        actor.* = .{
             .id = id,
             .name = name_buf,
             .name_len = copy_len,
@@ -84,11 +82,16 @@ pub const Actor = struct {
             .page_table_base = page_table_base,
             .restart_count = 0,
             .fiber_ctx = null,
+            .source = null,
         };
         return actor;
     }
 
     pub fn deinit(self: *Actor, allocator: std.mem.Allocator) void {
+        if (self.source) |src| {
+            allocator.free(src);
+            self.source = null;
+        }
         self.cspace.deinit(allocator);
         allocator.destroy(self);
     }
@@ -240,6 +243,7 @@ pub const ActorRegistry = struct {
     }
 
     pub var page_table_destructor: ?*const fn (u64) void = null;
+    pub var actor_destructor: ?*const fn (std.mem.Allocator, *Actor) void = null;
 
     pub fn terminate(self: *ActorRegistry, allocator: std.mem.Allocator, id: u32) ActorError!void {
         if (id >= MAX_ACTORS) return ActorError.ActorNotFound;
@@ -258,6 +262,9 @@ pub const ActorRegistry = struct {
                 destroy_fn(actor.page_table_base);
             }
             actor.page_table_base = 0;
+        }
+        if (actor_destructor) |destruct_fn| {
+            destruct_fn(allocator, actor);
         }
         actor.deinit(allocator);
     }

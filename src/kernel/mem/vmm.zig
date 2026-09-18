@@ -268,6 +268,7 @@ pub fn map_pages(addr: ?*anyopaque, length: usize, flags: u64) !*anyopaque {
     } else blk: {
         const span: u64 = @as(u64, @intCast(num_pages)) * 4096;
         const v = next_heap_vaddr.fetchAdd(span, .monotonic);
+        if ((flags & PAGE_USER) != 0 and v + span > 0x0000_8000_0000_0000) return error.InvalidArgs;
         break :blk v;
     };
 

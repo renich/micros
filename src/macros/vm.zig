@@ -57,6 +57,7 @@ pub const VM = struct {
     yield_hook: ?*const fn (vm: *VM) anyerror!void = null,
     module_resolver: ?*module_mod.ModuleResolver = null,
     current_exports: ?*std.ArrayList(eval.Dict.Entry) = null,
+    gc_heap: ?*gc.Heap = null,
 
     pub fn initInPlace(self: *VM, allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !void {
         self.allocator = allocator;
@@ -65,19 +66,24 @@ pub const VM = struct {
         self.ip = 0;
         self.sp = 0;
         self.frame_count = 0;
+        self.globals = std.StringHashMap(Value).init(allocator);
+        self.allocated_keys = .empty;
         self.open_upvalues = null;
         self.last_missing_symbol = null;
         self.instruction_count = 0;
         self.yield_hook = null;
         self.module_resolver = null;
         self.current_exports = null;
-        self.globals = std.StringHashMap(Value).init(allocator);
-        self.allocated_keys = .empty;
+        self.gc_heap = null;
         try builtins.registerBuiltins(self);
     }
 
-    pub fn setModuleResolver(self: *VM, resolver: *module_mod.ModuleResolver) void {
+    pub fn setModuleResolver(self: *VM, resolver: ?*module_mod.ModuleResolver) void {
         self.module_resolver = resolver;
+    }
+
+    pub fn gcAllocator(self: *VM) std.mem.Allocator {
+        return if (self.gc_heap) |h| h.allocator() else self.allocator;
     }
 
     pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !VM {
@@ -121,7 +127,13 @@ pub const VM = struct {
     fn valueReferencesChunk(val: Value, target_ptr: *anyopaque) bool {
         return switch (val) {
             .function => |f| f.chunk == target_ptr,
-            .closure => |c| c.function.chunk == target_ptr,
+            .closure => |c| blk: {
+                if (c.function.chunk == target_ptr) break :blk true;
+                for (c.upvalues) |uv| {
+                    if (valueReferencesChunk(uv.location.*, target_ptr)) break :blk true;
+                }
+                break :blk false;
+            },
             .array => |arr| blk: {
                 for (arr) |item| {
                     if (valueReferencesChunk(item, target_ptr)) break :blk true;
@@ -249,7 +261,7 @@ pub const VM = struct {
             return upvalue.?;
         }
 
-        var created_upvalue = try self.allocator.create(eval.Upvalue);
+        var created_upvalue = try self.gcAllocator().create(eval.Upvalue);
         created_upvalue.location = local;
         created_upvalue.closed = .{ .nil = {} };
         created_upvalue.next = upvalue;
@@ -366,15 +378,16 @@ pub const VM = struct {
         const constant = self.stack[self.sp - 1];
         if (constant != .function) return InterpretError.RuntimeError;
 
-        var closure = try self.allocator.create(eval.Closure);
-        errdefer self.allocator.destroy(closure);
+        const alloc = self.gcAllocator();
+        var closure = try alloc.create(eval.Closure);
+        errdefer alloc.destroy(closure);
 
-        closure.function = try self.allocator.create(eval.Function);
-        errdefer self.allocator.destroy(closure.function);
+        closure.function = try alloc.create(eval.Function);
+        errdefer alloc.destroy(closure.function);
         closure.function.* = constant.function;
 
-        closure.upvalues = try self.allocator.alloc(*eval.Upvalue, constant.function.upvalue_count);
-        errdefer self.allocator.free(closure.upvalues);
+        closure.upvalues = try alloc.alloc(*eval.Upvalue, constant.function.upvalue_count);
+        errdefer alloc.free(closure.upvalues);
 
         var i: usize = 0;
         while (i < closure.function.upvalue_count) : (i += 1) {
@@ -482,14 +495,14 @@ pub const VM = struct {
             try self.push(.{ .integer = a.integer +% b.integer });
         } else if (a == .string and b == .string) {
             const new_len = a.string.len + b.string.len;
-            const new_str = try self.allocator.alloc(u8, new_len);
+            const new_str = try self.gcAllocator().alloc(u8, new_len);
             @memcpy(new_str[0..a.string.len], a.string);
             @memcpy(new_str[a.string.len..], b.string);
             self.sp -= 2;
             try self.push(.{ .string = new_str });
         } else if (a == .array and b == .array) {
             const new_len = a.array.len + b.array.len;
-            const new_arr = try self.allocator.alloc(eval.Value, new_len);
+            const new_arr = try self.gcAllocator().alloc(eval.Value, new_len);
             @memcpy(new_arr[0..a.array.len], a.array);
             @memcpy(new_arr[a.array.len..], b.array);
             self.sp -= 2;
@@ -648,7 +661,7 @@ pub const VM = struct {
     fn execBuildArray(self: *VM) !void {
         const count = self.readByte();
         if (self.sp < count) return InterpretError.StackUnderflow;
-        const new_arr = try self.allocator.alloc(eval.Value, count);
+        const new_arr = try self.gcAllocator().alloc(eval.Value, count);
         var i: usize = 0;
         while (i < count) : (i += 1) {
             new_arr[i] = self.stack[self.sp - count + i];
@@ -676,10 +689,11 @@ pub const VM = struct {
     fn execBuildDict(self: *VM) !void {
         const arg_count = self.readByte();
         if (self.sp < @as(usize, arg_count) * 2) return InterpretError.StackUnderflow;
-        const dict = try self.allocator.create(eval.Dict);
-        errdefer self.allocator.destroy(dict);
-        const entries = try self.allocator.alloc(eval.Dict.Entry, arg_count);
-        errdefer self.allocator.free(entries);
+        const alloc = self.gcAllocator();
+        const dict = try alloc.create(eval.Dict);
+        errdefer alloc.destroy(dict);
+        const entries = try alloc.alloc(eval.Dict.Entry, arg_count);
+        errdefer alloc.free(entries);
 
         var i: usize = 0;
         while (i < arg_count) : (i += 1) {
@@ -724,7 +738,7 @@ pub const VM = struct {
             }
         }
         if (!found) {
-            const new_entries = try self.allocator.alloc(eval.Dict.Entry, obj.dict.entries.len + 1);
+            const new_entries = try self.gcAllocator().alloc(eval.Dict.Entry, obj.dict.entries.len + 1);
             @memcpy(new_entries[0..obj.dict.entries.len], obj.dict.entries);
             new_entries[obj.dict.entries.len] = .{ .key = name_val.string, .value = val };
             obj.dict.entries = new_entries;

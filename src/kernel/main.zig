@@ -18,6 +18,7 @@ const vm_mod = @import("../macros/vm.zig");
 const chunk_mod = @import("../macros/chunk.zig");
 const eval_mod = @import("../macros/eval.zig");
 const fiber_mod = @import("../macros/fiber.zig");
+const gc_mod = @import("../macros/gc.zig");
 const actor_mod = @import("actor.zig");
 const cap_mod = @import("cap/capability.zig");
 const fb_mod = @import("fb.zig");
@@ -90,7 +91,6 @@ var global_block_device: ?block_mod.BlockDevice = null;
 var global_block_cache: ?block_cache_mod.BlockCache = null;
 var global_cas: ?cas_mod.CasEngine = null;
 var global_rebuild: ?rebuild_mod.RebuildEngine = null;
-var global_actor_sources: [actor_mod.MAX_ACTORS]?[]const u8 = [_]?[]const u8{null} ** actor_mod.MAX_ACTORS;
 var global_bundle_data: ?[]const u8 = null;
 
 fn kernelPanic(stage: []const u8) noreturn {
@@ -197,13 +197,7 @@ fn initNetDaemon(allocator: std.mem.Allocator) void {
         .data_addr = if (global_virtio_net != null) @intFromPtr(&global_virtio_net.?) else 0,
         .data_size = if (global_virtio_net != null) @sizeOf(virtio_net_mod.VirtioNetDevice) else 0,
     };
-    const irq_cap = cap_mod.Capability{
-        .cap_type = .irq_endpoint,
-        .rights = cap_mod.Rights.WRITE,
-        .object_id = 11,
-        .data_addr = 0,
-        .data_size = 0,
-    };
+    const irq_cap = cap_mod.Capability{ .cap_type = .irq_endpoint, .rights = cap_mod.Rights.WRITE, .object_id = 11, .data_addr = 0, .data_size = 0 };
     const virt_ptr = if (global_virtio_net != null) &global_virtio_net.? else null;
     global_netd = netd_mod.NetDaemon.init(allocator, virt_ptr, net_cap, irq_cap);
     const netd = &(global_netd orelse return);
@@ -237,13 +231,7 @@ fn initAiDaemon(allocator: std.mem.Allocator) void {
         .model = config.ai_model,
         .api_key = config.ai_api_key,
     };
-    const ipc_cap = cap_mod.Capability{
-        .cap_type = .ipc_ring,
-        .rights = cap_mod.Rights.ALL,
-        .object_id = 1,
-        .data_addr = @intFromPtr(&global_ai_req_ring),
-        .data_size = @sizeOf(ipc_mod.SpscRingBuffer),
-    };
+    const ipc_cap = cap_mod.Capability{ .cap_type = .ipc_ring, .rights = cap_mod.Rights.ALL, .object_id = 1, .data_addr = @intFromPtr(&global_ai_req_ring), .data_size = @sizeOf(ipc_mod.SpscRingBuffer) };
     const net_ptr = if (global_netd != null) &global_netd.? else null;
     global_aid = aid_mod.AiDaemon.init(allocator, ai_cfg, net_ptr, ipc_cap);
     if (global_aid) |*aid_inst| {
@@ -314,6 +302,11 @@ fn actorThread(ctx: ?*anyopaque) void {
     const actor = act_ctx.actor;
     var vm = act_ctx.vm;
     defer {
+        if (vm.gc_heap) |h| {
+            h.deinit();
+            act_ctx.allocator.destroy(h);
+            vm.gc_heap = null;
+        }
         vm.deinit();
         act_ctx.allocator.destroy(vm);
         act_ctx.allocator.destroy(act_ctx);
@@ -371,6 +364,11 @@ fn logActorSpawn(id: u32, name: []const u8) void {
     serial.writeString("\x1b[97m) online\x1b[0m\n");
 }
 
+fn runVmCollect(ctx: *anyopaque) void {
+    const vm_inst: *vm_mod.VM = @ptrCast(@alignCast(ctx));
+    if (vm_inst.gc_heap) |h| vm_inst.collect(h);
+}
+
 fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *chunk_mod.Chunk) !void {
     const child_vm = try allocator.create(vm_mod.VM);
     try child_vm.initInPlace(allocator, chunk);
@@ -378,6 +376,12 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
         child_vm.deinit();
         allocator.destroy(child_vm);
     }
+    const heap = try allocator.create(gc_mod.Heap);
+    heap.* = gc_mod.Heap.init(allocator);
+    heap.gc_callback = runVmCollect;
+    heap.gc_ctx = child_vm;
+    child_vm.gc_heap = heap;
+
     try abi_mod.registerSyscalls(child_vm);
     const act_ctx = try allocator.create(ActorThreadContext);
     act_ctx.* = .{
@@ -434,12 +438,10 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
         if (pml4_phys != 0) vmm.destroyActorAddressSpace(pml4_phys);
         global_registry.terminate(allocator, child.id) catch {};
     }
+    child.source = persistent_source;
 
     try delegateInitialCaps(child, name, persistent_source);
     try attachActorVm(allocator, child, chunk);
-    if (child.id < actor_mod.MAX_ACTORS) {
-        global_actor_sources[child.id] = persistent_source;
-    }
 
     logActorSpawn(child.id, name);
     return child.id;
@@ -462,8 +464,8 @@ fn casGetBridge(hex_hash: []const u8, out_buf: []u8) anyerror!usize {
 
 fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     if (global_cas == null) return error.NoStorage;
-    if (actor_id >= actor_mod.MAX_ACTORS) return error.ActorNotFound;
-    const src = global_actor_sources[actor_id] orelse return error.NoSourceRecorded;
+    const actor = global_registry.get(actor_id) orelse return error.ActorNotFound;
+    const src = actor.source orelse return error.NoSourceRecorded;
     const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.actor_source, src, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
@@ -805,7 +807,7 @@ fn getCurrentActorBridge() ?*actor_mod.Actor {
     return null;
 }
 
-fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*chunk_mod.Chunk {
+fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo, genesis: *actor_mod.Actor) !*chunk_mod.Chunk {
     const raw_bundle: []const u8 = if (boot_info.bundle_base != 0 and boot_info.bundle_size != 0)
         @as([*]const u8, @ptrFromInt(boot_info.bundle_base))[0..boot_info.bundle_size]
     else
@@ -819,7 +821,7 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*
 
     const maybe_source = reader.findData("init.mx") orelse reader.findData("harness.mx");
     if (maybe_source) |source| {
-        global_actor_sources[actor_mod.GENESIS_ACTOR_ID] = source;
+        genesis.source = allocator.dupe(u8, source) catch null;
         const chunk = try allocator.create(chunk_mod.Chunk);
         chunk.* = chunk_mod.Chunk.init();
         errdefer {
@@ -844,13 +846,7 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*
 fn initCompositor(allocator: std.mem.Allocator, fb_info: boot_info_mod.FramebufferInfo) void {
     if (fb_info.base_addr == 0) return;
     global_fb = fb_mod.Framebuffer.init(fb_info);
-    const fb_cap = cap_mod.Capability{
-        .cap_type = .framebuffer,
-        .rights = cap_mod.Rights.WRITE | cap_mod.Rights.READ,
-        .object_id = 1,
-        .data_addr = fb_info.base_addr,
-        .data_size = fb_info.size_bytes,
-    };
+    const fb_cap = cap_mod.Capability{ .cap_type = .framebuffer, .rights = cap_mod.Rights.WRITE | cap_mod.Rights.READ, .object_id = 1, .data_addr = fb_info.base_addr, .data_size = fb_info.size_bytes };
     global_gopd = gopd_mod.GopDaemon.init(allocator, fb_info, fb_cap) catch |err| blk: {
         serial.writeString("[kernel] GopDaemon init failed: ");
         serial.writeString(@errorName(err));
@@ -928,9 +924,14 @@ fn initGenesisVm(
         serial.writeStatusOk("gop ", "Direct GOP vector canvas active (1280x800x32)");
     }
 
-    const chunk = loadGenesisChunk(allocator, boot_info) catch kernelPanic("load_genesis_chunk");
+    const chunk = loadGenesisChunk(allocator, boot_info, genesis) catch kernelPanic("load_genesis_chunk");
     const genesis_vm = allocator.create(vm_mod.VM) catch kernelPanic("vm_alloc");
     genesis_vm.initInPlace(allocator, chunk) catch kernelPanic("vm_init");
+    const heap = allocator.create(gc_mod.Heap) catch kernelPanic("gc_alloc");
+    heap.* = gc_mod.Heap.init(allocator);
+    heap.gc_callback = runVmCollect;
+    heap.gc_ctx = genesis_vm;
+    genesis_vm.gc_heap = heap;
     return genesis_vm;
 }
 
@@ -979,6 +980,12 @@ fn serviceWorker(ctx: ?*anyopaque) void {
 
 fn vmThread(ctx: ?*anyopaque) void {
     var vm = @as(*vm_mod.VM, @ptrCast(@alignCast(ctx.?)));
+    defer {
+        if (vm.gc_heap) |h| {
+            h.deinit();
+            vm.gc_heap = null;
+        }
+    }
     vm.run(0) catch {
         serial.writeString("[kernel] Genesis Actor crashed!\n");
     };

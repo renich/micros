@@ -20,7 +20,7 @@ pub fn nativeCharToStr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return InterpretError.RuntimeError;
     const c: u8 = @intCast(args[0].integer & 0xFF);
-    const str = try vm.allocator.alloc(u8, 1);
+    const str = try vm.gcAllocator().alloc(u8, 1);
     str[0] = c;
     return eval.Value{ .string = str };
 }
@@ -30,7 +30,7 @@ pub fn nativeIntToStr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 1 or args[0] != .integer) return InterpretError.RuntimeError;
     var buf: [32]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "{d}", .{args[0].integer}) catch return InterpretError.RuntimeError;
-    const str = try vm.allocator.alloc(u8, s.len);
+    const str = try vm.gcAllocator().alloc(u8, s.len);
     @memcpy(str, s);
     return eval.Value{ .string = str };
 }
@@ -161,7 +161,7 @@ pub fn nativePush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 2 or args[0] != .array) return InterpretError.RuntimeError;
     const old_slice = args[0].array;
-    const new_slice = try vm.allocator.alloc(eval.Value, old_slice.len + 1);
+    const new_slice = try vm.gcAllocator().alloc(eval.Value, old_slice.len + 1);
     @memcpy(new_slice[0..old_slice.len], old_slice);
     new_slice[old_slice.len] = args[1];
     return eval.Value{ .array = new_slice };
@@ -217,7 +217,7 @@ pub fn nativeSysRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         vm.allocator.free(buf);
         return eval.Value{ .string = "" };
     }
-    const final_buf = try vm.allocator.alloc(u8, bytes_read);
+    const final_buf = try vm.gcAllocator().alloc(u8, bytes_read);
     @memcpy(final_buf, buf[0..bytes_read]);
     vm.allocator.free(buf);
     return eval.Value{ .string = final_buf };

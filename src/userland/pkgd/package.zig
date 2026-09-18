@@ -144,6 +144,7 @@ pub const PackageRegistry = struct {
         visited_path: *[MAX_REGISTRY_PACKAGES][32]u8,
         depth: usize,
     ) !void {
+        if (depth >= MAX_REGISTRY_PACKAGES) return error.DependencyDepthExceeded;
         if (self.isHashInSlice(visited_path[0..depth], current_hash)) {
             return error.CircularDependency;
         }
@@ -278,4 +279,27 @@ test "PackageRegistry circular dependency rejection" {
     var load_order: [MAX_REGISTRY_PACKAGES][32]u8 = undefined;
     const err = reg.resolveLoadOrder(&hash_a, &load_order);
     try std.testing.expectError(error.CircularDependency, err);
+}
+
+test "PackageRegistry depth bound rejection" {
+    var reg = PackageRegistry.init();
+    const seed = [_]u8{0x77} ** 32;
+    const kp = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(seed);
+
+    var hashes: [MAX_REGISTRY_PACKAGES + 1][32]u8 = undefined;
+    for (0..MAX_REGISTRY_PACKAGES + 1) |i| {
+        hashes[i] = [_]u8{@intCast(i + 1)} ** 32;
+    }
+
+    for (0..MAX_REGISTRY_PACKAGES) |i| {
+        var pkg = try PackageHeader.init("pkg/chain", "1.0", &kp.public_key.bytes, &hashes[i], 0, 10);
+        try pkg.addDependency(&hashes[i + 1]);
+        try pkg.sign(&kp);
+        try reg.registerPackage(&pkg);
+    }
+
+    var load_order: [MAX_REGISTRY_PACKAGES][32]u8 = undefined;
+    var order_count: usize = 0;
+    const err = reg.resolveDfs(&hashes[0], &load_order, &order_count, &load_order, MAX_REGISTRY_PACKAGES);
+    try std.testing.expectError(error.DependencyDepthExceeded, err);
 }
