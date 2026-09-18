@@ -173,7 +173,9 @@ pub const ActorRegistry = struct {
         if (!builtin.is_test) io.popfq(flags);
     }
 
-    pub fn get(self: *const ActorRegistry, id: u32) ?*Actor {
+    pub fn get(self: *ActorRegistry, id: u32) ?*Actor {
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
         if (id >= MAX_ACTORS) return null;
         return self.actors[id];
     }

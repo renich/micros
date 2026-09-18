@@ -49,13 +49,10 @@ pub fn findMatchingBrace(src: []const u8, start_idx: usize) ?usize {
             in_str = !in_str;
             continue;
         }
-        if (!in_str) {
-            if (c == '{') depth += 1;
-            if (c == '}') {
-                if (depth == 1) return i;
-                if (depth > 1) depth -= 1;
-            }
-        }
+        if (in_str) continue;
+        if (c == '{') depth += 1;
+        if (c == '}' and depth == 1) return i;
+        if (c == '}' and depth > 1) depth -= 1;
     }
     return null;
 }

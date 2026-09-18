@@ -438,12 +438,27 @@ pub const TcpServerConn = struct {
     }
 
     pub fn queueTx(self: *TcpServerConn, data: []const u8) !usize {
+        if (self.tx_sent == self.tx_len and self.unacked_seq == self.local_seq) {
+            self.tx_len = 0;
+            self.tx_sent = 0;
+        }
         const avail = TCP_TX_BUFFER_SIZE - self.tx_len;
         const copy_len = @min(avail, data.len);
         if (copy_len == 0) return error.TxBufferFull;
         @memcpy(self.tx_buf[self.tx_len .. self.tx_len + copy_len], data[0..copy_len]);
         self.tx_len += copy_len;
         return copy_len;
+    }
+
+    fn compactTx(self: *TcpServerConn, acked_bytes: usize) void {
+        const to_drop = @min(acked_bytes, self.tx_sent);
+        if (to_drop == 0) return;
+        const remaining = self.tx_len - to_drop;
+        if (remaining > 0) {
+            std.mem.copyForwards(u8, self.tx_buf[0..remaining], self.tx_buf[to_drop..self.tx_len]);
+        }
+        self.tx_len = remaining;
+        self.tx_sent -= to_drop;
     }
 
     pub fn buildAck(self: *const TcpServerConn, local_ip: [4]u8, out_buf: []u8) !usize {
@@ -531,7 +546,9 @@ pub const TcpServerConn = struct {
         if ((tcp_hdr.flags & FLAG_ACK) != 0) {
             self.remote_ack = tcp_hdr.ack_num;
             if (isSeqGe(tcp_hdr.ack_num, self.unacked_seq)) {
+                const acked: usize = @intCast(tcp_hdr.ack_num -% self.unacked_seq);
                 self.unacked_seq = tcp_hdr.ack_num;
+                self.compactTx(acked);
             }
         }
 
@@ -750,4 +767,40 @@ test "tcp server connection lifecycle and buffer streaming" {
     };
     try std.testing.expect(conn.processSegment(ack_hdr, &[_]u8{}));
     try std.testing.expectEqual(ServerState.closed, conn.state);
+}
+
+test "tcp server connection recycled tx buffer streaming" {
+    const remote_ip = [_]u8{ 10, 0, 2, 2 };
+    const remote_mac = [_]u8{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
+    const local_ip = [_]u8{ 10, 0, 2, 15 };
+    var conn = TcpServerConn.init(2, 80, 54322, remote_ip, remote_mac, 1000, 5000, 0);
+
+    const chunk = [_]u8{0x42} ** 4096;
+    var pkt_buf: [1600]u8 = undefined;
+
+    // Send 64 KiB (16 chunks of 4 KiB) through a 16 KiB buffer by acknowledging each chunk
+    var i: usize = 0;
+    while (i < 16) : (i += 1) {
+        const queued = try conn.queueTx(&chunk);
+        try std.testing.expectEqual(@as(usize, 4096), queued);
+
+        while (conn.tx_sent < conn.tx_len) {
+            _ = try conn.buildData(local_ip, &pkt_buf);
+        }
+
+        const ack = TcpHeader{
+            .src_port = 54322,
+            .dst_port = 80,
+            .seq_num = conn.remote_seq,
+            .ack_num = conn.local_seq,
+            .data_offset = 5,
+            .flags = FLAG_ACK,
+            .window_size = 65535,
+            .checksum = 0,
+            .urgent_ptr = 0,
+        };
+        try std.testing.expect(conn.processSegment(ack, &[_]u8{}));
+    }
+    try std.testing.expectEqual(@as(usize, 0), conn.tx_len);
+    try std.testing.expectEqual(@as(usize, 0), conn.tx_sent);
 }

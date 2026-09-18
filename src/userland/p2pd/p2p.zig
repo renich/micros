@@ -295,11 +295,11 @@ pub const P2pDaemon = struct {
         return self.peers.count;
     }
 
-    pub fn createHandshakeInit(self: *P2pDaemon, nonce: *const [NONCE_LEN]u8) !HandshakeInitPayload {
-        const sig = try self.identity.signChallenge(nonce);
+    pub fn createHandshakeInit(self: *P2pDaemon, peer_challenge: *const [NONCE_LEN]u8) !HandshakeInitPayload {
+        const sig = try self.identity.signChallenge(peer_challenge);
         return HandshakeInitPayload{
             .initiator_pubkey = self.identity.key_pair.public_key.bytes,
-            .nonce = nonce.*,
+            .nonce = peer_challenge.*,
             .signature = sig,
         };
     }
@@ -307,8 +307,12 @@ pub const P2pDaemon = struct {
     pub fn processHandshakeInit(
         self: *P2pDaemon,
         init_payload: *const HandshakeInitPayload,
-        response_nonce: *const [NONCE_LEN]u8,
+        expected_challenge: *const [NONCE_LEN]u8,
+        response_challenge: *const [NONCE_LEN]u8,
     ) !HandshakeRespPayload {
+        if (!std.mem.eql(u8, &init_payload.nonce, expected_challenge)) {
+            return error.InvalidHandshakeNonce;
+        }
         const valid = NodeIdentity.verifySignature(
             &init_payload.initiator_pubkey,
             &init_payload.nonce,
@@ -316,7 +320,7 @@ pub const P2pDaemon = struct {
         );
         if (!valid) return error.InvalidHandshakeSignature;
 
-        const resp_sig = try self.identity.signChallenge(response_nonce);
+        const resp_sig = try self.identity.signChallenge(response_challenge);
 
         var i: usize = 0;
         while (i < self.peers.count) : (i += 1) {
@@ -330,7 +334,7 @@ pub const P2pDaemon = struct {
 
         return HandshakeRespPayload{
             .responder_pubkey = self.identity.key_pair.public_key.bytes,
-            .nonce = response_nonce.*,
+            .nonce = response_challenge.*,
             .signature = resp_sig,
             .session_status = 1,
         };
@@ -339,8 +343,12 @@ pub const P2pDaemon = struct {
     pub fn processHandshakeResp(
         self: *P2pDaemon,
         resp_payload: *const HandshakeRespPayload,
+        expected_nonce: *const [NONCE_LEN]u8,
     ) !void {
         if (resp_payload.session_status != 1) return error.HandshakeRejected;
+        if (!std.mem.eql(u8, &resp_payload.nonce, expected_nonce)) {
+            return error.InvalidHandshakeNonce;
+        }
         const valid = NodeIdentity.verifySignature(
             &resp_payload.responder_pubkey,
             &resp_payload.nonce,
@@ -502,21 +510,31 @@ test "P2P mutual cryptographic handshake authentication" {
     _ = try node_b.handleIncomingBeacon(&beacon_a, [_]u8{ 192, 168, 100, 1 }, 10);
     try std.testing.expectEqual(false, node_b.peers.peers[0].?.authenticated);
 
-    // Node A initiates handshake
-    const nonce_a = [_]u8{0xAA} ** NONCE_LEN;
-    const init_payload = try node_a.createHandshakeInit(&nonce_a);
+    // Node A initiates handshake with Node B's challenge
+    const challenge_for_a = [_]u8{0xAA} ** NONCE_LEN;
+    const challenge_for_b = [_]u8{0xBB} ** NONCE_LEN;
+    const init_payload = try node_a.createHandshakeInit(&challenge_for_a);
 
-    // Node B processes handshake init and produces response
-    const nonce_b = [_]u8{0xBB} ** NONCE_LEN;
-    const resp_payload = try node_b.processHandshakeInit(&init_payload, &nonce_b);
+    // Node B verifies Node A's response to challenge_for_a, returns response to challenge_for_b
+    const resp_payload = try node_b.processHandshakeInit(&init_payload, &challenge_for_a, &challenge_for_b);
     try std.testing.expectEqual(true, node_b.peers.peers[0].?.authenticated);
 
-    // Node A processes handshake response
-    try node_a.processHandshakeResp(&resp_payload);
+    // Node A verifies Node B's response to challenge_for_b
+    try node_a.processHandshakeResp(&resp_payload, &challenge_for_b);
     try std.testing.expectEqual(true, node_a.peers.peers[0].?.authenticated);
+
+    // Replay attack rejection: attacker replays init_payload against a different challenge
+    const fresh_challenge = [_]u8{0xCC} ** NONCE_LEN;
+    try std.testing.expectError(
+        error.InvalidHandshakeNonce,
+        node_b.processHandshakeInit(&init_payload, &fresh_challenge, &challenge_for_b),
+    );
 
     // Tampered signature rejection
     var tampered_resp = resp_payload;
     tampered_resp.signature[0] ^= 0xFF;
-    try std.testing.expectError(error.InvalidHandshakeSignature, node_a.processHandshakeResp(&tampered_resp));
+    try std.testing.expectError(
+        error.InvalidHandshakeSignature,
+        node_a.processHandshakeResp(&tampered_resp, &challenge_for_b),
+    );
 }

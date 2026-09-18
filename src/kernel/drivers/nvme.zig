@@ -132,25 +132,25 @@ pub fn calcDoorbellOffset(qid: u16, is_cq: bool, dstrd: u4) usize {
     return DOORBELL_BASE + (index * stride);
 }
 
+pub const PrpPair = struct {
+    prp1: u64,
+    prp2: u64,
+};
+
 pub fn calcPrpChaining(
     dma_phys: u64,
     total_bytes: usize,
     prp_list_phys: u64,
     prp_list: [*]u64,
-) struct { prp1: u64, prp2: u64 } {
-    const prp1 = dma_phys;
-    if (total_bytes <= PAGE_SIZE) {
-        return .{ .prp1 = prp1, .prp2 = 0 };
-    }
-    if (total_bytes <= 2 * PAGE_SIZE) {
-        return .{ .prp1 = prp1, .prp2 = dma_phys + PAGE_SIZE };
-    }
+) PrpPair {
     const pages = (total_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+    var page_buf: [128]u64 = undefined;
+    const n = @min(pages, page_buf.len);
     var i: usize = 0;
-    while (i < pages - 1) : (i += 1) {
-        prp_list[i] = dma_phys + (i + 1) * PAGE_SIZE;
+    while (i < n) : (i += 1) {
+        page_buf[i] = dma_phys + i * PAGE_SIZE;
     }
-    return .{ .prp1 = prp1, .prp2 = prp_list_phys };
+    return calcPrpChainingScatter(page_buf[0..n], total_bytes, prp_list_phys, prp_list);
 }
 
 pub fn calcPrpChainingScatter(
@@ -158,7 +158,7 @@ pub fn calcPrpChainingScatter(
     total_bytes: usize,
     prp_list_phys: u64,
     prp_list: [*]u64,
-) struct { prp1: u64, prp2: u64 } {
+) PrpPair {
     if (phys_pages.len == 0) return .{ .prp1 = 0, .prp2 = 0 };
     const prp1 = phys_pages[0];
     if (total_bytes <= PAGE_SIZE or phys_pages.len == 1) {
