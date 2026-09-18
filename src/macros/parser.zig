@@ -212,6 +212,7 @@ pub const Parser = struct {
         }
         try self.match(.rbrace);
         const node = try self.allocator.create(ast.Node);
+        errdefer self.allocator.destroy(node);
         node.* = ast.Node{
             .block = ast.Block{
                 .statements = try stmts.toOwnedSlice(self.allocator),
@@ -237,6 +238,7 @@ pub const Parser = struct {
         const body = try self.parseBlock();
         errdefer body.deinit(self.allocator);
         const node = try self.allocator.create(ast.Node);
+        errdefer self.allocator.destroy(node);
         node.* = ast.Node{
             .function_decl = ast.FunctionDecl{
                 .name = name,
@@ -315,6 +317,7 @@ pub const Parser = struct {
         }
         try self.match(.rparen);
         const node = try self.allocator.create(ast.Node);
+        errdefer self.allocator.destroy(node);
         node.* = ast.Node{
             .call_expr = ast.CallExpr{
                 .callee = name,
@@ -334,6 +337,7 @@ pub const Parser = struct {
         if (self.current_token.token_type == .rbracket) {
             try self.match(.rbracket);
             const node = try self.allocator.create(ast.Node);
+            errdefer self.allocator.destroy(node);
             node.* = ast.Node{ .array_literal = ast.ArrayLiteral{ .elements = try elements.toOwnedSlice(self.allocator) } };
             return node;
         }
@@ -347,6 +351,7 @@ pub const Parser = struct {
         }
         try self.match(.rbracket);
         const node = try self.allocator.create(ast.Node);
+        errdefer self.allocator.destroy(node);
         node.* = ast.Node{ .array_literal = ast.ArrayLiteral{ .elements = try elements.toOwnedSlice(self.allocator) } };
         return node;
     }
@@ -422,6 +427,7 @@ pub const Parser = struct {
         }
         try self.match(.rparen);
         const call_node = try self.allocator.create(ast.Node);
+        errdefer self.allocator.destroy(call_node);
         call_node.* = ast.Node{
             .expr_call = ast.ExprCall{
                 .callee = callee,

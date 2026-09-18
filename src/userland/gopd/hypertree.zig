@@ -60,8 +60,10 @@ pub const HyperNode = extern struct {
         if (!self.isVisible()) return false;
         if (px < self.x) return false;
         if (py < self.y) return false;
-        if (px >= self.x + @as(i16, @intCast(self.width))) return false;
-        if (py >= self.y + @as(i16, @intCast(self.height))) return false;
+        const x2_32 = @as(i32, self.x) + @as(i32, self.width);
+        const y2_32 = @as(i32, self.y) + @as(i32, self.height);
+        if (@as(i32, px) >= x2_32) return false;
+        if (@as(i32, py) >= y2_32) return false;
         return true;
     }
 };
@@ -110,8 +112,10 @@ pub const DamageRect = struct {
     }
 
     pub fn include(self: *DamageRect, x: i16, y: i16, w: u16, h: u16) void {
-        const x2 = x + @as(i16, @intCast(w));
-        const y2 = y + @as(i16, @intCast(h));
+        const x2_32 = @as(i32, x) + @as(i32, w);
+        const y2_32 = @as(i32, y) + @as(i32, h);
+        const x2: i16 = @intCast(std.math.clamp(x2_32, -32768, 32767));
+        const y2: i16 = @intCast(std.math.clamp(y2_32, -32768, 32767));
         if (x < self.min_x) self.min_x = x;
         if (y < self.min_y) self.min_y = y;
         if (x2 > self.max_x) self.max_x = x2;
@@ -399,4 +403,32 @@ test "HyperTree insertion, mutation, hit-testing, and dirty damage computation" 
     tree.clear();
     try std.testing.expectEqual(@as(usize, 0), tree.node_count);
     try std.testing.expectEqual(@as(usize, 0), tree.payload_used);
+}
+
+test "DamageRect and HyperNode bounds overflow protection" {
+    var damage = DamageRect{};
+    damage.include(1000, 1000, 60000, 60000);
+    try std.testing.expectEqual(@as(i16, 1000), damage.min_x);
+    try std.testing.expectEqual(@as(i16, 1000), damage.min_y);
+    try std.testing.expectEqual(@as(i16, 32767), damage.max_x);
+    try std.testing.expectEqual(@as(i16, 32767), damage.max_y);
+
+    const node = HyperNode{
+        .id = 1,
+        .parent_id = 0,
+        .node_type = .container,
+        .flags = NodeFlags.VISIBLE,
+        .layout_dir = 0,
+        .reserved = 0,
+        .x = 100,
+        .y = 100,
+        .width = 60000,
+        .height = 60000,
+        .color_fg = 0,
+        .color_bg = 0,
+        .payload_len = 0,
+        .payload_offset = 0,
+    };
+    try std.testing.expect(node.contains(200, 200));
+    try std.testing.expect(!node.contains(50, 50));
 }

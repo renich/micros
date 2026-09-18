@@ -181,8 +181,8 @@ pub const StorageDaemon = struct {
         self.state = .busy;
         defer self.state = .ready;
 
-        const raw_hash = try cas.putChunk(.raw_data, data, self.block_device);
-        _ = std.fmt.bufPrint(out_hex, "{s}", .{std.fmt.fmtSliceHexLower(&raw_hash)}) catch return error.FormatError;
+        const raw_hash = try cas.putChunk(.raw_blob, data, self.block_device);
+        chunk_mod.formatHexHash(&raw_hash, out_hex);
         self.cas_objects_stored +%= 1;
     }
 
@@ -194,9 +194,9 @@ pub const StorageDaemon = struct {
         self.state = .busy;
         defer self.state = .ready;
 
-        var raw_hash: [32]u8 = undefined;
-        _ = std.fmt.hexToBytes(&raw_hash, hex_hash) catch return error.InvalidHex;
-        const read_bytes = try cas.getChunk(raw_hash, out_buf, self.block_device);
+        var raw_hash: [chunk_mod.HASH_SIZE]u8 = undefined;
+        try chunk_mod.parseHexHash(hex_hash, &raw_hash);
+        const read_bytes = try cas.getChunk(&raw_hash, out_buf, self.block_device);
         self.cas_objects_loaded +%= 1;
         return read_bytes;
     }
@@ -232,7 +232,7 @@ pub const StorageDaemon = struct {
             .status => self.emitResponse(if (self.state == .ready) .ok else .busy),
             .flush => self.handleFlush(),
             .reset => self.handleReset(),
-            else => self.emitResponse(.ok),
+            .cas_store, .cas_load, .manifest_commit, .read_sector, .write_sector => self.emitResponse(.ok),
         }
     }
 
@@ -390,4 +390,71 @@ test "StorageDaemon: simulated block device read write and reset recovery" {
 
     try daemon.resetHardware();
     try std.testing.expectEqual(DaemonState.ready, daemon.state);
+}
+
+test "StorageDaemon: casStore and casLoad roundtrip" {
+    var backing_store: [64 * block_mod.SECTOR_SIZE]u8 = [_]u8{0} ** (64 * block_mod.SECTOR_SIZE);
+
+    const MockVTable = struct {
+        fn readSector(ctx: *anyopaque, lba: u64, buf: *[block_mod.SECTOR_SIZE]u8) anyerror!void {
+            const mem: [*]u8 = @ptrCast(ctx);
+            const offset = lba * block_mod.SECTOR_SIZE;
+            @memcpy(buf, mem[offset .. offset + block_mod.SECTOR_SIZE]);
+        }
+        fn writeSector(ctx: *anyopaque, lba: u64, buf: *const [block_mod.SECTOR_SIZE]u8) anyerror!void {
+            const mem: [*]u8 = @ptrCast(ctx);
+            const offset = lba * block_mod.SECTOR_SIZE;
+            @memcpy(mem[offset .. offset + block_mod.SECTOR_SIZE], buf);
+        }
+        fn readSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
+            const mem: [*]u8 = @ptrCast(ctx);
+            const offset = lba * block_mod.SECTOR_SIZE;
+            @memcpy(buf[0 .. count * block_mod.SECTOR_SIZE], mem[offset .. offset + count * block_mod.SECTOR_SIZE]);
+        }
+        fn writeSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
+            const mem: [*]u8 = @ptrCast(ctx);
+            const offset = lba * block_mod.SECTOR_SIZE;
+            @memcpy(mem[offset .. offset + count * block_mod.SECTOR_SIZE], buf[0 .. count * block_mod.SECTOR_SIZE]);
+        }
+        fn flush(_: *anyopaque) anyerror!void {}
+    };
+
+    const vtable = block_mod.BlockDevice.VTable{
+        .readSector = MockVTable.readSector,
+        .writeSector = MockVTable.writeSector,
+        .readSectors = MockVTable.readSectors,
+        .writeSectors = MockVTable.writeSectors,
+        .flush = MockVTable.flush,
+    };
+
+    var mock_dev = block_mod.BlockDevice{
+        .ptr = &backing_store,
+        .vtable = &vtable,
+        .total_sectors = 64,
+        .sector_size = 512,
+    };
+
+    const valid_cap = cap_mod.Capability{
+        .cap_type = .storage_device,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = 1,
+        .data_addr = @intFromPtr(&mock_dev),
+        .data_size = @sizeOf(block_mod.BlockDevice),
+    };
+
+    var daemon = try StorageDaemon.init(std.testing.allocator, &mock_dev, valid_cap, valid_cap);
+    defer daemon.deinit();
+
+    try std.testing.expectEqual(DaemonState.ready, daemon.state);
+
+    const test_payload = "Sovereign microkernel CAS payload persistence test";
+    var hex_hash: [64]u8 = undefined;
+    try daemon.casStore(test_payload, &hex_hash);
+    try std.testing.expectEqual(@as(u64, 1), daemon.cas_objects_stored);
+
+    var load_buf: [256]u8 = undefined;
+    const loaded_bytes = try daemon.casLoad(&hex_hash, &load_buf);
+    try std.testing.expectEqual(test_payload.len, loaded_bytes);
+    try std.testing.expectEqualStrings(test_payload, load_buf[0..loaded_bytes]);
+    try std.testing.expectEqual(@as(u64, 1), daemon.cas_objects_loaded);
 }
