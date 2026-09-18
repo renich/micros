@@ -90,6 +90,16 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     return true;
 }
 
+pub fn unmapExtent(virt: u64, size: usize) void {
+    const cr3 = readCr3();
+    const pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
+    if (pml4 == 0 or size == 0) return;
+    var offset: usize = 0;
+    while (offset < size) : (offset += 4096) {
+        _ = unmapPage(pml4, virt + offset);
+    }
+}
+
 pub fn protectPage(pml4_phys: u64, virt: u64, prot: usize) bool {
     const pml4_idx = (virt >> 39) & 0x1FF;
     const pdpt_idx = (virt >> 30) & 0x1FF;
@@ -273,7 +283,9 @@ fn freePt(pd_entry: u64) void {
     const pt: *PageTable = @ptrFromInt(pt_phys + hhdm_base);
     for (pt.entries) |pte| {
         if ((pte & PAGE_PRESENT) != 0 and (pte & PAGE_USER) != 0 and (pte & PAGE_ANON) != 0 and (pte & PAGE_MMIO) == 0) {
-            pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
+            if ((pte & PAGE_PINNED) == 0) {
+                pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
+            }
         }
     }
     pmm.freePage(pt_phys);
@@ -567,4 +579,23 @@ test "vmm pinDmaPages sets PAGE_PINNED and rejects unmap until unpinned" {
     unpinDmaPages(pml4_phys, test_virt, 8192);
     try std.testing.expect((pt.entries[pt_idx] & PAGE_PINNED) == 0);
     try std.testing.expect(unmapPage(pml4_phys, test_virt));
+}
+
+test "vmm freePt preserves pinned DMA physical pages" {
+    var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    const saved_hhdm = hhdm_base;
+    defer hhdm_base = saved_hhdm;
+    hhdm_base = 0;
+
+    const pt_phys = @intFromPtr(&pt);
+    pt.entries[0] = 0x8000 | PAGE_PRESENT | PAGE_USER | PAGE_ANON | PAGE_PINNED;
+    pt.entries[1] = 0x9000 | PAGE_PRESENT | PAGE_USER | PAGE_ANON;
+
+    // Call freePt with simulated pd_entry pointing to pt_phys
+    const pd_entry = pt_phys | PAGE_PRESENT;
+    freePt(pd_entry);
+
+    // pt.entries[0] had PAGE_PINNED so pmm.freePage(0x8000) was skipped
+    // pt.entries[1] was unpinned so it was freed
+    try std.testing.expect((pt.entries[0] & PAGE_PINNED) != 0);
 }

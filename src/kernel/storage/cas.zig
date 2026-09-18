@@ -38,6 +38,9 @@ pub const CasEngine = struct {
         const sb_b = readAndValidateSb(cache, SECTOR_SUPERBLOCK_B, dev);
 
         if (sb_a == null and sb_b == null) {
+            if (diskContainsExistingData(cache, dev)) {
+                return error.IrrecoverableSuperblockCorruption;
+            }
             const formatted_sb = formatSuperblock(total_sectors);
             try writeSuperblockAt(cache, SECTOR_SUPERBLOCK_A, &formatted_sb, dev);
             try writeSuperblockAt(cache, SECTOR_SUPERBLOCK_B, &formatted_sb, dev);
@@ -149,6 +152,16 @@ pub const CasEngine = struct {
         return self.superblock.root_hash;
     }
 };
+
+fn diskContainsExistingData(cache: *block_cache.BlockCache, dev: ?*block.BlockDevice) bool {
+    const d = dev orelse return false;
+    var first_chunk_buf: [SECTOR_SIZE]u8 = undefined;
+    cache.readSector(SECTOR_FIRST_CHUNK, &first_chunk_buf, d) catch return false;
+    for (first_chunk_buf) |byte| {
+        if (byte != 0) return true;
+    }
+    return false;
+}
 
 fn formatSuperblock(total_sectors: u64) CasSuperblock {
     var sb = CasSuperblock{
@@ -440,4 +453,66 @@ test "cas engine dual-superblock A/B power failure resilience" {
     try std.testing.expectEqual(CAS_SUPERBLOCK_MAGIC, recovered_cas.superblock.magic);
     try std.testing.expect(recovered_cas.superblock.generation > 0);
     try std.testing.expectEqual(SECTOR_SUPERBLOCK_B, recovered_cas.active_sector);
+}
+
+test "cas engine fails safe on dual superblock corruption with existing data" {
+    var raw_disk = struct {
+        sectors: [200][SECTOR_SIZE]u8 = [_][SECTOR_SIZE]u8{[_]u8{0} ** SECTOR_SIZE} ** 200,
+        device: block.BlockDevice = undefined,
+
+        pub fn init(self: *@This()) *block.BlockDevice {
+            self.device = block.BlockDevice{
+                .ptr = @ptrCast(self),
+                .vtable = &vtable,
+                .total_sectors = 200,
+            };
+            return &self.device;
+        }
+
+        const vtable = block.BlockDevice.VTable{
+            .readSector = mockRead,
+            .writeSector = mockWrite,
+            .readSectors = mockReads,
+            .writeSectors = mockWrites,
+            .flush = mockFlush,
+        };
+
+        fn mockRead(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            @memcpy(buf, &self.sectors[lba]);
+        }
+
+        fn mockWrite(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            @memcpy(&self.sectors[lba], buf);
+        }
+
+        fn mockReads(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            for (0..count) |i| {
+                @memcpy(buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE], &self.sectors[lba + i]);
+            }
+        }
+
+        fn mockWrites(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            for (0..count) |i| {
+                @memcpy(&self.sectors[lba + i], buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
+            }
+        }
+
+        fn mockFlush(_: *anyopaque) anyerror!void {}
+    }{};
+
+    const disk_dev = raw_disk.init();
+    // Simulate non-zero data at SECTOR_FIRST_CHUNK
+    raw_disk.sectors[SECTOR_FIRST_CHUNK][0] = 0xAA;
+    raw_disk.sectors[SECTOR_FIRST_CHUNK][1] = 0x55;
+
+    var cache = try block_cache.BlockCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    // Both Sector 0 and Sector 1 are uninitialized/corrupted, but data exists in chunk space
+    const res = CasEngine.init(&cache, disk_dev, 200);
+    try std.testing.expectError(error.IrrecoverableSuperblockCorruption, res);
 }

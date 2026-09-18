@@ -18,6 +18,8 @@ pub const CapError = error{
 
 pub const DEFAULT_CSPACE_CAPACITY: usize = 256;
 
+pub var unmap_extent_fn: ?*const fn (virt: u64, size: usize) void = null;
+
 pub const CSpace = struct {
     entries: []align(4096) Capability,
     capacity: usize,
@@ -98,8 +100,18 @@ pub const CSpace = struct {
         const flags = self.acquireLock();
         defer self.releaseLock(flags);
 
-        if (!self.entries[handle].isValid()) return CapError.InvalidHandle;
-        if (!self.entries[handle].hasRight(Rights.REVOKE)) return CapError.PermissionDenied;
+        const cap = self.entries[handle];
+        if (!cap.isValid()) return CapError.InvalidHandle;
+        if (!cap.hasRight(Rights.REVOKE)) return CapError.PermissionDenied;
+
+        // Invalidate VMM page table mappings and flush TLB for revoked memory extents
+        if (cap.cap_type == .memory_extent and cap.data_addr != 0 and cap.data_size != 0) {
+            if (unmap_extent_fn) |unmap_fn| {
+                const len: usize = std.math.cast(usize, cap.data_size) orelse 0;
+                unmap_fn(cap.data_addr, len);
+            }
+        }
+
         self.entries[handle] = Capability.NULL_CAP;
     }
 
@@ -307,4 +319,35 @@ test "SPEC-TECH-MIN-001: Formal Attenuation Matrix & Monotonic Security Gate Aud
     const delegated_act = child_cspace.get(delegated_act_h).?;
     try std.testing.expect(delegated_act.hasRight(Rights.WRITE));
     try std.testing.expect(!delegated_act.hasRight(Rights.GRANT));
+}
+
+var test_unmapped_virt: u64 = 0;
+var test_unmapped_size: usize = 0;
+fn mockUnmapExtent(virt: u64, size: usize) void {
+    test_unmapped_virt = virt;
+    test_unmapped_size = size;
+}
+
+test "CSpace revoking memory_extent invokes unmap and TLB flush hook" {
+    const cspace = try CSpace.init(std.testing.allocator, 16);
+    defer cspace.deinit(std.testing.allocator);
+
+    unmap_extent_fn = mockUnmapExtent;
+    defer unmap_extent_fn = null;
+    test_unmapped_virt = 0;
+    test_unmapped_size = 0;
+
+    const mem_cap = Capability{
+        .cap_type = .memory_extent,
+        .rights = Rights.READ | Rights.WRITE | Rights.REVOKE,
+        .object_id = 1,
+        .data_addr = 0x4000_0000,
+        .data_size = 8192,
+    };
+    const h = try cspace.insert(mem_cap);
+    try cspace.revoke(h);
+
+    try std.testing.expectEqual(@as(u64, 0x4000_0000), test_unmapped_virt);
+    try std.testing.expectEqual(@as(usize, 8192), test_unmapped_size);
+    try std.testing.expect(cspace.get(h) == null);
 }

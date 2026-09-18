@@ -22,6 +22,7 @@ const fiber_mod = @import("../macros/fiber.zig");
 const gc_mod = @import("../macros/gc.zig");
 const actor_mod = @import("actor.zig");
 const cap_mod = @import("cap/capability.zig");
+const cspace_mod = @import("cap/cspace.zig");
 const fb_mod = @import("fb.zig");
 const ipc_mod = @import("ipc/ring.zig");
 const bundle_mod = @import("bundle.zig");
@@ -122,6 +123,7 @@ fn initHardware(boot_info: *const BootInfo) void {
     syscall.setDeviceHandlers(frameInfoBridge, irqAckBridge);
     serial.writeStatusOk("priv", "TSS Ring 3 and Fast Syscall (LSTAR) ready");
     actor_mod.ActorRegistry.page_table_destructor = vmm.destroyActorAddressSpace;
+    cspace_mod.unmap_extent_fn = vmm.unmapExtent;
     apic.enableLapic(boot_info.hhdm_offset);
     apic.initTimer(apic.DEFAULT_QUANTUM_TICKS);
     smp.global_topology.bootstrapSecondaryCores(1);
@@ -959,6 +961,14 @@ fn serviceWorker(ctx: ?*anyopaque) void {
         var work: usize = 0;
         if (global_netd) |*netd| work += netd.poll();
         if (global_aid) |*aid| work += aid.processClientIpc();
+        if (global_storaged) |*strd| work += strd.processClientIpc();
+        if (global_gopd) |*gopd| {
+            if (!gopd.canvas.damage.isEmpty()) {
+                gopd.poll();
+                gopd.renderHyperTree();
+                work += 1;
+            }
+        }
         if (work == 0) io.pause();
         fiber_mod.yield();
     }

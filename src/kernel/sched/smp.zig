@@ -162,29 +162,11 @@ pub const SmpTopology = struct {
     pub fn tick(self: *SmpTopology, core_id: u32) ?u32 {
         const core = self.getCore(core_id) orelse return null;
         core.total_ticks +%= 1;
-
         if (core.timeslice_remaining > 0) {
             core.timeslice_remaining -= 1;
         }
-        if (core.timeslice_remaining > 0) {
-            return null; // Quantum not yet expired
-        }
-
-        // Timeslice expired: reset quantum and pick next task
-        core.timeslice_remaining = DEFAULT_TIMESLICE;
-
-        // If current actor was running, re-enqueue it
-        if (core.current_actor_id != 0) {
-            _ = core.enqueue(core.current_actor_id);
-        }
-
-        // Dequeue next task, or steal from busy peers
-        const next_task = core.dequeue() orelse self.stealTask(core_id);
-        if (next_task) |task| {
-            core.current_actor_id = task;
-            return task;
-        }
-
+        // Do NOT mutate runqueue or current_actor_id without an accompanying register swap.
+        // Task switching is cooperative via fiber_mod.yield() until hardware preemption is active.
         return null;
     }
 
@@ -251,21 +233,18 @@ test "SMP bounded lock-free work stealing" {
     try std.testing.expectEqual(@as(u32, 2), top.cores[0].rq_count.load(.monotonic));
 }
 
-test "SMP preemption timer tick quantum expiration and task round-robin" {
+test "SMP timer tick accounting without unsafe actor preemption" {
     var top = SmpTopology.init();
     const core0 = top.getCore(0).?;
     core0.current_actor_id = 1;
     _ = core0.enqueue(2);
 
-    // Run 9 ticks: quantum not yet expired
     var i: usize = 0;
-    while (i < 9) : (i += 1) {
+    while (i < 10) : (i += 1) {
         const res = top.tick(0);
         try std.testing.expect(res == null);
     }
-
-    // 10th tick: quantum expires, switches to task 2
-    const switched = top.tick(0);
-    try std.testing.expectEqual(@as(?u32, 2), switched);
-    try std.testing.expectEqual(@as(u32, 2), core0.current_actor_id);
+    try std.testing.expectEqual(@as(u64, 10), core0.total_ticks);
+    try std.testing.expectEqual(@as(u32, 1), core0.current_actor_id);
+    try std.testing.expectEqual(@as(u32, 1), core0.rq_count.load(.monotonic));
 }
