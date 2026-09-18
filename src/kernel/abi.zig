@@ -345,10 +345,33 @@ fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 var ai_prompt_resp_buf: [4096]u8 = undefined;
 
+fn decodeSerialEscape() ?i64 {
+    if (!serial.hasChar()) return null;
+    const b2 = serial.readChar() orelse return null;
+    if (b2 != '[') return @as(i64, b2);
+    const b3 = serial.readChar() orelse return null;
+    return switch (b3) {
+        'A' => ps2_mod.KeyCode.UP,
+        'B' => ps2_mod.KeyCode.DOWN,
+        'C' => ps2_mod.KeyCode.RIGHT,
+        'D' => ps2_mod.KeyCode.LEFT,
+        'H' => ps2_mod.KeyCode.HOME,
+        'F' => ps2_mod.KeyCode.END,
+        '3' => blk: {
+            _ = serial.readChar();
+            break :blk ps2_mod.KeyCode.DELETE;
+        },
+        else => null,
+    };
+}
+
 fn nativeSysSerialRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (serial.readChar()) |c| {
+        if (c == 27) {
+            if (decodeSerialEscape()) |code| return Value{ .integer = code };
+        }
         return Value{ .integer = @as(i64, c) };
     }
     return Value{ .integer = -1 };

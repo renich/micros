@@ -8,6 +8,7 @@ const cap_mod = @import("../../kernel/cap/capability.zig");
 const compositor_mod = @import("../../kernel/compositor.zig");
 const boot_info_mod = @import("../../kernel/boot_info.zig");
 const fb_mod = @import("../../kernel/fb.zig");
+pub const hypertree = @import("hypertree.zig");
 
 pub const DaemonState = enum(u8) {
     uninitialized = 0,
@@ -35,6 +36,7 @@ pub const GopDaemon = struct {
     wm: compositor_mod.WindowManager,
     pointer: compositor_mod.PointerState,
     mouse_decoder: compositor_mod.Ps2MouseDecoder,
+    tree: hypertree.HyperTree,
     state: DaemonState,
     frames_presented: u64,
     damage_flushes: u64,
@@ -65,6 +67,7 @@ pub const GopDaemon = struct {
 
         const pointer = compositor_mod.PointerState.init(fb_info.width, fb_info.height);
         const mouse_decoder = compositor_mod.Ps2MouseDecoder.init();
+        const tree = hypertree.HyperTree.init(allocator);
 
         return GopDaemon{
             .allocator = allocator,
@@ -73,6 +76,7 @@ pub const GopDaemon = struct {
             .wm = wm,
             .pointer = pointer,
             .mouse_decoder = mouse_decoder,
+            .tree = tree,
             .state = .active,
             .frames_presented = 0,
             .damage_flushes = 0,
@@ -202,6 +206,40 @@ pub const GopDaemon = struct {
     pub fn poll(self: *GopDaemon) void {
         if (self.state != .active) return;
         self.wm.composeAllWindows(&self.canvas);
+    }
+
+    pub fn renderHyperTree(self: *GopDaemon) void {
+        if (self.state != .active) return;
+        for (0..hypertree.MAX_NODES) |i| {
+            if (!self.tree.node_active[i]) continue;
+            const node = &self.tree.nodes[i];
+            if (!node.isVisible() or !node.isDirty()) continue;
+
+            const nx: u32 = @intCast(@max(0, node.x));
+            const ny: u32 = @intCast(@max(0, node.y));
+            const nw: u32 = @intCast(node.width);
+            const nh: u32 = @intCast(node.height);
+
+            self.canvas.drawRect(nx, ny, nw, nh, node.color_bg);
+
+            if (self.tree.getNodePayload(node.id)) |payload| {
+                if (payload.len > 0) {
+                    self.canvas.drawString(nx + 4, ny + 4, payload, node.color_fg, node.color_bg);
+                }
+            }
+            self.canvas.damage.addRect(nx, ny, nw, nh, self.canvas.width, self.canvas.height);
+        }
+        self.tree.clearDirty();
+    }
+
+    pub fn dispatchUiEvent(self: *GopDaemon, ev: hypertree.UiEvent) ?u32 {
+        if (self.state != .active) return null;
+        self.input_events_processed += 1;
+        const hit_id = self.tree.hitTest(ev.mouse_x, ev.mouse_y);
+        if (ev.event_kind == .click or ev.event_kind == .mouse_down) {
+            self.tree.focused_node_id = hit_id;
+        }
+        return hit_id;
     }
 };
 
@@ -338,3 +376,61 @@ test "GopDaemon double-buffered damage flush to VRAM slice" {
     try std.testing.expectEqual(@as(u64, 1), daemon.frames_presented);
     try std.testing.expectEqual(@as(u32, 0x00FF_0000), mock_vram[10 * 100 + 10]);
 }
+
+test "GopDaemon HyperTree reactive rendering and event hit-testing" {
+    const allocator = std.testing.allocator;
+    const fb_info = boot_info_mod.FramebufferInfo{
+        .base_addr = 0xE000_0000,
+        .size_bytes = 200 * 200 * 4,
+        .width = 200,
+        .height = 200,
+        .stride = 200,
+        .format = .rgb_888,
+    };
+    const valid_cap = cap_mod.Capability{
+        .cap_type = .framebuffer,
+        .rights = cap_mod.Rights.WRITE,
+        .object_id = 1,
+        .data_addr = 0,
+        .data_size = 200 * 200 * 4,
+    };
+
+    var daemon = try GopDaemon.init(allocator, fb_info, valid_cap);
+    defer daemon.deinit();
+
+    const btn_id = try daemon.tree.insertNode(hypertree.HyperNode{
+        .id = 0,
+        .parent_id = 0,
+        .node_type = .button,
+        .flags = hypertree.NodeFlags.VISIBLE | hypertree.NodeFlags.CLICKABLE,
+        .layout_dir = 0,
+        .reserved = 0,
+        .x = 20,
+        .y = 20,
+        .width = 80,
+        .height = 30,
+        .color_fg = 0xFFFFFF,
+        .color_bg = 0x0000_FF00,
+        .payload_len = 0,
+        .payload_offset = 0,
+    }, "Submit");
+
+    daemon.renderHyperTree();
+    try std.testing.expect(!daemon.canvas.damage.isEmpty());
+
+    const ev = hypertree.UiEvent{
+        .target_node_id = 0,
+        .event_kind = .click,
+        .modifier_keys = 0,
+        .char_code = 0,
+        .mouse_x = 40,
+        .mouse_y = 30,
+        .delta = 0,
+        .reserved = 0,
+        .timestamp_ticks = 1000,
+    };
+    const hit = daemon.dispatchUiEvent(ev);
+    try std.testing.expectEqual(@as(?u32, btn_id), hit);
+    try std.testing.expectEqual(@as(?u32, btn_id), daemon.tree.focused_node_id);
+}
+

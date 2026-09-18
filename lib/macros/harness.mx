@@ -1,6 +1,7 @@
-// MicrOS (µOS) Interactive Actor Harness
-// Standalone terminal interface running inside Actor 0.
-// Provides live status, vector canvas rendering, actor inspection, and command loop.
+// MicrOS (µOS) Interactive Autonomous Agent Studio (harness)
+// Standalone conversational interface running inside Actor 0.
+// Modelled after high-capability agent studios with multi-conversations,
+// context auto-compression, clipboard copy/paste, search, readline & vim modes.
 
 fn init_theme() {
     CLR_BG = 0;             // Pure pitch black: 0x000000
@@ -12,12 +13,34 @@ fn init_theme() {
     CLR_GREEN = 4176208;    // Emerald green: 0x3FB950
     CLR_WARN = 13801762;    // Amber: 0xD29922
     
-    // Chat History State
+    // Chat History & Multi-Conversation State
     chat_lines = [];
     chat_colors = [];
     cur_line_text = "";
     cur_line_color = CLR_TEXT;
     conv_history = [];
+    
+    conversations = ["General"];
+    conv_active_idx = 0;
+    conv_stores = [];
+    conv_stores = push(conv_stores, []);
+    conv_color_stores = [];
+    conv_color_stores = push(conv_color_stores, []);
+    conv_prompt_stores = [];
+    conv_prompt_stores = push(conv_prompt_stores, []);
+    
+    clipboard_buf = "";
+    last_resp_text = "";
+    last_resp_code = "";
+    compressed_summary = "";
+    
+    prompt_history = [];
+    hist_pos = 0 - 1;
+    saved_draft = "";
+
+    line_buf = "";
+    line_pos = 0;
+    vim_mode = 0;
     
     PROMPT_Y = 750;
 }
@@ -37,6 +60,9 @@ fn init_ansi() {
 fn draw_header() {
     sys_fb_draw_rect(0, 0, 1280, 24, CLR_HEADER_BG);
     sys_fb_draw_string(20, 4, "uOS Autonomous Studio (harness)", CLR_TEXT, CLR_HEADER_BG);
+    conv_title = conversations[conv_active_idx];
+    if (len(conv_title) > 20) { conv_title = substr(conv_title, 0, 17) + "..."; }
+    sys_fb_draw_string(450, 4, "[" + conv_title + "]", CLR_MUTED, CLR_HEADER_BG);
     sys_fb_draw_string(1140, 4, "Gemini 3.8", CLR_ACCENT, CLR_HEADER_BG);
     sys_fb_draw_rect(0, 24, 1280, 1, CLR_BORDER);
 }
@@ -52,14 +78,12 @@ fn draw_panels() {
 }
 
 fn render_chat() {
-    // Clear chat viewport (leaves prompt area intact)
     sys_fb_draw_rect(20, 50, 835, 690, CLR_BG);
-    
-    start_y = 724; // 740 - 16
+    start_y = 724;
     idx = len(chat_lines) - 1;
     while (idx >= 0) {
         if (start_y < 50) {
-            idx = 0 - 1; // break
+            idx = 0 - 1;
         } else {
             sys_fb_draw_string(20, start_y, chat_lines[idx], chat_colors[idx], CLR_BG);
             start_y = start_y - 16;
@@ -184,6 +208,9 @@ fn render_inspector() {
     sys_fb_draw_string(880, var_y, "Fault Guard:    " + int_to_str(sys_fault_count()) + " faults", CLR_MUTED, CLR_BG);
     var_y = var_y + 16;
     sys_fb_draw_string(880, var_y, "State:          Online", CLR_GREEN, CLR_BG);
+    var_y = var_y + 16;
+    clip_len = len(clipboard_buf);
+    sys_fb_draw_string(880, var_y, "Clipboard:      " + int_to_str(clip_len) + " chars", CLR_ACCENT, CLR_BG);
 }
 
 fn find_str(haystack, needle) {
@@ -228,29 +255,110 @@ fn is_prefix(str, pre) {
     return substr(str, 0, pl) == pre;
 }
 
+fn hist_prev() {
+    hlen = len(prompt_history);
+    if (hlen == 0) { return 0; }
+    if (hist_pos == 0 - 1) {
+        saved_draft = line_buf;
+        hist_pos = hlen;
+    }
+    if (hist_pos > 0) {
+        hist_pos = hist_pos - 1;
+        line_buf = prompt_history[hist_pos];
+        line_pos = len(line_buf);
+    }
+    return 0;
+}
+
+fn hist_next() {
+    hlen = len(prompt_history);
+    if (hist_pos >= 0) {
+        hist_pos = hist_pos + 1;
+        if (hist_pos >= hlen) {
+            hist_pos = 0 - 1;
+            line_buf = saved_draft;
+            line_pos = len(line_buf);
+        } else {
+            line_buf = prompt_history[hist_pos];
+            line_pos = len(line_buf);
+        }
+    }
+    return 0;
+}
+
+fn jump_word_forward() {
+    blen = len(line_buf);
+    p = line_pos;
+    while (p < blen) {
+        if (substr(line_buf, p, p + 1) == " ") { break; }
+        p = p + 1;
+    }
+    while (p < blen) {
+        if (substr(line_buf, p, p + 1) != " ") { break; }
+        p = p + 1;
+    }
+    line_pos = p;
+}
+
+fn jump_word_backward() {
+    p = line_pos;
+    if (p > 0) { p = p - 1; }
+    while (p > 0) {
+        if (substr(line_buf, p, p + 1) != " ") { break; }
+        p = p - 1;
+    }
+    while (p > 0) {
+        if (substr(line_buf, p - 1, p) == " ") { break; }
+        p = p - 1;
+    }
+    line_pos = p;
+}
+
+fn delete_char_at_cursor() {
+    blen = len(line_buf);
+    if (line_pos < blen) {
+        left = substr(line_buf, 0, line_pos);
+        right = substr(line_buf, line_pos + 1, blen);
+        line_buf = left + right;
+    }
+}
+
+fn delete_word_backward() {
+    old_p = line_pos;
+    jump_word_backward();
+    new_p = line_pos;
+    left = substr(line_buf, 0, new_p);
+    right = substr(line_buf, old_p, len(line_buf));
+    line_buf = left + right;
+}
+
 fn cmd_help() {
     console_writeln("-- Harness Slash Commands ----------------------", CLR_MUTED);
-    console_writeln("  /help         - Show command and tool reference", CLR_TEXT);
-    console_writeln("  /status       - System telemetry and agent state", CLR_TEXT);
-    console_writeln("  /actors       - List registered actors / subagents", CLR_TEXT);
-    console_writeln("  /clear        - Clear the conversation log", CLR_TEXT);
-    console_writeln("  /layout <l>   - Set keyboard layout (es or us)", CLR_TEXT);
-    console_writeln("  /history      - Display recent prompt history", CLR_TEXT);
-    console_writeln("  /reset        - Reset agent conversation context", CLR_TEXT);
-    console_writeln("  /model        - Display active LLM model info", CLR_TEXT);
-    console_writeln("  /kill <id>    - Terminate actor by ID", CLR_TEXT);
-    console_writeln("  /exit         - Return to MicroShell (msh)", CLR_TEXT);
-    console_writeln("-- Resident AI Tools (Harness Suite) -----------", CLR_MUTED);
-    console_writeln("  run_command(cmd)          - Execute command/code", CLR_TEXT);
-    console_writeln("  view_file(path)           - Read file content", CLR_TEXT);
-    console_writeln("  write_to_file(path, txt)  - Create/overwrite file", CLR_TEXT);
-    console_writeln("  replace_file_content(...) - Edit text in file", CLR_TEXT);
-    console_writeln("  list_dir(prefix)          - List catalog files", CLR_TEXT);
-    console_writeln("  grep_search(query)        - Search text in files", CLR_TEXT);
-    console_writeln("  spawn_actor(name, src)    - Spawn worker actor", CLR_TEXT);
-    console_writeln("  query_telemetry()         - Query system metrics", CLR_TEXT);
-    console_writeln("-- Conversational Agent ------------------------", CLR_MUTED);
-    console_writeln("  <prompt>      - Type any text directly to chat", CLR_TEXT);
+    console_writeln("  /help           - Show command and tool reference", CLR_TEXT);
+    console_writeln("  /status         - System telemetry and agent state", CLR_TEXT);
+    console_writeln("  /actors         - List registered actors / subagents", CLR_TEXT);
+    console_writeln("  /clear          - Clear the conversation log", CLR_TEXT);
+    console_writeln("  /chats          - List active conversation sessions", CLR_TEXT);
+    console_writeln("  /new [title]    - Start new conversation session", CLR_TEXT);
+    console_writeln("  /switch <id>    - Switch to conversation session", CLR_TEXT);
+    console_writeln("  /search <query> - Search chat history for text", CLR_TEXT);
+    console_writeln("  /copy [code]    - Copy last response (or code) to clipboard", CLR_TEXT);
+    console_writeln("  /paste          - Paste clipboard into prompt line", CLR_TEXT);
+    console_writeln("  /compress       - Compress older context turns", CLR_TEXT);
+    console_writeln("  /layout <l>     - Set keyboard layout (es or us)", CLR_TEXT);
+    console_writeln("  /history        - Display recent prompt history", CLR_TEXT);
+    console_writeln("  /reset          - Reset agent conversation context", CLR_TEXT);
+    console_writeln("  /model          - Display active LLM model info", CLR_TEXT);
+    console_writeln("  /kill <id>      - Terminate actor by ID", CLR_TEXT);
+    console_writeln("  /exit           - Return to MicroShell (msh)", CLR_TEXT);
+    console_writeln("-- Editor Modes & Keybindings ------------------", CLR_MUTED);
+    console_writeln("  Readline: ^A(Home) ^E(End) ^K(Kill) ^U(Clear) ^W(DelWord) ^Y(Paste)", CLR_TEXT);
+    console_writeln("  History : Up/Down arrows or ^P/^N cycle prior prompts", CLR_TEXT);
+    console_writeln("  Vim Mode: ESC for Normal mode (h,j,k,l,w,b,0,$,x,d,c,i,a,p,/)", CLR_TEXT);
+    console_writeln("-- Resident AI Tools ---------------------------", CLR_MUTED);
+    console_writeln("  run_command, view_file, write_to_file, replace_file_content", CLR_TEXT);
+    console_writeln("  list_dir, grep_search, spawn_actor, query_telemetry", CLR_TEXT);
+    console_writeln("------------------------------------------------", CLR_MUTED);
 }
 
 fn cmd_status() {
@@ -269,14 +377,14 @@ fn cmd_model() {
 
 fn cmd_history() {
     console_writeln("-- Prompt History ------------------------------", CLR_MUTED);
-    hlen = len(conv_history);
+    hlen = len(prompt_history);
     if (hlen == 0) {
         console_writeln("  (no user prompts recorded)", CLR_TEXT);
         return 0;
     }
     hi = 0;
     while (hi < hlen) {
-        console_writeln("  [" + int_to_str(hi + 1) + "] " + conv_history[hi], CLR_TEXT);
+        console_writeln("  [" + int_to_str(hi + 1) + "] " + prompt_history[hi], CLR_TEXT);
         hi = hi + 1;
     }
     return 0;
@@ -284,9 +392,180 @@ fn cmd_history() {
 
 fn cmd_reset() {
     conv_history = [];
+    prompt_history = [];
+    compressed_summary = "";
     cmd_clear();
     console_writeln("[harness] Conversation context reset.", CLR_GREEN);
     return 0;
+}
+
+fn cmd_conversations() {
+    console_writeln("-- Active Conversations ------------------------", CLR_MUTED);
+    ci = 0;
+    clen = len(conversations);
+    while (ci < clen) {
+        prefix = "  [";
+        if (ci == conv_active_idx) { prefix = "* ["; }
+        console_writeln(prefix + int_to_str(ci + 1) + "] " + conversations[ci], CLR_TEXT);
+        ci = ci + 1;
+    }
+    return 0;
+}
+
+fn cmd_new_conv(title) {
+    t = title;
+    if (len(t) == 0) {
+        t = "Chat " + int_to_str(len(conversations) + 1);
+    }
+    conv_stores[conv_active_idx] = chat_lines;
+    conv_color_stores[conv_active_idx] = chat_colors;
+    conv_prompt_stores[conv_active_idx] = conv_history;
+
+    conversations = push(conversations, t);
+    conv_stores = push(conv_stores, []);
+    conv_color_stores = push(conv_color_stores, []);
+    conv_prompt_stores = push(conv_prompt_stores, []);
+    conv_active_idx = len(conversations) - 1;
+
+    chat_lines = [];
+    chat_colors = [];
+    conv_history = [];
+    compressed_summary = "";
+
+    render_chat();
+    draw_header();
+    console_writeln("[harness] New conversation created: " + t, CLR_GREEN);
+    return 0;
+}
+
+fn cmd_switch_conv(id_s) {
+    target_idx = str_to_int(id_s) - 1;
+    if (target_idx < 0) {
+        console_writeln("Usage: /switch <id>", CLR_WARN);
+        return 0;
+    }
+    if (target_idx >= len(conversations)) {
+        console_writeln("Error: Conversation " + id_s + " does not exist.", CLR_WARN);
+        return 0;
+    }
+    if (target_idx == conv_active_idx) {
+        console_writeln("Already in conversation " + id_s, CLR_MUTED);
+        return 0;
+    }
+    conv_stores[conv_active_idx] = chat_lines;
+    conv_color_stores[conv_active_idx] = chat_colors;
+    conv_prompt_stores[conv_active_idx] = conv_history;
+
+    conv_active_idx = target_idx;
+    chat_lines = conv_stores[target_idx];
+    chat_colors = conv_color_stores[target_idx];
+    conv_history = conv_prompt_stores[target_idx];
+    compressed_summary = "";
+
+    render_chat();
+    draw_header();
+    console_writeln("[harness] Switched to conversation: " + conversations[target_idx], CLR_GREEN);
+    return 0;
+}
+
+fn cmd_search(query) {
+    if (len(query) == 0) {
+        console_writeln("Usage: /search <query>", CLR_WARN);
+        return 0;
+    }
+    console_writeln("-- Search Results for '" + query + "' -----------", CLR_MUTED);
+    matches = 0;
+    si = 0;
+    tot = len(chat_lines);
+    while (si < tot) {
+        pos = find_str(chat_lines[si], query);
+        if (pos >= 0) {
+            matches = matches + 1;
+            console_writeln("  [" + int_to_str(si + 1) + "] " + chat_lines[si], CLR_TEXT);
+        }
+        si = si + 1;
+    }
+    if (matches == 0) {
+        console_writeln("  (no matches found in current chat)", CLR_MUTED);
+    } else {
+        console_writeln("Found " + int_to_str(matches) + " match(es).", CLR_GREEN);
+    }
+    return 0;
+}
+
+fn cmd_copy(arg) {
+    if (arg == "code") {
+        if (len(last_resp_code) == 0) {
+            console_writeln("[harness] No synthesized code in last turn.", CLR_WARN);
+            return 0;
+        }
+        clipboard_buf = last_resp_code;
+        console_writeln("[harness] Code copied to clipboard (" + int_to_str(len(clipboard_buf)) + " chars).", CLR_GREEN);
+        render_inspector();
+        return 0;
+    }
+    if (len(last_resp_text) == 0) {
+        console_writeln("[harness] No assistant response to copy.", CLR_WARN);
+        return 0;
+    }
+    clipboard_buf = last_resp_text;
+    console_writeln("[harness] Response copied to clipboard (" + int_to_str(len(clipboard_buf)) + " chars).", CLR_GREEN);
+    render_inspector();
+    return 0;
+}
+
+fn cmd_paste() {
+    if (len(clipboard_buf) == 0) {
+        console_writeln("[harness] Clipboard is empty.", CLR_WARN);
+        return 0;
+    }
+    left = substr(line_buf, 0, line_pos);
+    right = substr(line_buf, line_pos, len(line_buf));
+    line_buf = left + clipboard_buf + right;
+    line_pos = line_pos + len(clipboard_buf);
+    render_prompt();
+    return 0;
+}
+
+fn cmd_compress() {
+    hlen = len(conv_history);
+    if (hlen <= 2) {
+        console_writeln("[harness] Context is already minimal (" + int_to_str(hlen) + " turns).", CLR_MUTED);
+        return 0;
+    }
+    old_size = 0;
+    ci = 0;
+    topics = "";
+    while (ci < hlen - 2) {
+        msg = conv_history[ci];
+        old_size = old_size + len(msg);
+        if (len(msg) > 30) { msg = substr(msg, 0, 30) + "..."; }
+        if (len(topics) > 0) { topics = topics + " | "; }
+        topics = topics + msg;
+        ci = ci + 1;
+    }
+    compressed_summary = "[Summary of turns 1.." + int_to_str(hlen - 2) + ": " + topics + "]";
+    new_h = [];
+    new_h = push(new_h, conv_history[hlen - 2]);
+    new_h = push(new_h, conv_history[hlen - 1]);
+    conv_history = new_h;
+    saved = old_size - len(compressed_summary);
+    if (saved < 0) { saved = 0; }
+    console_writeln("[harness] Context compressed (" + int_to_str(hlen - 2) + " turns condensed, " + int_to_str(saved) + " chars saved).", CLR_GREEN);
+    return 0;
+}
+
+fn auto_compress_context() {
+    if (len(conv_history) > 6) {
+        cmd_compress();
+    }
+}
+
+fn build_prompt_with_context(prompt) {
+    if (len(compressed_summary) > 0) {
+        return compressed_summary + "\n\nUser: " + prompt;
+    }
+    return prompt;
 }
 
 fn state_name(st) {
@@ -328,12 +607,16 @@ fn cmd_actors() {
 
 fn cmd_ai(prompt) {
     conv_history = push(conv_history, prompt);
+    auto_compress_context();
     console_writeln("[harness] Thinking...", CLR_MUTED);
-    resp = sys_ai_prompt(prompt);
+    payload = build_prompt_with_context(prompt);
+    resp = sys_ai_prompt(payload);
     if (len(resp) == 0) {
         console_writeln("[harness] Offline or auth failure (check network / API key).", CLR_WARN);
         return 0;
     }
+    last_resp_text = resp;
+    last_resp_code = extract_code(resp);
     turn = 0;
     while (turn < 5) {
         tool_res = sys_ai_tool_call(resp);
@@ -347,12 +630,15 @@ fn cmd_ai(prompt) {
                 console_writeln("[harness] Follow-up turn failed.", CLR_WARN);
                 return 0;
             }
+            last_resp_text = resp;
+            c_ext = extract_code(resp);
+            if (len(c_ext) > 0) { last_resp_code = c_ext; }
             turn = turn + 1;
         }
     }
     console_write("harness> ", CLR_GREEN);
     console_print_wrapped(resp, CLR_TEXT);
-    code = extract_code(resp);
+    code = last_resp_code;
     if (len(code) > 0) {
         console_writeln("[harness] Synthesized Actor code detected. Spawning...", CLR_GREEN);
         actor_id = sys_actor_spawn_code("child_worker", code);
@@ -436,6 +722,18 @@ fn eval_command(cmd) {
     if (cmd == "reset") { return cmd_reset(); }
     if (cmd == "/model") { return cmd_model(); }
     if (cmd == "model") { return cmd_model(); }
+    if (cmd == "/chats") { return cmd_conversations(); }
+    if (cmd == "/conversations") { return cmd_conversations(); }
+    if (cmd == "/compress") { return cmd_compress(); }
+    if (cmd == "/paste") { return cmd_paste(); }
+    if (cmd == "/copy") { return cmd_copy(""); }
+    if (cmd == "/copy code") { return cmd_copy("code"); }
+    if (is_prefix(cmd, "/copy ")) { return cmd_copy(substr(cmd, 6, len(cmd))); }
+    if (is_prefix(cmd, "/new ")) { return cmd_new_conv(substr(cmd, 5, len(cmd))); }
+    if (cmd == "/new") { return cmd_new_conv(""); }
+    if (is_prefix(cmd, "/switch ")) { return cmd_switch_conv(substr(cmd, 8, len(cmd))); }
+    if (is_prefix(cmd, "/search ")) { return cmd_search(substr(cmd, 8, len(cmd))); }
+    if (is_prefix(cmd, "/find ")) { return cmd_search(substr(cmd, 6, len(cmd))); }
     if (is_prefix(cmd, "store ")) { return cmd_store(substr(cmd, 6, len(cmd))); }
     if (is_prefix(cmd, "fetch ")) { return cmd_fetch(substr(cmd, 6, len(cmd))); }
     if (is_prefix(cmd, "persist ")) { return cmd_persist(substr(cmd, 8, len(cmd))); }
@@ -457,20 +755,20 @@ fn eval_command(cmd) {
         return 0;
     }
     
-    // Everything else is a direct chat prompt to the Resident AI Agent
     return cmd_ai(cmd);
 }
 
-line_buf = "";
-line_pos = 0;
-vim_mode = 0; // 0 = insert, 1 = normal
-
 fn render_prompt() {
     sys_fb_draw_rect(20, PROMPT_Y, 835, 16, CLR_BG);
-    sys_fb_draw_string(20, PROMPT_Y, "harness> ", CLR_ACCENT, CLR_BG);
-    sys_fb_draw_string(92, PROMPT_Y, line_buf, CLR_TEXT, CLR_BG);
+    prompt_str = "harness> ";
+    if (vim_mode == 1) {
+        prompt_str = "harness:norm> ";
+    }
+    sys_fb_draw_string(20, PROMPT_Y, prompt_str, CLR_ACCENT, CLR_BG);
+    prompt_offset = 20 + len(prompt_str) * 8;
+    sys_fb_draw_string(prompt_offset, PROMPT_Y, line_buf, CLR_TEXT, CLR_BG);
     
-    cur_px = 92 + line_pos * 8;
+    cur_px = prompt_offset + line_pos * 8;
     if (vim_mode == 0) {
         sys_fb_draw_rect(cur_px, PROMPT_Y, 2, 16, CLR_GREEN);
     } else {
@@ -483,7 +781,7 @@ fn render_prompt() {
     
     esc = char_to_str(27);
     cr = char_to_str(13);
-    sys_serial_write(cr + esc + "[K" + ANSI_BOLD + ANSI_CYAN + "harness> " + ANSI_RESET + line_buf);
+    sys_serial_write(cr + esc + "[K" + ANSI_BOLD + ANSI_CYAN + prompt_str + ANSI_RESET + line_buf);
     back_steps = len(line_buf) - line_pos;
     if (back_steps > 0) {
         sys_serial_write(esc + "[" + int_to_str(back_steps) + "D");
@@ -515,6 +813,9 @@ fn handle_newline() {
             console_writeln("Halting harness. Returning to msh.", CLR_MUTED);
             return false;
         }
+        prompt_history = push(prompt_history, line_buf);
+        hist_pos = 0 - 1;
+        saved_draft = "";
         eval_command(line_buf);
     }
     line_buf = "";
@@ -540,56 +841,111 @@ fn handle_printable(c) {
     line_pos = line_pos + 1;
 }
 
+fn handle_vim_key(c) {
+    if (c == 105) { vim_mode = 0; return 0; } // i
+    if (c == 97) { // a
+        vim_mode = 0;
+        if (line_pos < len(line_buf)) { line_pos = line_pos + 1; }
+        return 0;
+    }
+    if (c == 73) { vim_mode = 0; line_pos = 0; return 0; } // I
+    if (c == 65) { vim_mode = 0; line_pos = len(line_buf); return 0; } // A
+    if (c == 104) { if (line_pos > 0) { line_pos = line_pos - 1; } return 0; } // h
+    if (c == 108) { if (line_pos < len(line_buf)) { line_pos = line_pos + 1; } return 0; } // l
+    if (c == 107) { hist_prev(); return 0; } // k
+    if (c == 106) { hist_next(); return 0; } // j
+    if (c == 119) { jump_word_forward(); return 0; } // w
+    if (c == 98) { jump_word_backward(); return 0; } // b
+    if (c == 48) { line_pos = 0; return 0; } // 0
+    if (c == 36) { // $
+        if (len(line_buf) > 0) { line_pos = len(line_buf) - 1; }
+        return 0;
+    }
+    if (c == 120) { delete_char_at_cursor(); return 0; } // x
+    if (c == 100) { line_buf = ""; line_pos = 0; return 0; } // d
+    if (c == 99) { line_buf = ""; line_pos = 0; vim_mode = 0; return 0; } // c
+    if (c == 112) { cmd_paste(); return 0; } // p
+    if (c == 47) { // /
+        vim_mode = 0;
+        line_buf = "/search ";
+        line_pos = 8;
+        return 0;
+    }
+    return 0;
+}
+
 fn harness_loop() {
-    last_char = 0;
     running = true;
     render_prompt();
     while (running) {
         c = poll_char();
         if (c < 0) {
             sys_yield();
+        } else if (c == 256) { // UP
+            hist_prev(); render_prompt();
+        } else if (c == 257) { // DOWN
+            hist_next(); render_prompt();
         } else if (c == 258) { // LEFT
-            if (line_pos > 0) { line_pos = line_pos - 1; render_prompt(); }
+            if (line_pos > 0) { line_pos = line_pos - 1; }
+            render_prompt();
         } else if (c == 259) { // RIGHT
-            if (line_pos < len(line_buf)) { line_pos = line_pos + 1; render_prompt(); }
+            if (line_pos < len(line_buf)) { line_pos = line_pos + 1; }
+            render_prompt();
         } else if (c == 262) { // HOME
             line_pos = 0; render_prompt();
         } else if (c == 263) { // END
             line_pos = len(line_buf); render_prompt();
+        } else if (c == 265) { // DELETE
+            delete_char_at_cursor(); render_prompt();
         } else if (c == 27) { // ESCAPE
-            if (vim_mode == 0) {
-                vim_mode = 1;
-                if (line_pos > 0) { line_pos = line_pos - 1; }
-            }
+            vim_mode = 1;
+            if (line_pos > 0) { line_pos = line_pos - 1; }
             render_prompt();
-        } else if (c == 10) {
+        } else if (c == 10) { // ENTER
             running = handle_newline();
             if (running) { render_prompt(); }
-        } else if (c == 13) {
+        } else if (c == 13) { // ENTER
             running = handle_newline();
             if (running) { render_prompt(); }
-        } else if (c == 8) {
-            if (vim_mode == 0) { handle_backspace(); }
+        } else if (c == 8) { // BACKSPACE
+            if (vim_mode == 0) { handle_backspace(); render_prompt(); }
+        } else if (c == 127) { // BACKSPACE
+            if (vim_mode == 0) { handle_backspace(); render_prompt(); }
+        } else if (c == 1) { // Ctrl+A
+            line_pos = 0; render_prompt();
+        } else if (c == 5) { // Ctrl+E
+            line_pos = len(line_buf); render_prompt();
+        } else if (c == 2) { // Ctrl+B
+            if (line_pos > 0) { line_pos = line_pos - 1; }
             render_prompt();
-        } else if (c == 127) {
-            if (vim_mode == 0) { handle_backspace(); }
+        } else if (c == 6) { // Ctrl+F
+            if (line_pos < len(line_buf)) { line_pos = line_pos + 1; }
             render_prompt();
+        } else if (c == 16) { // Ctrl+P
+            hist_prev(); render_prompt();
+        } else if (c == 14) { // Ctrl+N
+            hist_next(); render_prompt();
+        } else if (c == 11) { // Ctrl+K
+            line_buf = substr(line_buf, 0, line_pos); render_prompt();
+        } else if (c == 21) { // Ctrl+U
+            line_buf = substr(line_buf, line_pos, len(line_buf));
+            line_pos = 0; render_prompt();
+        } else if (c == 23) { // Ctrl+W
+            delete_word_backward(); render_prompt();
+        } else if (c == 12) { // Ctrl+L
+            render_chat(); render_inspector(); render_prompt();
+        } else if (c == 3) { // Ctrl+C
+            line_buf = ""; line_pos = 0; hist_pos = 0 - 1;
+            console_writeln("^C", CLR_MUTED); render_prompt();
+        } else if (c == 25) { // Ctrl+Y
+            cmd_paste();
         } else if (c >= 32) {
-            if (c <= 126) {
-                if (vim_mode == 1) {
-                    if (c == 105) { vim_mode = 0; } // i
-                    else if (c == 97) { vim_mode = 0; if (line_pos < len(line_buf)) { line_pos = line_pos + 1; } } // a
-                    else if (c == 65) { vim_mode = 0; line_pos = len(line_buf); } // A
-                    else if (c == 73) { vim_mode = 0; line_pos = 0; } // I
-                    else if (c == 104) { if (line_pos > 0) { line_pos = line_pos - 1; } } // h
-                    else if (c == 108) { if (line_pos < len(line_buf)) { line_pos = line_pos + 1; } } // l
-                    else if (c == 48) { line_pos = 0; } // 0
-                    else if (c == 36) { line_pos = len(line_buf); } // $
-                } else {
-                    handle_printable(c);
-                }
-                render_prompt();
+            if (vim_mode == 1) {
+                handle_vim_key(c);
+            } else {
+                handle_printable(c);
             }
+            render_prompt();
         }
     }
 }

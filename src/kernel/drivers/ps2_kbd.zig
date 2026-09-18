@@ -283,3 +283,20 @@ test "Ps2Keyboard caps lock toggle" {
     try std.testing.expect(event_low != null);
     try std.testing.expectEqual('a', event_low.?.ascii);
 }
+
+test "Ps2Keyboard es_latam layout produces ñ and ¿" {
+    var kbd = Ps2Keyboard.init();
+    active_layout = .es_latam;
+    defer active_layout = .us_qwerty;
+
+    // Scancode 0x27 in Latin American is 'ñ' (0xF1)
+    const event_n = kbd.processScancode(0x27);
+    try std.testing.expect(event_n != null);
+    try std.testing.expectEqual(@as(u8, 0xF1), event_n.?.ascii);
+
+    // Scancode 0x0D in Latin American is '¿' (0xBF)
+    const event_q = kbd.processScancode(0x0D);
+    try std.testing.expect(event_q != null);
+    try std.testing.expectEqual(@as(u8, 0xBF), event_q.?.ascii);
+}
+

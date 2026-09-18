@@ -2,14 +2,14 @@ Phase 7: Declarative Hypermedia UI & Vector Graphics Substrate
 ==============================================================
 
 :Objective: Deliver a zero-waste, human-centric graphical user interface tier engineered strictly around declarative hypermedia and vector geometry, completely eradicating multi-gigabyte browser/Electron runtimes while maintaining sub-15MB memory footprints and native monitor refresh rates.
-:Status: Scheduled
+:Status: In Progress
 :Specifications: `SPEC-TECH-UI-001`, `SPEC-TECH-UI-002`, `SPEC-TECH-DESK-001`
 :Critical Path: M27 -> M28 -> M29
 
 Milestones & Deliverables
 -------------------------
 
-* **Milestone 27: Binary Reactive Hypermedia Streaming Protocol (µHTML / HyperTree)** [SCHEDULED]
+* **Milestone 27: Binary Reactive Hypermedia Streaming Protocol (µHTML / HyperTree)** [COMPLETED]
    - **Binary Component Tree Protocol**: Define compact binary UI schema streaming declarative component trees (containers, text, buttons, inputs, canvases) over shared-memory IPC rings.
    - **Reactive Signals & State Sync**: Implement fine-grained reactive state propagation; only dirty component nodes re-evaluate and stream updates.
    - **Bidirectional Event Dispatching**: Transmit pointer clicks, keyboard strokes, focus shifts, and scroll deltas from ``gopd`` back to client application fibers.

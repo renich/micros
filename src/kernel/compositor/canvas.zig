@@ -170,10 +170,9 @@ pub const Canvas = struct {
     }
 
     pub fn drawChar(self: *Canvas, x: u32, y: u32, c: u8, fg: u32, bg: u32) void {
-        if (c < 32 or c > 126) return;
+        const glyph = font_mod.getGlyph(c) orelse return;
         if (x + FONT_WIDTH > self.width or y + FONT_HEIGHT > self.height) return;
 
-        const glyph = font_mod.FONT_8X8[c - 32];
         var row: u32 = 0;
         while (row < FONT_HEIGHT) : (row += 1) {
             const bits = glyph[row];

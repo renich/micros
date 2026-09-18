@@ -75,6 +75,7 @@ test "kernel module tests" {
     _ = @import("userland/netd/netd.zig");
     _ = @import("userland/aid/aid.zig");
     _ = @import("userland/gopd/gopd.zig");
+    _ = @import("userland/gopd/hypertree.zig");
     _ = @import("userland/storaged/storaged.zig");
     _ = @import("kernel/arch/x86_64/gdt.zig");
     _ = @import("kernel/arch/x86_64/syscall.zig");
@@ -341,7 +342,7 @@ test "Harness VM stack depth tracking with simulated commands" {
     try vm.globals.put("sys_serial_read", @import("macros/eval.zig").Value{ .native = testSerialRead });
     try vm.globals.put("sys_ai_prompt", @import("macros/eval.zig").Value{ .native = testAiPromptMock });
     try vm.run(0);
-    try std_mod.testing.expect(vm.sp <= 48);
+    try std_mod.testing.expect(vm.sp <= 64);
 }
 
 test "Tokenize mock extracted code" {

@@ -88,6 +88,7 @@ fn cmd_help() {
     console_writeln("  fetch <hash>  - Retrieve payload from CAS by hash");
     console_writeln("  persist <id>  - Persist actor source to CAS root");
     console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
+    console_writeln("  layout <l>    - Set keyboard layout (es or us)");
     console_writeln("  harness       - Launch visual studio");
     console_writeln("  install       - Launch standalone silicon installer");
     console_writeln("  httpd         - Launch CAS-backed HTTP/1.1 web server");
@@ -482,6 +483,23 @@ fn eval_command(cmd) {
         }
         sys_actor_terminate(target_id);
         console_writeln("Terminated Actor " + target_s);
+        return 0;
+    }
+    if (cmd == "layout") {
+        console_writeln("Usage: layout <es|us>");
+        return 0;
+    }
+    if (is_prefix(cmd, "layout ")) {
+        arg = substr(cmd, 7, len(cmd));
+        if (arg == "es") {
+            sys_kbd_layout(1);
+            console_writeln("Keyboard layout set to ES-LATAM");
+        } else if (arg == "us") {
+            sys_kbd_layout(0);
+            console_writeln("Keyboard layout set to US-QWERTY");
+        } else {
+            console_writeln("Usage: layout <es|us>");
+        }
         return 0;
     }
     console_writeln("Unknown command: '" + cmd + "' (type 'help')");

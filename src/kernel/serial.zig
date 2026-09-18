@@ -39,12 +39,48 @@ pub fn hasChar() bool {
     return (inb(COM1 + 5) & 0x01) != 0;
 }
 
-pub fn readChar() ?u8 {
+pub fn encodeLatin1ToUtf8(c: u8, out: []u8) usize {
+    if (c >= 0x80) {
+        if (out.len < 2) return 0;
+        out[0] = @as(u8, 0xC0) | (c >> 6);
+        out[1] = @as(u8, 0x80) | (c & 0x3F);
+        return 2;
+    }
+    if (out.len < 1) return 0;
+    out[0] = c;
+    return 1;
+}
+
+pub fn decodeUtf8ToLatin1(b1: u8, b2: u8) ?u8 {
+    if ((b1 == 0xC2 or b1 == 0xC3) and ((b2 & 0xC0) == 0x80)) {
+        return ((b1 & 0x1F) << 6) | (b2 & 0x3F);
+    }
+    return null;
+}
+
+pub fn readRawChar() ?u8 {
     if (!hasChar()) return null;
     return inb(COM1);
 }
 
-pub fn writeChar(c: u8) void {
+pub fn readChar() ?u8 {
+    const b1 = readRawChar() orelse return null;
+    if (b1 == 0xC2 or b1 == 0xC3) {
+        var timeout: u32 = 10_000;
+        while (!hasChar() and timeout > 0) : (timeout -= 1) {
+            asm volatile ("pause");
+        }
+        if (hasChar()) {
+            const b2 = readRawChar() orelse return b1;
+            if (decodeUtf8ToLatin1(b1, b2)) |decoded| {
+                return decoded;
+            }
+        }
+    }
+    return b1;
+}
+
+pub fn writeRawChar(c: u8) void {
     if (builtin.is_test) return;
     var timeout: u32 = 100_000;
     while (!isTransmitEmpty() and timeout > 0) : (timeout -= 1) {
@@ -52,6 +88,15 @@ pub fn writeChar(c: u8) void {
     }
     if (timeout > 0) {
         outb(COM1, c);
+    }
+}
+
+pub fn writeChar(c: u8) void {
+    var utf8_buf: [2]u8 = undefined;
+    const len = encodeLatin1ToUtf8(c, &utf8_buf);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        writeRawChar(utf8_buf[i]);
     }
 }
 
@@ -174,3 +219,25 @@ test "serial formatDec and formatHexCompact" {
     try std.testing.expectEqualStrings("0x2A", formatHexCompact(42, &hex_buf));
     try std.testing.expectEqualStrings("0x20000", formatHexCompact(0x20000, &hex_buf));
 }
+
+test "serial Latin-1 and UTF-8 Spanish roundtrip" {
+    var out: [2]u8 = undefined;
+
+    // ñ (0xF1 -> 0xC3 0xB1)
+    const len_n = encodeLatin1ToUtf8(0xF1, &out);
+    try std.testing.expectEqual(@as(usize, 2), len_n);
+    try std.testing.expectEqual(@as(u8, 0xC3), out[0]);
+    try std.testing.expectEqual(@as(u8, 0xB1), out[1]);
+    try std.testing.expectEqual(@as(?u8, 0xF1), decodeUtf8ToLatin1(out[0], out[1]));
+
+    // ¿ (0xBF -> 0xC2 0xBF)
+    const len_q = encodeLatin1ToUtf8(0xBF, &out);
+    try std.testing.expectEqual(@as(usize, 2), len_q);
+    try std.testing.expectEqual(@as(?u8, 0xBF), decodeUtf8ToLatin1(out[0], out[1]));
+
+    // ASCII 'A' (no change)
+    const len_a = encodeLatin1ToUtf8('A', &out);
+    try std.testing.expectEqual(@as(usize, 1), len_a);
+    try std.testing.expectEqual(@as(u8, 'A'), out[0]);
+}
+
