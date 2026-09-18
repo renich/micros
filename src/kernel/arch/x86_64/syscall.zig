@@ -203,8 +203,8 @@ fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
     if (!caller.authorizesPhysicalExtent(phys, 4096, Rights.WRITE)) return -1;
     if (virt >= 0x0000_8000_0000_0000 or (virt & 0xFFF) != 0) return -4;
     if (caller.page_table_base == 0) return -2;
-    const user_flags = flags | vmm.PAGE_PRESENT | vmm.PAGE_USER;
-    if (!vmm.mapPage(caller.page_table_base, virt, phys, user_flags)) {
+    const sanitized_flags = (flags & ~vmm.PAGE_ANON) | vmm.PAGE_PRESENT | vmm.PAGE_USER | vmm.PAGE_MMIO;
+    if (!vmm.mapPage(caller.page_table_base, virt, phys, sanitized_flags)) {
         return -3;
     }
     return 0;
@@ -367,4 +367,39 @@ test "syscall dispatch: capability gating rejects untrusted actor without capabi
 
     const authorized_frame = kernelSyscallDispatch(@intFromEnum(SyscallNumber.frame_info), 2, 0, 0, 0, 0);
     try std.testing.expectEqual(@as(i64, 8192), authorized_frame);
+}
+
+test "handleMemMap capability extent check and PAGE_ANON sanitization" {
+    const allocator = std.testing.allocator;
+    var registry = actor_mod.ActorRegistry.init();
+    setRegistry(&registry);
+    setAllocator(allocator);
+    defer {
+        active_registry = null;
+        kernel_allocator = null;
+    }
+
+    const genesis = try registry.spawn(allocator, 0, "genesis", 16, 0);
+    defer registry.terminate(allocator, genesis.id) catch {};
+
+    const actor = try registry.spawn(allocator, genesis.id, "worker", 16, 0);
+    defer registry.terminate(allocator, actor.id) catch {};
+
+    const mem_cap = cap_mod.Capability{
+        .cap_type = .memory_extent,
+        .rights = Rights.READ | Rights.WRITE,
+        .object_id = 0,
+        .data_addr = 0x100000,
+        .data_size = 0x2000,
+    };
+    _ = try actor.insertCap(mem_cap);
+    setActorId(actor.id);
+
+    // Physical extent outside capability range is rejected
+    const unauth_res = handleMemMap(0x400000, 0x200000, vmm.PAGE_ANON);
+    try std.testing.expectEqual(@as(i64, -1), unauth_res);
+
+    // Authorized extent passes capability check (fails with -2 due to null page_table_base in mock)
+    const auth_res = handleMemMap(0x400000, 0x100000, vmm.PAGE_ANON);
+    try std.testing.expectEqual(@as(i64, -2), auth_res);
 }

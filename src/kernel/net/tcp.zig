@@ -321,7 +321,7 @@ pub const TcpClient = struct {
         }
 
         if ((tcp_hdr.flags & FLAG_ACK) != 0) {
-            if (isSeqGe(tcp_hdr.ack_num, self.unacked_seq)) {
+            if (isSeqGe(tcp_hdr.ack_num, self.unacked_seq) and isSeqGe(self.seq, tcp_hdr.ack_num)) {
                 self.unacked_seq = tcp_hdr.ack_num;
             }
         }
@@ -545,7 +545,7 @@ pub const TcpServerConn = struct {
 
         if ((tcp_hdr.flags & FLAG_ACK) != 0) {
             self.remote_ack = tcp_hdr.ack_num;
-            if (isSeqGe(tcp_hdr.ack_num, self.unacked_seq)) {
+            if (isSeqGe(tcp_hdr.ack_num, self.unacked_seq) and isSeqGe(self.local_seq, tcp_hdr.ack_num)) {
                 const acked: usize = @intCast(tcp_hdr.ack_num -% self.unacked_seq);
                 self.unacked_seq = tcp_hdr.ack_num;
                 self.compactTx(acked);
@@ -803,4 +803,34 @@ test "tcp server connection recycled tx buffer streaming" {
     }
     try std.testing.expectEqual(@as(usize, 0), conn.tx_len);
     try std.testing.expectEqual(@as(usize, 0), conn.tx_sent);
+}
+
+test "tcp optimistic future ACK desynchronization defense" {
+    const remote_ip = [_]u8{ 10, 0, 2, 2 };
+    const remote_mac = [_]u8{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
+    var conn = TcpServerConn.init(3, 80, 54323, remote_ip, remote_mac, 1000, 5000, 0);
+
+    const data = "hello world";
+    _ = try conn.queueTx(data);
+    try std.testing.expectEqual(@as(usize, data.len), conn.tx_len);
+
+    const initial_unacked = conn.unacked_seq;
+
+    // Attacker sends optimistic future ACK 1,000,000 bytes ahead of local_seq
+    const optimistic_ack = TcpHeader{
+        .src_port = 54323,
+        .dst_port = 80,
+        .seq_num = conn.remote_seq,
+        .ack_num = conn.local_seq +% 1_000_000,
+        .data_offset = 5,
+        .flags = FLAG_ACK,
+        .window_size = 65535,
+        .checksum = 0,
+        .urgent_ptr = 0,
+    };
+    _ = conn.processSegment(optimistic_ack, &[_]u8{});
+
+    // Unacked sequence must NOT advance and TX buffer must remain intact
+    try std.testing.expectEqual(initial_unacked, conn.unacked_seq);
+    try std.testing.expectEqual(@as(usize, data.len), conn.tx_len);
 }

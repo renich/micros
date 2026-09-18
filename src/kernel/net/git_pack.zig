@@ -89,11 +89,14 @@ pub fn parseObjectHeader(data: []const u8) ?ObjectHeader {
     };
 }
 
+pub const MAX_GIT_OBJECT_SIZE: usize = 1024 * 1024; // 1 MiB upper bound to prevent OOM DoS
+
 pub fn decompressObject(
     allocator: std.mem.Allocator,
     input_slice: []const u8,
     uncompressed_size: usize,
 ) !struct { data: []u8, consumed_bytes: usize } {
+    if (uncompressed_size > MAX_GIT_OBJECT_SIZE) return error.ObjectTooLarge;
     var in_reader: std.Io.Reader = .fixed(input_slice);
     const out = try allocator.alloc(u8, uncompressed_size);
     errdefer allocator.free(out);
@@ -229,4 +232,10 @@ test "packfile object header rejects unbounded msb chain" {
     // 12 consecutive bytes with MSB=1 to attempt shifting >= 64 bits
     const malicious = [_]u8{0x90} ++ ([_]u8{0x81} ** 12);
     try std.testing.expect(parseObjectHeader(&malicious) == null);
+}
+
+test "packfile decompressObject rejects oversized uncompressed_size" {
+    const allocator = std.testing.allocator;
+    const dummy_data = [_]u8{ 0x78, 0x9c };
+    try std.testing.expectError(error.ObjectTooLarge, decompressObject(allocator, &dummy_data, MAX_GIT_OBJECT_SIZE + 1));
 }

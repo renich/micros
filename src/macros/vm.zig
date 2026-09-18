@@ -307,7 +307,8 @@ pub const VM = struct {
     }
 
     fn execClosure(self: *VM) !void {
-        const constant = try self.pop();
+        if (self.sp == 0) return InterpretError.StackUnderflow;
+        const constant = self.stack[self.sp - 1];
         if (constant != .function) return InterpretError.RuntimeError;
 
         var closure = try self.allocator.create(eval.Closure);
@@ -335,6 +336,7 @@ pub const VM = struct {
             }
         }
 
+        self.sp -= 1;
         try self.push(.{ .closure = closure });
     }
 
@@ -417,21 +419,25 @@ pub const VM = struct {
     }
 
     fn execBinaryAdd(self: *VM) !void {
-        const b = try self.pop();
-        const a = try self.pop();
+        if (self.sp < 2) return InterpretError.StackUnderflow;
+        const b = self.stack[self.sp - 1];
+        const a = self.stack[self.sp - 2];
         if (a == .integer and b == .integer) {
-            try self.push(.{ .integer = a.integer + b.integer });
+            self.sp -= 2;
+            try self.push(.{ .integer = a.integer +% b.integer });
         } else if (a == .string and b == .string) {
             const new_len = a.string.len + b.string.len;
             const new_str = try self.allocator.alloc(u8, new_len);
             @memcpy(new_str[0..a.string.len], a.string);
             @memcpy(new_str[a.string.len..], b.string);
+            self.sp -= 2;
             try self.push(.{ .string = new_str });
         } else if (a == .array and b == .array) {
             const new_len = a.array.len + b.array.len;
             const new_arr = try self.allocator.alloc(eval.Value, new_len);
             @memcpy(new_arr[0..a.array.len], a.array);
             @memcpy(new_arr[a.array.len..], b.array);
+            self.sp -= 2;
             try self.push(.{ .array = new_arr });
         } else {
             return InterpretError.RuntimeError;
@@ -599,7 +605,7 @@ pub const VM = struct {
     fn execIndexGet(self: *VM) !void {
         const index_val = try self.pop();
         const target_val = try self.pop();
-        if (index_val != .integer) return InterpretError.RuntimeError;
+        if (index_val != .integer or index_val.integer < 0) return InterpretError.RuntimeError;
         const idx: usize = @intCast(index_val.integer);
         if (target_val == .array) {
             if (idx >= target_val.array.len) return InterpretError.RuntimeError;
@@ -614,8 +620,11 @@ pub const VM = struct {
 
     fn execBuildDict(self: *VM) !void {
         const arg_count = self.readByte();
+        if (self.sp < @as(usize, arg_count) * 2) return InterpretError.StackUnderflow;
         const dict = try self.allocator.create(eval.Dict);
+        errdefer self.allocator.destroy(dict);
         const entries = try self.allocator.alloc(eval.Dict.Entry, arg_count);
+        errdefer self.allocator.free(entries);
 
         var i: usize = 0;
         while (i < arg_count) : (i += 1) {
@@ -645,10 +654,11 @@ pub const VM = struct {
     }
 
     fn execSetProperty(self: *VM) !void {
-        const val = try self.pop();
-        const name_val = self.readConstant();
-        const obj = try self.pop();
+        if (self.sp < 2) return InterpretError.StackUnderflow;
+        const val = self.stack[self.sp - 1];
+        const obj = self.stack[self.sp - 2];
         if (obj != .dict) return InterpretError.RuntimeError;
+        const name_val = self.readConstant();
 
         var found = false;
         for (obj.dict.entries) |*entry| {
@@ -659,12 +669,12 @@ pub const VM = struct {
             }
         }
         if (!found) {
-            // Allocate a larger array
             const new_entries = try self.allocator.alloc(eval.Dict.Entry, obj.dict.entries.len + 1);
             @memcpy(new_entries[0..obj.dict.entries.len], obj.dict.entries);
             new_entries[obj.dict.entries.len] = .{ .key = name_val.string, .value = val };
             obj.dict.entries = new_entries;
         }
+        self.sp -= 2;
         try self.push(val);
     }
 
@@ -672,7 +682,7 @@ pub const VM = struct {
         const index_val = try self.pop();
         const target_val = try self.pop();
         const value = try self.pop();
-        if (index_val != .integer) return InterpretError.RuntimeError;
+        if (index_val != .integer or index_val.integer < 0) return InterpretError.RuntimeError;
         const idx: usize = @intCast(index_val.integer);
         if (target_val != .array) return InterpretError.RuntimeError;
         if (idx >= target_val.array.len) return InterpretError.RuntimeError;
