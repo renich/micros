@@ -10,6 +10,13 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 23b (Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate - SPEC-TECH-SMP-001)**:
+  - **Local APIC & Calibrated 1000Hz Preemption Timer**: Implemented freestanding x86_64 Local APIC driver in ``src/kernel/arch/x86_64/apic.zig`` supporting memory-mapped I/O access, Spurious Interrupt Vector Register (SIVR) software enablement, Task Priority Register (TPR) masking, End-Of-Interrupt (EOI) signaling, and periodic timer configuration on IDT vector 32 (0x20) with a calibrated 1ms preemption quantum.
+  - **Preemptive Interrupt Gate & IDT Vector 32**: Wired IDT gate 32 (0x20) in ``src/kernel/arch/x86_64/idt.zig`` with naked assembly trampoline (``apicTimerInterruptHandler``) saving and restoring all caller-saved registers, maintaining 16-byte stack alignment, and executing ``apicTimerHandlerZig`` to trigger per-core quantum decrement and scheduler preemption without cooperative starvation.
+  - **Lock-Free Multi-Producer Single-Consumer (MPSC) Ring Buffer**: Engineered bounded lock-free ``MpscRingBuffer`` in ``src/kernel/ipc/ring.zig`` utilizing Vyukov sequence slots, ticket reservation via atomic compare-and-swap, 64-byte cacheline separation to eradicate false sharing, and acquire/release memory semantics for concurrent multi-core IPC submission.
+  - **SMP Topology & Work-Stealing Preemptive Scheduler**: Implemented multi-core topology state machine in ``src/kernel/sched/smp.zig`` managing per-core execution queues, Bootstrap Processor (BSP) initialization, APIC INIT-SIPI-SIPI secondary core bringup sequencing, round-robin timeslice enforcement, and bounded lock-free work-stealing from overloaded peer cores.
+  - **Verification**: Added colocated unit tests across APIC, SMP, IDT, and MPSC ring buffer modules, bringing the test suite to 324/324 passing green tests, verified 100% bidirectional specification traceability against ``SPEC-TECH-SMP-001``, and validated live QEMU UEFI boot.
+
 - **Milestone 23a (Hardware Ring 3 Privilege Isolation & Fast Syscall Substrate - SPEC-TECH-CAP-002)**:
   - **Task State Segment (TSS) & Hardware Privilege Rings**: Implemented 104-byte ``TaskStateSegment`` and 16-byte ``TssDescriptor`` in ``src/kernel/arch/x86_64/gdt.zig``, expanded GDT with Ring 3 user code/data descriptors (0x18, 0x20, 0x28) and TSS descriptor (0x30), and executed ``ltr`` instruction.
   - **Fast Syscall ABI (LSTAR/STAR)**: Implemented freestanding x86_64 fast syscall substrate in ``src/kernel/arch/x86_64/syscall.zig`` configuring ``IA32_EFER.SCE``, ``IA32_STAR``, ``IA32_LSTAR``, ``IA32_SFMASK``, and ``IA32_KERNEL_GS_BASE`` with unforgeable stack isolation and atomic ``swapgs``.

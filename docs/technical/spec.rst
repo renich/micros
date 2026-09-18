@@ -40,6 +40,7 @@ Technical Sub-Specifications
    specs/content-addressed-modules
    specs/microkernel-network-decoupling
    specs/hardware-ring3-syscall
+   specs/smp-apic-preemption
 
 Engineering & Coding Guides
 ===========================

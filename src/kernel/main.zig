@@ -12,6 +12,8 @@ const pmm = @import("mem/pmm.zig");
 const vmm = @import("mem/vmm.zig");
 const io = @import("arch/x86_64/io.zig");
 const syscall = @import("arch/x86_64/syscall.zig");
+const apic = @import("arch/x86_64/apic.zig");
+const smp = @import("sched/smp.zig");
 const vm_mod = @import("../macros/vm.zig");
 const chunk_mod = @import("../macros/chunk.zig");
 const eval_mod = @import("../macros/eval.zig");
@@ -115,6 +117,10 @@ fn initHardware(boot_info: *const BootInfo) void {
     syscall.setDeviceHandlers(frameInfoBridge, irqAckBridge);
     serial.writeStatusOk("priv", "TSS Ring 3 and Fast Syscall (LSTAR) ready");
     actor_mod.ActorRegistry.page_table_destructor = vmm.destroyActorAddressSpace;
+    apic.enableLapic(boot_info.hhdm_offset);
+    apic.initTimer(apic.DEFAULT_QUANTUM_TICKS);
+    smp.global_topology.bootstrapSecondaryCores(1);
+    serial.writeStatusOk("smp ", "Local APIC 1000Hz preemption timer & SMP topology online");
     initNetwork(boot_info);
 }
 

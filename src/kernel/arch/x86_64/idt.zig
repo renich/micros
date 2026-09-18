@@ -2,12 +2,15 @@
 // Eradicates uncontained panics: traps child actor faults into supervisor frames.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const serial = @import("../../serial.zig");
 const fiber = @import("../../../macros/fiber.zig");
 const ring_mod = @import("../../ipc/ring.zig");
 const events_mod = @import("../../ipc/events.zig");
 const ps2_kbd = @import("../../drivers/ps2_kbd.zig");
 const supervisor_mod = @import("../../supervisor.zig");
+const apic = @import("apic.zig");
+const smp = @import("../../sched/smp.zig");
 
 pub const IdtEntry = extern struct {
     offset_low: u16,
@@ -102,7 +105,7 @@ fn logSupervisorTrap(actor_id: u32, rip: u64, cr2: u64, frame: *const ExceptionS
 
 export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     const rip = frame.rip;
-    const cr2 = asm volatile ("mov %%cr2, %[ret]"
+    const cr2 = if (builtin.is_test) 0 else asm volatile ("mov %%cr2, %[ret]"
         : [ret] "=r" (-> u64),
     );
 
@@ -141,14 +144,18 @@ fn isErrorCodeVector(vec: u8) bool {
 
 export fn exceptionHandlerWithError() callconv(.naked) void {
     asm volatile (
-        \\ jmp commonExceptionHandler
+        \\ jmp *%[handler]
+        :
+        : [handler] "r" (&commonExceptionHandler),
     );
 }
 
 export fn exceptionHandlerNoError() callconv(.naked) void {
     asm volatile (
         \\ pushq $0
-        \\ jmp commonExceptionHandler
+        \\ jmp *%[handler]
+        :
+        : [handler] "r" (&commonExceptionHandler),
     );
 }
 
@@ -166,7 +173,7 @@ export fn commonExceptionHandler() callconv(.naked) void {
         \\ leaq 72(%%rsp), %%rdi
         \\ movq %%rdi, %%rcx
         \\ subq $40, %%rsp
-        \\ call exceptionHandlerZig
+        \\ call *%[handler]
         \\ addq $40, %%rsp
         \\ pop %%r11
         \\ pop %%r10
@@ -179,6 +186,8 @@ export fn commonExceptionHandler() callconv(.naked) void {
         \\ pop %%rax
         \\ addq $8, %%rsp
         \\ iretq
+        :
+        : [handler] "r" (&exceptionHandlerZig),
     );
 }
 
@@ -193,10 +202,12 @@ export fn kbdHandlerZig() void {
     }
 
     fiber.unpark(1);
-    asm volatile (
-        \\ movb $0x20, %al
-        \\ outb %al, $0x20
-    );
+    if (!builtin.is_test) {
+        asm volatile (
+            \\ movb $0x20, %%al
+            \\ outb %%al, $0x20
+        );
+    }
 }
 
 fn keyboardInterruptHandler() callconv(.naked) void {
@@ -211,7 +222,7 @@ fn keyboardInterruptHandler() callconv(.naked) void {
         \\ push %%r10
         \\ push %%r11
         \\ subq $40, %%rsp
-        \\ call kbdHandlerZig
+        \\ call *%[handler]
         \\ addq $40, %%rsp
         \\ pop %%r11
         \\ pop %%r10
@@ -223,7 +234,49 @@ fn keyboardInterruptHandler() callconv(.naked) void {
         \\ pop %%rcx
         \\ pop %%rax
         \\ iretq
+        :
+        : [handler] "r" (&kbdHandlerZig),
     );
+}
+
+export fn apicTimerHandlerZig() void {
+    apic.total_ticks +%= 1;
+    const core = smp.global_topology.getCurrentCore();
+    _ = smp.global_topology.tick(core.core_id);
+    apic.eoi();
+}
+
+fn apicTimerInterruptHandler() callconv(.naked) void {
+    asm volatile (
+        \\ push %%rax
+        \\ push %%rcx
+        \\ push %%rdx
+        \\ push %%rsi
+        \\ push %%rdi
+        \\ push %%r8
+        \\ push %%r9
+        \\ push %%r10
+        \\ push %%r11
+        \\ subq $40, %%rsp
+        \\ call *%[handler]
+        \\ addq $40, %%rsp
+        \\ pop %%r11
+        \\ pop %%r10
+        \\ pop %%r9
+        \\ pop %%r8
+        \\ pop %%rdi
+        \\ pop %%rsi
+        \\ pop %%rdx
+        \\ pop %%rcx
+        \\ pop %%rax
+        \\ iretq
+        :
+        : [handler] "r" (&apicTimerHandlerZig),
+    );
+}
+
+pub fn getGate(vec: u8) IdtEntry {
+    return idt_entries[vec];
 }
 
 pub fn init() void {
@@ -240,14 +293,32 @@ pub fn init() void {
         setGate(i, handler_addr, 0x8E);
     }
 
+    const apic_timer_addr = @intFromPtr(&apicTimerInterruptHandler);
+    setGate(32, apic_timer_addr, 0x8E);
+
     const kbd_handler_addr = @intFromPtr(&keyboardInterruptHandler);
     setGate(33, kbd_handler_addr, 0x8E);
 
     idt_ptr.limit = @sizeOf(@TypeOf(idt_entries)) - 1;
     idt_ptr.base = @intFromPtr(&idt_entries);
 
-    asm volatile ("lidt (%[ptr])"
-        :
-        : [ptr] "r" (&idt_ptr),
-    );
+    if (!builtin.is_test) {
+        asm volatile ("lidt (%[ptr])"
+            :
+            : [ptr] "r" (&idt_ptr),
+        );
+    }
+}
+
+test "IDT APIC timer gate 32 and interrupt vector layout" {
+    const apic_timer_addr = @intFromPtr(&apicTimerInterruptHandler);
+    setGate(32, apic_timer_addr, 0x8E);
+    const gate32 = getGate(32);
+    try std.testing.expectEqual(@as(u8, 0x8E), gate32.type_attr);
+    try std.testing.expectEqual(@as(u16, 0x08), gate32.selector);
+
+    const full_offset: u64 = @as(u64, gate32.offset_low) |
+        (@as(u64, gate32.offset_mid) << 16) |
+        (@as(u64, gate32.offset_high) << 32);
+    try std.testing.expectEqual(apic_timer_addr, full_offset);
 }

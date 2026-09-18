@@ -207,3 +207,135 @@ test "SpscRingBuffer page-aligned single byte FIFO roundtrip" {
     try std.testing.expectEqual(@as(?u8, 42), spsc.readByte());
     try std.testing.expect(spsc.isEmpty());
 }
+
+pub const MpscSlot = struct {
+    sequence: std.atomic.Value(usize) align(64),
+    frame: MessageFrame,
+};
+
+pub const MpscRingBuffer = struct {
+    slots: []MpscSlot,
+    capacity: usize,
+    mask: usize,
+    head: std.atomic.Value(usize) align(64),
+    tail: std.atomic.Value(usize) align(64),
+
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !*MpscRingBuffer {
+        if (!std.math.isPowerOfTwo(capacity)) return error.InvalidCapacity;
+        const ring = try allocator.create(MpscRingBuffer);
+        errdefer allocator.destroy(ring);
+
+        const slots = try allocator.alloc(MpscSlot, capacity);
+        errdefer allocator.free(slots);
+
+        for (slots, 0..) |*slot, i| {
+            slot.* = MpscSlot{
+                .sequence = std.atomic.Value(usize).init(i),
+                .frame = MessageFrame.EMPTY,
+            };
+        }
+
+        ring.* = MpscRingBuffer{
+            .slots = slots,
+            .capacity = capacity,
+            .mask = capacity - 1,
+            .head = std.atomic.Value(usize).init(0),
+            .tail = std.atomic.Value(usize).init(0),
+        };
+        return ring;
+    }
+
+    pub fn deinit(self: *MpscRingBuffer, allocator: std.mem.Allocator) void {
+        allocator.free(self.slots);
+        allocator.destroy(self);
+    }
+
+    pub fn push(self: *MpscRingBuffer, frame: MessageFrame) bool {
+        var pos = self.head.load(.monotonic);
+        while (true) {
+            const slot = &self.slots[pos & self.mask];
+            const seq = slot.sequence.load(.acquire);
+            const diff: isize = @as(isize, @bitCast(seq)) -% @as(isize, @bitCast(pos));
+            if (diff == 0) {
+                if (self.head.cmpxchgWeak(pos, pos +% 1, .monotonic, .monotonic)) |next_pos| {
+                    pos = next_pos;
+                } else {
+                    slot.frame = frame;
+                    slot.sequence.store(pos +% 1, .release);
+                    return true;
+                }
+            } else if (diff < 0) {
+                return false;
+            } else {
+                pos = self.head.load(.monotonic);
+            }
+        }
+    }
+
+    pub fn pop(self: *MpscRingBuffer) ?MessageFrame {
+        const pos = self.tail.load(.monotonic);
+        const slot = &self.slots[pos & self.mask];
+        const seq = slot.sequence.load(.acquire);
+        const diff: isize = @as(isize, @bitCast(seq)) -% @as(isize, @bitCast(pos +% 1));
+        if (diff == 0) {
+            const frame = slot.frame;
+            slot.sequence.store(pos +% self.capacity, .release);
+            self.tail.store(pos +% 1, .monotonic);
+            return frame;
+        }
+        return null;
+    }
+
+    pub fn isEmpty(self: *const MpscRingBuffer) bool {
+        const tail = self.tail.load(.monotonic);
+        const head = self.head.load(.monotonic);
+        return head == tail;
+    }
+
+    pub fn isFull(self: *const MpscRingBuffer) bool {
+        const tail = self.tail.load(.acquire);
+        const head = self.head.load(.acquire);
+        return (head -% tail) >= self.capacity;
+    }
+
+    pub fn count(self: *const MpscRingBuffer) usize {
+        const tail = self.tail.load(.acquire);
+        const head = self.head.load(.acquire);
+        const diff = head -% tail;
+        if (diff > self.capacity) return 0;
+        return diff;
+    }
+};
+
+test "MpscRingBuffer lock-free concurrent multi-producer FIFO ordering" {
+    const allocator = std.testing.allocator;
+    var mpsc = try MpscRingBuffer.init(allocator, 8);
+    defer mpsc.deinit(allocator);
+
+    try std.testing.expect(mpsc.isEmpty());
+    try std.testing.expectEqual(@as(usize, 0), mpsc.count());
+
+    const f1 = MessageFrame.init(.telemetry, 101, "core0_msg");
+    const f2 = MessageFrame.init(.telemetry, 102, "core1_msg");
+    const f3 = MessageFrame.init(.telemetry, 103, "core2_msg");
+
+    try std.testing.expect(mpsc.push(f1));
+    try std.testing.expect(mpsc.push(f2));
+    try std.testing.expect(mpsc.push(f3));
+    try std.testing.expectEqual(@as(usize, 3), mpsc.count());
+
+    const r1 = mpsc.pop().?;
+    try std.testing.expectEqual(@as(u32, 101), r1.sequence);
+    try std.testing.expectEqualStrings("core0_msg", r1.payload[0..r1.payload_len]);
+
+    const r2 = mpsc.pop().?;
+    try std.testing.expectEqual(@as(u32, 102), r2.sequence);
+    try std.testing.expectEqualStrings("core1_msg", r2.payload[0..r2.payload_len]);
+
+    const r3 = mpsc.pop().?;
+    try std.testing.expectEqual(@as(u32, 103), r3.sequence);
+    try std.testing.expectEqualStrings("core2_msg", r3.payload[0..r3.payload_len]);
+
+    try std.testing.expect(mpsc.isEmpty());
+    try std.testing.expect(mpsc.pop() == null);
+}

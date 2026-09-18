@@ -16,7 +16,7 @@ Milestones & Deliverables
    - **Blocked By**: Phase 5 completion.
    - **Unblocks**: M23b, M24, M25.
 
-* **Milestone 23b: Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate** [ACTIVE]
+* **Milestone 23b: Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate** [COMPLETED]
    - **Local APIC Timer Preemption**: Program Local APIC timer for periodic hardware interrupts (1000Hz quantum) via IDT vector ``0x20``.
    - **Preemptive Context Switching**: Save and restore full CPU register state (``pushaq``/``popaq``, ``iretq``) on timer ticks, eliminating cooperative scheduling starvation.
    - **APIC INIT-SIPI-SIPI Multicore Bringup**: Bootstrap secondary Application Processors (APs) into 64-bit Long Mode and establish per-core runqueues with lock-free work-stealing.
@@ -24,7 +24,7 @@ Milestones & Deliverables
    - **Blocked By**: M23a.
    - **Unblocks**: M24, M25.
 
-* **Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)** [SCHEDULED]
+* **Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)** [ACTIVE]
    - **Display Server Actor (gopd)**: Migrate GOP linear framebuffer backbuffer mapping and AABB damage tracking out of Ring 0 into ``src/userland/gopd/gopd.zig``.
    - **Framebuffer MMIO Delegation**: Delegate physical VRAM frame mapping via capability primitives (``sys_frame_info``) without ambient kernel authority.
    - **Unified Pointer & Keyboard Ingress**: Implement PS/2 mouse packet decoding and baseline xHCI USB HID pointer/keyboard parsing in userland.

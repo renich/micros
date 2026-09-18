@@ -35,6 +35,8 @@ pub const ai = @import("kernel/ai.zig");
 pub const compositor = @import("kernel/compositor.zig");
 pub const netd = @import("userland/netd/netd.zig");
 pub const aid = @import("userland/aid/aid.zig");
+pub const apic = @import("kernel/arch/x86_64/apic.zig");
+pub const smp = @import("kernel/sched/smp.zig");
 
 test "kernel module tests" {
     _ = @import("kernel/cap/capability.zig");
@@ -73,6 +75,9 @@ test "kernel module tests" {
     _ = @import("kernel/arch/x86_64/gdt.zig");
     _ = @import("kernel/arch/x86_64/syscall.zig");
     _ = @import("kernel/mem/vmm.zig");
+    _ = @import("kernel/arch/x86_64/apic.zig");
+    _ = @import("kernel/sched/smp.zig");
+    _ = @import("kernel/arch/x86_64/idt.zig");
 }
 
 test "Genesis Bundle contains and compiles init.mx" {
