@@ -10,6 +10,14 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 19 (Git Smart HTTP Transport & CAS Packfile Substrate - SPEC-TECH-NET-003)**:
+  - **Git Packet-Line Protocol Engine**: Implemented ``writePktLine``, ``writeFlush``, ``writeDelim``, ``parsePktLine``, and ``parsePushCommand`` in ``src/kernel/net/git_pkt.zig`` with 4-byte hex length prefixing and zero-copy slicing.
+  - **Smart HTTP Discovery & Report-Status**: Implemented ``buildAdvertisementBody`` and ``buildReportStatusBody`` in ``src/kernel/net/git_transport.zig``, generating capability advertisements (``report-status``, ``delete-refs``) and push report confirmations without sideband framing.
+  - **Freestanding Git Packfile Parser & Decompressor**: Implemented ``parsePackHeader``, variable-length MSB object header decoding, and object decompression in ``src/kernel/net/git_pack.zig`` using freestanding ``std.compress.flate`` (``.zlib``) with zero libc dependencies.
+  - **Content-Addressed Git Ingestion & Syscall ABI**: Implemented ``src/kernel/net/git_abi.zig`` resolving commit tree structures, ingesting Git blob payloads into ``CasEngine`` under 256-bit BLAKE3 hashes, advancing repository branch tips monotonically, and exposing capability-gated syscalls (``sys_git_advertise_refs``, ``sys_git_receive_pack``, ``sys_git_get_head``, ``sys_git_cat_file``).
+  - **Autonomous Web Server Git Integration**: Expanded ``lib/macros/http_server.mx`` with Git endpoint routing (``GET /<repo>.git/info/refs``, ``POST /<repo>.git/git-receive-pack``), automatically serving pushed files (such as ``index.html``) directly from CAS upon push.
+  - **Live QEMU End-to-End Verification**: Verified standard host workstation ``git push http://127.0.0.1:8080/site.git master`` successfully pushing commits into running MicrOS node under QEMU and verified instant live HTTP serving of pushed web content.
+
 - **Milestone 18 (Fast-Path TCP Server Substrate - SPEC-TECH-NET-002)**:
   - **Stateless BLAKE3 SYN-Cookies**: Implemented ``computeSynCookie`` and ``verifySynCookie`` in ``src/kernel/net/tcp.zig``, hashing 24-byte 4-tuple, client ISN, and 64-bit kernel secret nonce with BLAKE3 to prevent SYN flood denial of service with zero pre-handshake memory allocation.
   - **Fast-Path TCP Server Engine & In-Order Dropping**: Implemented ``TcpListener`` and ``TcpServerConn`` in ``src/kernel/net/tcp.zig`` with 9-state RFC 9293 state machine, 16 KiB circular RX/TX buffers, in-order packet dropping, and cooperative FIN/ACK teardown.

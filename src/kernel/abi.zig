@@ -29,6 +29,7 @@ pub const storage_abi = @import("storage/storage_abi.zig");
 pub const registerBlockDevice = storage_abi.registerBlockDevice;
 pub const setRebuildEngine = storage_abi.setRebuildEngine;
 pub const net_abi = @import("net/net_abi.zig");
+pub const git_abi = @import("net/git_abi.zig");
 const cap_mod = @import("cap/capability.zig");
 const net_stack_mod = @import("net/stack.zig");
 const NetworkStack = net_stack_mod.NetworkStack;
@@ -80,12 +81,15 @@ pub fn setContext(ctx: *AbiContext) void {
     active_ctx = ctx;
     storage_abi.caller_auth_fn = checkCallerAuthority;
     net_abi.setNetworkContext(ctx.net_stack, checkCallerAuthority, getCallerActorId);
+    git_abi.setCasContext(ctx.cas_put_fn, ctx.cas_get_fn);
+    git_abi.setCallerAuth(checkCallerAuthority);
 }
 
 pub fn clearContext() void {
     active_ctx = null;
     storage_abi.caller_auth_fn = null;
     net_abi.clearNetworkContext();
+    git_abi.clearGitContext();
 }
 
 fn castToU32(val: i64) ?u32 {
@@ -571,6 +575,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_pointer_read", Value{ .native = nativeSysPointerRead });
     try storage_abi.registerStorageSyscalls(vm);
     try net_abi.registerNetworkSyscalls(vm);
+    try git_abi.registerGitSyscalls(vm);
 }
 
 pub const registerBindings = registerSyscalls;

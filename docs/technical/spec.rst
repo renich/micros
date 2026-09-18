@@ -33,6 +33,7 @@ Technical Sub-Specifications
    specs/reactive-compositor
    specs/sovereign-cord-cutting
    specs/fast-path-tcp-server
+   specs/git-smart-http-ingestion
 
 Engineering & Coding Guides
 ===========================

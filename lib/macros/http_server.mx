@@ -1,5 +1,6 @@
 // MicrOS (µOS) CAS-Backed HTTP/1.1 Web Server Actor
-// Serves static landing page, system telemetry, and content-addressed blobs from BLAKE3 CAS.
+// Serves static landing page, system telemetry, content-addressed blobs,
+// and Git Smart HTTP push endpoints directly backed by BLAKE3 CAS.
 // Freestanding Macros userspace actor.
 
 fn http_send_response(conn, status_code, status_text, content_type, body) {
@@ -13,44 +14,168 @@ fn http_send_response(conn, status_code, status_text, content_type, body) {
     return 0;
 }
 
+fn http_send_git_response(conn, content_type, body) {
+    resp = "HTTP/1.1 200 OK\r\n";
+    resp = resp + "Content-Type: " + content_type + "\r\n";
+    resp = resp + "Cache-Control: no-cache\r\n";
+    resp = resp + "Content-Length: " + int_to_str(len(body)) + "\r\n";
+    resp = resp + "Connection: close\r\n\r\n";
+    resp = resp + body;
+    sys_net_send(conn, resp);
+    sys_net_close(conn);
+    return 0;
+}
+
+fn parse_http_method(req) {
+    if (len(req) >= 4) {
+        if (substr(req, 0, 4) == "GET ") {
+            return "GET";
+        }
+    }
+    if (len(req) >= 5) {
+        if (substr(req, 0, 5) == "POST ") {
+            return "POST";
+        }
+    }
+    return "";
+}
+
 fn parse_http_path(req) {
     if (len(req) < 5) {
         return "";
     }
-    if (substr(req, 0, 4) != "GET ") {
+    first_space = -1;
+    idx = 0;
+    while (idx < 10) {
+        if (idx < len(req)) {
+            if (substr(req, idx, idx + 1) == " ") {
+                first_space = idx;
+                idx = 100;
+            }
+        }
+        idx = idx + 1;
+    }
+    if (first_space < 0) {
         return "";
     }
-    slen = len(req);
-    end_idx = 4;
-    while (end_idx < slen) {
+    start_idx = first_space + 1;
+    end_idx = start_idx;
+    while (end_idx < len(req)) {
         ch = substr(req, end_idx, end_idx + 1);
         if (ch == " ") {
-            return substr(req, 4, end_idx);
+            return substr(req, start_idx, end_idx);
         }
         if (ch == "\r") {
-            return substr(req, 4, end_idx);
+            return substr(req, start_idx, end_idx);
         }
         if (ch == "\n") {
-            return substr(req, 4, end_idx);
+            return substr(req, start_idx, end_idx);
         }
         end_idx = end_idx + 1;
     }
-    return substr(req, 4, end_idx);
+    return substr(req, start_idx, end_idx);
+}
+
+fn extract_http_body(req) {
+    if (len(req) < 4) {
+        return "";
+    }
+    idx = 0;
+    max_search = len(req) - 3;
+    while (idx < max_search) {
+        if (substr(req, idx, idx + 4) == "\r\n\r\n") {
+            return substr(req, idx + 4, len(req));
+        }
+        idx = idx + 1;
+    }
+    return "";
+}
+
+fn extract_repo_name(path) {
+    if (len(path) < 2) {
+        return "";
+    }
+    if (substr(path, 0, 1) != "/") {
+        return "";
+    }
+    idx = 1;
+    while (idx < len(path)) {
+        if (substr(path, idx, idx + 1) == "/") {
+            repo = substr(path, 1, idx);
+            if (repo == "info") {
+                return "";
+            }
+            return repo;
+        }
+        idx = idx + 1;
+    }
+    return "";
+}
+
+fn is_git_info_refs(path) {
+    if (len(path) < 10) {
+        return 0;
+    }
+    idx = 0;
+    max_idx = len(path) - 10;
+    while (idx <= max_idx) {
+        if (substr(path, idx, idx + 10) == "/info/refs") {
+            return 1;
+        }
+        idx = idx + 1;
+    }
+    return 0;
+}
+
+fn is_git_receive_pack(path) {
+    if (len(path) < 17) {
+        return 0;
+    }
+    idx = 0;
+    max_idx = len(path) - 17;
+    while (idx <= max_idx) {
+        if (substr(path, idx, idx + 17) == "/git-receive-pack") {
+            return 1;
+        }
+        idx = idx + 1;
+    }
+    return 0;
+}
+
+fn handle_git_discovery(conn, path) {
+    repo = extract_repo_name(path);
+    adv = sys_git_advertise_refs(repo);
+    http_send_git_response(conn, "application/x-git-receive-pack-advertisement", adv);
+    return 0;
+}
+
+fn handle_git_receive(conn, path, req) {
+    repo = extract_repo_name(path);
+    body = extract_http_body(req);
+    res = sys_git_receive_pack(repo, body);
+    http_send_git_response(conn, "application/x-git-receive-pack-result", res);
+    return 0;
 }
 
 fn serve_index(conn) {
+    git_site = sys_git_cat_file("", "index.html");
+    if (len(git_site) > 0) {
+        http_send_response(conn, 200, "OK", "text/html", git_site);
+        return 0;
+    }
     html = "<!DOCTYPE html><html><head><title>MicrOS Autonomous Web</title></head>";
     html = html + "<body style=\"background:#0d1117;color:#c9d1d9;font-family:sans-serif;padding:2rem;\">";
     html = html + "<h1>MicrOS (uOS) Autonomous Substrate</h1>";
     html = html + "<p>Fast-Path Zero-Copy TCP Server Online.</p>";
     html = html + "<p>Direct BLAKE3 Content-Addressed Storage enabled.</p>";
+    html = html + "<p>Git Smart HTTP Ingestion Substrate Ready.</p>";
     html = html + "</body></html>\r\n";
     http_send_response(conn, 200, "OK", "text/html", html);
     return 0;
 }
 
 fn serve_status(conn) {
-    json = "{\"status\":\"healthy\",\"os\":\"micros\",\"version\":\"0.15.0\",\"arch\":\"x86_64\"}\r\n";
+    json = "{\"status\":\"healthy\",\"os\":\"micros\",\"version\":\"0.15.0\",\"arch\":\"x86_64\",\"git_transport\":\"active\"}\r\n";
     http_send_response(conn, 200, "OK", "application/json", json);
     return 0;
 }
@@ -65,42 +190,60 @@ fn serve_cas(conn, hash) {
     return 0;
 }
 
+fn serve_git_file(conn, filename) {
+    content = sys_git_cat_file("", filename);
+    if (len(content) > 0) {
+        http_send_response(conn, 200, "OK", "text/plain", content);
+        return 1;
+    }
+    return 0;
+}
+
 fn handle_connection(conn) {
-    req = sys_net_recv(conn, 2048);
+    req = sys_net_recv(conn, 16384);
     if (len(req) == 0) {
         sys_net_close(conn);
         return 0;
     }
-
+    method = parse_http_method(req);
     path = parse_http_path(req);
     if (len(path) == 0) {
         http_send_response(conn, 400, "Bad Request", "text/plain", "Bad Request\r\n");
         return 0;
     }
-
-    if (path == "/") {
-        serve_index(conn);
-        return 0;
-    }
-    if (path == "/index.html") {
-        serve_index(conn);
-        return 0;
-    }
-    if (path == "/health") {
-        serve_status(conn);
-        return 0;
-    }
-    if (path == "/status") {
-        serve_status(conn);
-        return 0;
-    }
-    if (len(path) >= 68) {
-        if (substr(path, 0, 4) == "/b3/") {
-            serve_cas(conn, substr(path, 4, 68));
+    if (method == "GET") {
+        if (is_git_info_refs(path) == 1) {
+            handle_git_discovery(conn, path);
+            return 0;
+        }
+        if (path == "/") {
+            serve_index(conn);
+            return 0;
+        }
+        if (path == "/index.html") {
+            serve_index(conn);
+            return 0;
+        }
+        if (path == "/health") {
+            serve_status(conn);
+            return 0;
+        }
+        if (len(path) >= 68) {
+            if (substr(path, 0, 4) == "/b3/") {
+                serve_cas(conn, substr(path, 4, 68));
+                return 0;
+            }
+        }
+        if (serve_git_file(conn, substr(path, 1, len(path))) == 1) {
             return 0;
         }
     }
-
+    if (method == "POST") {
+        if (is_git_receive_pack(path) == 1) {
+            handle_git_receive(conn, path, req);
+            return 0;
+        }
+    }
     http_send_response(conn, 404, "Not Found", "text/plain", "Route Not Found\r\n");
     return 0;
 }
@@ -112,7 +255,7 @@ fn run_server(port) {
         print("[httpd] Error: Failed to bind port " + int_to_str(port) + " (Permission Denied or Port Bound)");
         return 1;
     }
-    print("[httpd] Listening on port " + int_to_str(port) + " (listener ID: " + int_to_str(listener) + ")");
+    print("[httpd] Listening on port " + int_to_str(port) + " (Git Smart HTTP active)");
 
     while (true) {
         conn = sys_net_accept(listener);

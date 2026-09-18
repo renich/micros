@@ -12,6 +12,10 @@ pub const tcp = @import("net/tcp.zig");
 pub const stack = @import("net/stack.zig");
 pub const tls_stream = @import("net/tls_stream.zig");
 pub const http = @import("net/http.zig");
+pub const git_pkt = @import("net/git_pkt.zig");
+pub const git_transport = @import("net/git_transport.zig");
+pub const git_pack = @import("net/git_pack.zig");
+pub const git_abi = @import("net/git_abi.zig");
 
 test "kernel net subsystem tests" {
     _ = @import("net/frame.zig");
@@ -25,4 +29,8 @@ test "kernel net subsystem tests" {
     _ = @import("net/stack.zig");
     _ = @import("net/tls_stream.zig");
     _ = @import("net/http.zig");
+    _ = @import("net/git_pkt.zig");
+    _ = @import("net/git_transport.zig");
+    _ = @import("net/git_pack.zig");
+    _ = @import("net/git_abi.zig");
 }
