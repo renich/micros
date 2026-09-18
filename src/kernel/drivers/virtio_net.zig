@@ -185,7 +185,11 @@ pub const VirtioNetDevice = struct {
         const total_len = elem.len;
         const hdr_size = @sizeOf(VirtioNetHeader);
 
-        if (total_len <= hdr_size) return 0;
+        if (total_len <= hdr_size) {
+            recycleRxDescriptor(&self.rx_queue, @intCast(desc_id));
+            io.outw(self.io_base + REG_QUEUE_NOTIFY, QUEUE_RX);
+            return 0;
+        }
         const payload_len = @min(total_len - hdr_size, out_buffer.len);
 
         const buf_offset = @as(usize, @intCast(desc_id)) * RX_BUFFER_LEN;

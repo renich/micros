@@ -333,6 +333,9 @@ pub const TcpClient = struct {
         }
 
         if (self.state == .established) {
+            if (payload.len > 0 or (tcp_hdr.flags & FLAG_FIN) != 0) {
+                if (tcp_hdr.seq_num != self.ack) return false;
+            }
             if (payload.len > 0) {
                 self.ack = tcp_hdr.seq_num +% @as(u32, @intCast(payload.len));
             }

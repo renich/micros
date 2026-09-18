@@ -38,8 +38,8 @@ pub const ChunkEnvelope = extern struct {
     payload_len: u32 align(1),
 
     pub fn serialize(self: *const ChunkEnvelope, payload: []const u8, out_buf: []u8) !usize {
+        if (out_buf.len < CHUNK_RESP_HEADER_SIZE or payload.len > out_buf.len - CHUNK_RESP_HEADER_SIZE) return error.BufferTooSmall;
         const total = CHUNK_RESP_HEADER_SIZE + payload.len;
-        if (out_buf.len < total) return error.BufferTooSmall;
 
         const hdr_bytes: *const [CHUNK_RESP_HEADER_SIZE]u8 = @ptrCast(self);
         @memcpy(out_buf[0..CHUNK_RESP_HEADER_SIZE], hdr_bytes);
@@ -50,8 +50,8 @@ pub const ChunkEnvelope = extern struct {
     pub fn deserialize(in_buf: []const u8) !struct { header: ChunkEnvelope, payload: []const u8 } {
         if (in_buf.len < CHUNK_RESP_HEADER_SIZE) return error.InvalidPayloadSize;
         const hdr_ptr: *const ChunkEnvelope = @ptrCast(in_buf.ptr);
+        if (hdr_ptr.payload_len > in_buf.len - CHUNK_RESP_HEADER_SIZE) return error.IncompletePayload;
         const expected_total = CHUNK_RESP_HEADER_SIZE + hdr_ptr.payload_len;
-        if (in_buf.len < expected_total) return error.IncompletePayload;
 
         return .{
             .header = hdr_ptr.*,

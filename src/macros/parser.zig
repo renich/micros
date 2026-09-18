@@ -207,6 +207,7 @@ pub const Parser = struct {
         }
         while (self.current_token.token_type != .rbrace and self.current_token.token_type != .eof) {
             const stmt = try self.parseStatement();
+            errdefer stmt.deinit(self.allocator);
             try stmts.append(self.allocator, stmt);
         }
         try self.match(.rbrace);
@@ -308,6 +309,7 @@ pub const Parser = struct {
         }
         while (self.current_token.token_type != .rparen and self.current_token.token_type != .eof) {
             const arg = try self.parseExpression();
+            errdefer arg.deinit(self.allocator);
             try args.append(self.allocator, arg);
             if (self.current_token.token_type == .comma) self.advance();
         }
@@ -338,6 +340,7 @@ pub const Parser = struct {
 
         while (true) {
             const el = try self.parseExpression();
+            errdefer el.deinit(self.allocator);
             try elements.append(self.allocator, el);
             if (self.current_token.token_type != .comma) break;
             self.advance();
@@ -410,6 +413,7 @@ pub const Parser = struct {
         if (self.current_token.token_type != .rparen) {
             while (true) {
                 const a = try self.parseExpression();
+                errdefer a.deinit(self.allocator);
                 try args.append(self.allocator, a);
                 if (self.current_token.token_type == .comma) {
                     self.advance();

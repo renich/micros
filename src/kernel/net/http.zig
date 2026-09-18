@@ -166,8 +166,8 @@ pub fn decodeChunkedBody(src: []const u8, dest: []u8) !usize {
             return d_pos;
         }
 
-        if (s_pos + chunk_size > src.len) return error.ResponseTruncated;
-        if (d_pos + chunk_size > dest.len) return error.BufferTooSmall;
+        if (chunk_size > src.len - s_pos) return error.ResponseTruncated;
+        if (chunk_size > dest.len - d_pos) return error.BufferTooSmall;
 
         @memcpy(dest[d_pos .. d_pos + chunk_size], src[s_pos .. s_pos + chunk_size]);
         d_pos += chunk_size;

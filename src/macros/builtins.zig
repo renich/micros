@@ -88,15 +88,17 @@ pub fn nativeExecChunk(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     const new_chunk = try vm.allocator.create(chunk_mod.Chunk);
     new_chunk.* = chunk_mod.Chunk.init();
+    errdefer {
+        new_chunk.deinit(vm.allocator);
+        vm.allocator.destroy(new_chunk);
+    }
+    try vm.dynamic_chunks.append(vm.allocator, new_chunk);
     var prepared = false;
     errdefer {
         if (!prepared) {
             _ = vm.dynamic_chunks.pop();
-            new_chunk.deinit(vm.allocator);
-            vm.allocator.destroy(new_chunk);
         }
     }
-    try vm.dynamic_chunks.append(vm.allocator, new_chunk);
 
     for (args[0].array) |val| {
         if (val != .integer) return InterpretError.RuntimeError;

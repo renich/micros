@@ -127,6 +127,7 @@ pub const HyperTree = struct {
     payload_arena: [MAX_PAYLOAD_BYTES]u8,
     payload_used: usize,
     focused_node_id: ?u32,
+    accumulated_damage: DamageRect,
 
     pub fn init(allocator: std.mem.Allocator) HyperTree {
         return HyperTree{
@@ -137,6 +138,7 @@ pub const HyperTree = struct {
             .payload_arena = [_]u8{0} ** MAX_PAYLOAD_BYTES,
             .payload_used = 0,
             .focused_node_id = null,
+            .accumulated_damage = DamageRect{},
         };
     }
 
@@ -207,11 +209,13 @@ pub const HyperTree = struct {
 
     pub fn updateBounds(self: *HyperTree, id: u32, x: i16, y: i16, w: u16, h: u16) !void {
         const node = self.getNodeMut(id) orelse return error.NodeNotFound;
+        self.accumulated_damage.include(node.x, node.y, node.width, node.height);
         node.x = x;
         node.y = y;
         node.width = w;
         node.height = h;
         node.flags |= NodeFlags.DIRTY;
+        self.accumulated_damage.include(x, y, w, h);
     }
 
     pub fn removeNode(self: *HyperTree, id: u32) !void {
@@ -219,6 +223,8 @@ pub const HyperTree = struct {
         const idx = id - 1;
         if (!self.node_active[idx]) return error.NodeNotFound;
 
+        const node = &self.nodes[idx];
+        self.accumulated_damage.include(node.x, node.y, node.width, node.height);
         self.node_active[idx] = false;
         self.node_count -= 1;
         if (self.focused_node_id == id) self.focused_node_id = null;
@@ -240,6 +246,7 @@ pub const HyperTree = struct {
         self.node_count = 0;
         self.payload_used = 0;
         self.focused_node_id = null;
+        self.accumulated_damage = DamageRect{};
         @memset(&self.node_active, false);
     }
 
@@ -256,7 +263,7 @@ pub const HyperTree = struct {
     }
 
     pub fn computeDamage(self: *const HyperTree) DamageRect {
-        var damage = DamageRect{};
+        var damage = self.accumulated_damage;
         for (0..MAX_NODES) |i| {
             if (!self.node_active[i]) continue;
             const node = &self.nodes[i];
@@ -268,6 +275,7 @@ pub const HyperTree = struct {
     }
 
     pub fn clearDirty(self: *HyperTree) void {
+        self.accumulated_damage = DamageRect{};
         for (0..MAX_NODES) |i| {
             if (self.node_active[i]) {
                 self.nodes[i].flags &= ~NodeFlags.DIRTY;
@@ -350,12 +358,12 @@ test "HyperTree insertion, mutation, hit-testing, and dirty damage computation" 
     const damage2 = tree.computeDamage();
     try std.testing.expect(damage2.isEmpty());
 
-    // Update button position
+    // Update button position (damage encompasses union of vacated 100..220 and occupied 200..350 bounds)
     try tree.updateBounds(btn_id, 200, 200, 150, 50);
     const damage3 = tree.computeDamage();
     try std.testing.expect(!damage3.isEmpty());
-    try std.testing.expectEqual(@as(i16, 200), damage3.min_x);
-    try std.testing.expectEqual(@as(i16, 200), damage3.min_y);
+    try std.testing.expectEqual(@as(i16, 100), damage3.min_x);
+    try std.testing.expectEqual(@as(i16, 100), damage3.min_y);
     try std.testing.expectEqual(@as(i16, 350), damage3.max_x);
     try std.testing.expectEqual(@as(i16, 250), damage3.max_y);
 
