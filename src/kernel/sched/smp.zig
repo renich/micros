@@ -29,7 +29,7 @@ pub const CpuCore = struct {
     runqueue: [MAX_TASKS_PER_CORE]u32,
     rq_head: u32,
     rq_tail: u32,
-    rq_count: u32,
+    rq_count: std.atomic.Value(u32),
 
     pub fn init(core_id: u32, apic_id: u32, is_bsp: bool) CpuCore {
         return .{
@@ -44,7 +44,7 @@ pub const CpuCore = struct {
             .runqueue = [_]u32{0} ** MAX_TASKS_PER_CORE,
             .rq_head = 0,
             .rq_tail = 0,
-            .rq_count = 0,
+            .rq_count = std.atomic.Value(u32).init(0),
         };
     }
 
@@ -64,20 +64,22 @@ pub const CpuCore = struct {
     pub fn enqueue(self: *CpuCore, actor_id: u32) bool {
         const rflags = self.acquireLock();
         defer self.releaseLock(rflags);
-        if (self.rq_count >= MAX_TASKS_PER_CORE) return false;
+        const count = self.rq_count.load(.monotonic);
+        if (count >= MAX_TASKS_PER_CORE) return false;
         self.runqueue[self.rq_tail] = actor_id;
         self.rq_tail = (self.rq_tail + 1) % MAX_TASKS_PER_CORE;
-        self.rq_count += 1;
+        self.rq_count.store(count + 1, .release);
         return true;
     }
 
     pub fn dequeue(self: *CpuCore) ?u32 {
         const rflags = self.acquireLock();
         defer self.releaseLock(rflags);
-        if (self.rq_count == 0) return null;
+        const count = self.rq_count.load(.monotonic);
+        if (count == 0) return null;
         const task = self.runqueue[self.rq_head];
         self.rq_head = (self.rq_head + 1) % MAX_TASKS_PER_CORE;
-        self.rq_count -= 1;
+        self.rq_count.store(count - 1, .release);
         return task;
     }
 };
@@ -143,8 +145,9 @@ pub const SmpTopology = struct {
 
         for (&self.cores) |*core| {
             if (core.core_id != requesting_core_id and core.state == .online) {
-                if (core.rq_count > max_count) {
-                    max_count = core.rq_count;
+                const count = core.rq_count.load(.acquire);
+                if (count > max_count) {
+                    max_count = count;
                     most_busy_core = core;
                 }
             }
@@ -212,7 +215,7 @@ test "SMP topology initialization and BSP invariants" {
     const bsp = top.getCore(0).?;
     try std.testing.expect(bsp.is_bsp);
     try std.testing.expectEqual(CpuState.online, bsp.state);
-    try std.testing.expectEqual(@as(u32, 0), bsp.rq_count);
+    try std.testing.expectEqual(@as(u32, 0), bsp.rq_count.load(.monotonic));
 }
 
 test "SMP task enqueuing, dequeuing, and FIFO ordering" {
@@ -222,7 +225,7 @@ test "SMP task enqueuing, dequeuing, and FIFO ordering" {
     try std.testing.expect(top.enqueueTask(0, 30));
 
     const core0 = top.getCore(0).?;
-    try std.testing.expectEqual(@as(u32, 3), core0.rq_count);
+    try std.testing.expectEqual(@as(u32, 3), core0.rq_count.load(.monotonic));
 
     try std.testing.expectEqual(@as(u32, 10), top.dequeueTask(0).?);
     try std.testing.expectEqual(@as(u32, 20), top.dequeueTask(0).?);
@@ -245,7 +248,7 @@ test "SMP bounded lock-free work stealing" {
     try std.testing.expectEqual(@as(?u32, 101), stolen);
 
     // Core 0 now has 2 tasks left
-    try std.testing.expectEqual(@as(u32, 2), top.cores[0].rq_count);
+    try std.testing.expectEqual(@as(u32, 2), top.cores[0].rq_count.load(.monotonic));
 }
 
 test "SMP preemption timer tick quantum expiration and task round-robin" {

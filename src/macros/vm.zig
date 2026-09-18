@@ -118,10 +118,59 @@ pub const VM = struct {
         try res;
     }
 
-    pub fn collect(self: *VM, heap: *gc.Heap) void {
-        heap.clearMarks();
+    fn valueReferencesChunk(val: Value, target_ptr: *anyopaque) bool {
+        return switch (val) {
+            .function => |f| f.chunk == target_ptr,
+            .closure => |c| c.function.chunk == target_ptr,
+            .array => |arr| blk: {
+                for (arr) |item| {
+                    if (valueReferencesChunk(item, target_ptr)) break :blk true;
+                }
+                break :blk false;
+            },
+            .dict => |dict| blk: {
+                for (dict.entries) |entry| {
+                    if (valueReferencesChunk(entry.value, target_ptr)) break :blk true;
+                }
+                break :blk false;
+            },
+            else => false,
+        };
+    }
 
-        // Trace constants
+    pub fn isChunkReferenced(self: *VM, target_chunk: *chunk_mod.Chunk) bool {
+        if (self.chunk == target_chunk) return true;
+        const target_ptr: *anyopaque = @ptrCast(target_chunk);
+
+        for (self.stack[0..self.sp]) |val| {
+            if (valueReferencesChunk(val, target_ptr)) return true;
+        }
+        for (self.frames[0..self.frame_count]) |frame| {
+            if (frame.closure) |cls| {
+                if (cls.function.chunk == target_ptr) return true;
+            }
+        }
+        var it = self.globals.iterator();
+        while (it.next()) |entry| {
+            if (valueReferencesChunk(entry.value_ptr.*, target_ptr)) return true;
+        }
+        return false;
+    }
+
+    fn pruneDynamicChunks(self: *VM) void {
+        var i = self.dynamic_chunks.items.len;
+        while (i > 0) {
+            i -= 1;
+            const ch = self.dynamic_chunks.items[i];
+            if (ch != self.chunk and !self.isChunkReferenced(ch)) {
+                _ = self.dynamic_chunks.swapRemove(i);
+                ch.deinit(self.allocator);
+                self.allocator.destroy(ch);
+            }
+        }
+    }
+
+    fn traceConstants(self: *VM, heap: *gc.Heap) void {
         for (self.chunk.constants.items) |constant| {
             tracer.traceValue(heap, constant);
         }
@@ -138,6 +187,12 @@ pub const VM = struct {
                 }
             }
         }
+    }
+
+    pub fn collect(self: *VM, heap: *gc.Heap) void {
+        heap.clearMarks();
+        self.pruneDynamicChunks();
+        self.traceConstants(heap);
 
         // Trace globals
         var it = self.globals.iterator();
@@ -805,6 +860,26 @@ test "vm dynamic chunk lifecycle and cross-chunk execution" {
     _ = try nativeExecChunk(&vm, &args);
 
     try std.testing.expectEqual(@as(usize, 1), vm.dynamic_chunks.items.len);
+}
+
+test "vm garbage collection prunes unreferenced dynamic chunks" {
+    var main_chunk = Chunk.init();
+    defer main_chunk.deinit(std.testing.allocator);
+    try main_chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
+
+    var vm = try VM.init(std.testing.allocator, &main_chunk);
+    defer vm.deinit();
+
+    var heap = gc.Heap.init(std.testing.allocator);
+    defer heap.deinit();
+
+    const dyn = try std.testing.allocator.create(Chunk);
+    dyn.* = Chunk.init();
+    try vm.dynamic_chunks.append(std.testing.allocator, dyn);
+    try std.testing.expectEqual(@as(usize, 1), vm.dynamic_chunks.items.len);
+
+    vm.collect(&heap);
+    try std.testing.expectEqual(@as(usize, 0), vm.dynamic_chunks.items.len);
 }
 
 test "vm arithmetic completeness: mul, div, mod, div-by-zero" {

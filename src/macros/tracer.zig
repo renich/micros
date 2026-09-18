@@ -13,9 +13,7 @@ fn traceClosure(heap: *Heap, c: *eval.Closure) void {
     heap.markSlice(@ptrCast(c.upvalues.ptr), c.upvalues.len * @sizeOf(*eval.Upvalue));
     for (c.upvalues) |uv| {
         heap.markSlice(@ptrCast(uv), @sizeOf(eval.Upvalue));
-        if (uv.location) |loc| {
-            traceValue(heap, loc.*);
-        }
+        traceValue(heap, uv.location.*);
     }
 }
 
