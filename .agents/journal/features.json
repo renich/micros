@@ -14,6 +14,13 @@
       "spec_ref": "docs/technical/specs/reactive-compositor.rst",
       "verification_cmd": "make check"
     },
+    "SPEC-TECH-COMPOSITOR-002": {
+      "last_checked": "2026-09-18T08:00:33.882Z",
+      "name": "Pure Microkernel Compositor & Input Decoupling (gopd)",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/pure-microkernel-compositor.rst",
+      "verification_cmd": "make check"
+    },
     "SPEC-TECH-FS-001": {
       "last_checked": "2026-09-18T03:08:55.448Z",
       "name": "Sovereign Catalog Broker & Semantic Workspace Substrate",

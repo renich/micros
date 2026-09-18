@@ -1,6 +1,6 @@
 {
   "current_phase": 5,
   "journal_version": "0.2.0",
-  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)",
+  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 25: Pure Microkernel Storage Decoupling (storaged)",
   "pjp_version": "0.10.1"
 }

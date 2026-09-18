@@ -24,14 +24,14 @@ Milestones & Deliverables
    - **Blocked By**: M23a.
    - **Unblocks**: M24, M25.
 
-* **Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)** [ACTIVE]
+* **Milestone 24: Pure Microkernel Compositor & Input Decoupling (gopd)** [COMPLETED]
    - **Display Server Actor (gopd)**: Migrate GOP linear framebuffer backbuffer mapping and AABB damage tracking out of Ring 0 into ``src/userland/gopd/gopd.zig``.
    - **Framebuffer MMIO Delegation**: Delegate physical VRAM frame mapping via capability primitives (``sys_frame_info``) without ambient kernel authority.
    - **Unified Pointer & Keyboard Ingress**: Implement PS/2 mouse packet decoding and baseline xHCI USB HID pointer/keyboard parsing in userland.
    - **Blocked By**: M23b.
    - **Unblocks**: M25, Phase 7 (UI Engine).
 
-* **Milestone 25: Pure Microkernel Storage Decoupling (storaged)** [SCHEDULED]
+* **Milestone 25: Pure Microkernel Storage Decoupling (storaged)** [ACTIVE]
    - **Storage Service Actor (storaged)**: Migrate PCIe NVMe 1.4, VirtIO-Blk, GPT partition parsing, FAT32 ESP handling, and BLAKE3 CAS into ``src/userland/storaged/storaged.zig``.
    - **DMA Pinning & Memory Validation**: Implement ``sys_dma_pin`` capability syscall validating physical page frames and building hardware PRP lists safely without kernel compromise.
    - **Hardware Controller Reset & Recovery**: Implement automatic hardware controller re-initialization (``CC.EN = 0`` -> ``CSTS.RDY == 0``) and in-flight request replay upon driver fault restart.

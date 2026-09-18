@@ -41,6 +41,7 @@ const net_mod = @import("net.zig");
 const ai_mod = @import("ai.zig");
 const netd_mod = @import("../userland/netd/netd.zig");
 const aid_mod = @import("../userland/aid/aid.zig");
+const gopd_mod = @import("../userland/gopd/gopd.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
@@ -71,6 +72,7 @@ var global_abi_ctx: ?abi_mod.AbiContext = null;
 var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
 var global_netd: ?netd_mod.NetDaemon = null;
 var global_aid: ?aid_mod.AiDaemon = null;
+var global_gopd: ?gopd_mod.GopDaemon = null;
 var global_ai_req_ring = ipc_mod.SpscRingBuffer.init();
 var global_ai_resp_ring = ipc_mod.SpscRingBuffer.init();
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
@@ -201,7 +203,9 @@ fn initUserlandServices(allocator: std.mem.Allocator) void {
     };
     const net_ptr = if (global_netd != null) &global_netd.? else null;
     global_aid = aid_mod.AiDaemon.init(allocator, ai_cfg, net_ptr, ipc_cap);
-    global_aid.?.setRings(&global_ai_req_ring, &global_ai_resp_ring);
+    if (global_aid) |*aid_inst| {
+        aid_inst.setRings(&global_ai_req_ring, &global_ai_resp_ring);
+    }
 }
 
 fn aiInferenceBridge(prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize {
@@ -733,17 +737,24 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo) !*
 fn initCompositor(allocator: std.mem.Allocator, fb_info: boot_info_mod.FramebufferInfo) void {
     if (fb_info.base_addr == 0) return;
     global_fb = fb_mod.Framebuffer.init(fb_info);
-    const canvas = compositor_mod.Canvas.init(
-        allocator,
-        fb_info.width,
-        fb_info.height,
-        fb_info.format,
-    ) catch null;
-    if (canvas) |c| {
-        global_canvas = c;
-        global_wm = compositor_mod.WindowManager.init(allocator, fb_info.width, fb_info.height);
-        global_pointer = compositor_mod.PointerState.init(fb_info.width, fb_info.height);
-        serial.writeStatusOk("comp", "Double-buffered reactive compositor active (1280x800x32)");
+    const fb_cap = cap_mod.Capability{
+        .cap_type = .framebuffer,
+        .rights = cap_mod.Rights.WRITE | cap_mod.Rights.READ,
+        .object_id = 1,
+        .data_addr = fb_info.base_addr,
+        .data_size = fb_info.size_bytes,
+    };
+    global_gopd = gopd_mod.GopDaemon.init(allocator, fb_info, fb_cap) catch |err| blk: {
+        serial.writeString("[kernel] GopDaemon init failed: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        break :blk null;
+    };
+    if (global_gopd) |*gopd| {
+        global_canvas = gopd.canvas;
+        global_wm = gopd.wm;
+        global_pointer = gopd.pointer;
+        serial.writeStatusOk("gopd", "Userland display server actor active (1280x800x32)");
     }
 }
 
@@ -769,7 +780,7 @@ fn createAbiContext(genesis: *actor_mod.Actor, ipc_ring: *ipc_mod.RingBuffer) ab
         .telemetry_fn = telemetryBridge,
         .bundle_read_fn = bundleReadBridge,
         .current_actor_fn = getCurrentActorBridge,
-        .net_stack = if (global_netd != null and global_netd.?.stack != null) &global_netd.?.stack.? else null,
+        .net_stack = if (global_netd != null) global_netd.?.stack else null,
         .frame_info_fn = frameInfoBridge,
         .irq_ack_fn = irqAckBridge,
     };

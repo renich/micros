@@ -36,7 +36,7 @@ pub const NetDaemon = struct {
     net_cap: cap_mod.Capability,
     irq_cap: cap_mod.Capability,
     virtio_dev: ?*virtio_net_mod.VirtioNetDevice,
-    stack: ?net_stack_mod.NetworkStack,
+    stack: ?*net_stack_mod.NetworkStack,
     client_rx_ring: ?*SpscRingBuffer,
     client_tx_ring: ?*SpscRingBuffer,
     state: DaemonState,
@@ -49,12 +49,17 @@ pub const NetDaemon = struct {
         net_cap: cap_mod.Capability,
         irq_cap: cap_mod.Capability,
     ) NetDaemon {
-        var maybe_stack: ?net_stack_mod.NetworkStack = null;
+        var maybe_stack: ?*net_stack_mod.NetworkStack = null;
         var initial_state = DaemonState.offline;
 
         if (virtio_dev) |dev| {
-            maybe_stack = net_stack_mod.NetworkStack.init(dev);
-            initial_state = DaemonState.ready;
+            if (allocator.create(net_stack_mod.NetworkStack)) |st| {
+                st.* = .{ .device = dev };
+                maybe_stack = st;
+                initial_state = DaemonState.ready;
+            } else |_| {
+                initial_state = DaemonState.faulted;
+            }
         }
 
         return NetDaemon{
@@ -69,6 +74,13 @@ pub const NetDaemon = struct {
             .rx_packet_count = 0,
             .tx_packet_count = 0,
         };
+    }
+
+    pub fn deinit(self: *NetDaemon) void {
+        if (self.stack) |st| {
+            self.allocator.destroy(st);
+            self.stack = null;
+        }
     }
 
     pub fn setRings(
@@ -98,21 +110,21 @@ pub const NetDaemon = struct {
     }
 
     pub fn poll(self: *NetDaemon) void {
-        if (self.stack) |*st| {
+        if (self.stack) |st| {
             st.poll();
             self.rx_packet_count +%= 1;
         }
     }
 
     pub fn resolveDns(self: *NetDaemon, host: []const u8) ![4]u8 {
-        if (self.stack) |*st| {
+        if (self.stack) |st| {
             return try st.resolveDns(host);
         }
         return [4]u8{ 127, 0, 0, 1 };
     }
 
     pub fn connectTcp(self: *NetDaemon, ip: [4]u8, port: u16) !bool {
-        if (self.stack) |*st| {
+        if (self.stack) |st| {
             try st.connectTcp(ip, port);
             return true;
         }
@@ -120,7 +132,7 @@ pub const NetDaemon = struct {
     }
 
     pub fn sendTcp(self: *NetDaemon, data: []const u8) !usize {
-        if (self.stack) |*st| {
+        if (self.stack) |st| {
             const sent = try st.sendTcp(data);
             self.tx_packet_count +%= 1;
             return sent;
@@ -129,7 +141,7 @@ pub const NetDaemon = struct {
     }
 
     pub fn recvTcp(self: *NetDaemon, buf: []u8) usize {
-        if (self.stack) |*st| {
+        if (self.stack) |st| {
             const read = st.recvTcp(buf);
             if (read > 0) self.rx_packet_count +%= 1;
             return read;
@@ -138,7 +150,7 @@ pub const NetDaemon = struct {
     }
 
     pub fn closeTcp(self: *NetDaemon) void {
-        if (self.stack) |*st| {
+        if (self.stack) |st| {
             st.closeTcp() catch {};
         }
     }

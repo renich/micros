@@ -41,6 +41,7 @@ Technical Sub-Specifications
    specs/microkernel-network-decoupling
    specs/hardware-ring3-syscall
    specs/smp-apic-preemption
+   specs/pure-microkernel-compositor
 
 Engineering & Coding Guides
 ===========================

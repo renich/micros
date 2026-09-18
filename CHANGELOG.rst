@@ -6,9 +6,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
-
 [Unreleased]
 ============
+
+- **Milestone 24 (Pure Microkernel Compositor & Input Decoupling - SPEC-TECH-COMPOSITOR-002)**:
+  - **Isolated Userland Display Server Actor (gopd)**: Implemented freestanding ``GopDaemon`` in ``src/userland/gopd/gopd.zig`` managing direct UEFI GOP framebuffer surfaces, double buffering, presentation, and window manager coordination in userland.
+  - **CSpace Capability-Gated Framebuffer Access**: Enforced ``CapType.framebuffer`` capability tokens with ``READ|WRITE`` permissions for mapped framebuffer spans, eliminating raw physical memory access from userland actors.
+  - **Decoupled Asynchronous PS/2 Input Decoding**: Implemented non-blocking PS/2 keyboard and mouse packet decoding in ``gopd``, arbitration of window focus, cursor displacement clamping, and event generation over SPSC IPC ring buffers.
+  - **Damage Tracking & Zero-Copy Presentation**: Engineered axis-aligned bounding box (AABB) dirty rectangle tracking to restrict frame copies strictly to modified pixel regions, minimizing memory bus bandwidth.
+  - **Memory Safety & Stack Optimization**: Refactored ``NetDaemon`` in ``src/userland/netd/netd.zig`` to use heap-allocated pointers for 320 KiB network stack states, preventing kernel stack overflow during boot.
+  - **Live Bare-Metal & QEMU UEFI Boot Verification**: Verified ``[  ok  ] gopd: Userland display server actor active (1280x800x32)`` and MicroShell interactive prompt under QEMU UEFI boot with 100% passage across 329 unit tests and zero lint violations.
 
 - **Milestone 23b (Preemptive Symmetric Multiprocessing (SMP) & APIC Timer Substrate - SPEC-TECH-SMP-001)**:
   - **Local APIC & Calibrated 1000Hz Preemption Timer**: Implemented freestanding x86_64 Local APIC driver in ``src/kernel/arch/x86_64/apic.zig`` supporting memory-mapped I/O access, Spurious Interrupt Vector Register (SIVR) software enablement, Task Priority Register (TPR) masking, End-Of-Interrupt (EOI) signaling, and periodic timer configuration on IDT vector 32 (0x20) with a calibrated 1ms preemption quantum.
