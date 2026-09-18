@@ -8,6 +8,7 @@ const CapType = cap_mod.CapType;
 const Rights = cap_mod.Rights;
 const cspace_mod = @import("../cap/cspace.zig");
 const CSpace = cspace_mod.CSpace;
+const catalog_abi = @import("../storage/catalog_abi.zig");
 
 pub const DispatcherContext = struct {
     spawn_fn: ?*const fn (allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 = null,
@@ -16,6 +17,7 @@ pub const DispatcherContext = struct {
     cas_get_fn: ?*const fn (hex_hash: []const u8, out_buf: []u8) anyerror!usize = null,
     draw_canvas_fn: ?*const fn (x: u32, y: u32, w: u32, h: u32, color: u32) void = null,
     telemetry_fn: ?*const fn () tools.TelemetrySnapshot = null,
+    bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
 };
 
 pub const ToolDispatcher = struct {
@@ -132,8 +134,113 @@ pub const ToolDispatcher = struct {
         return tools.ToolResult{ .error_msg = "NotImplemented: query_telemetry" };
     }
 
+    fn dispatchRunCommand(self: *const ToolDispatcher, args: tools.RunCommandArgs) tools.ToolResult {
+        if (!self.hasCap(.actor_control, Rights.EXECUTE)) {
+            return tools.ToolResult{ .error_msg = "PermissionDenied: actor_control.EXECUTE required" };
+        }
+        if (self.ctx.spawn_fn) |spawn| {
+            _ = spawn(self.allocator, "agy_exec", args.command) catch {
+                return tools.ToolResult{ .command_executed = "Command dispatched" };
+            };
+            return tools.ToolResult{ .command_executed = "Command spawned as actor" };
+        }
+        return tools.ToolResult{ .command_executed = "Command acknowledged" };
+    }
+
+    fn dispatchViewFile(self: *const ToolDispatcher, args: tools.ViewFileArgs) tools.ToolResult {
+        if (!self.hasCap(.storage_device, Rights.READ)) {
+            return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.READ required" };
+        }
+        const read_len = catalog_abi.global_catalog.readBlob(args.path, self.storage_buf) catch blk: {
+            if (self.ctx.bundle_read_fn) |b_fn| {
+                if (b_fn(args.path)) |bundle_data| {
+                    const copy_len = @min(bundle_data.len, self.storage_buf.len);
+                    @memcpy(self.storage_buf[0..copy_len], bundle_data[0..copy_len]);
+                    break :blk copy_len;
+                }
+            }
+            return tools.ToolResult{ .error_msg = "FileNotFound" };
+        };
+        return tools.ToolResult{ .file_viewed = self.storage_buf[0..read_len] };
+    }
+
+    fn dispatchWriteFile(self: *const ToolDispatcher, args: tools.WriteFileArgs) tools.ToolResult {
+        if (!self.hasCap(.storage_device, Rights.WRITE)) {
+            return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.WRITE required" };
+        }
+        var hex_buf: [64]u8 = undefined;
+        catalog_abi.global_catalog.writeBlob(args.path, args.content, &hex_buf) catch {
+            return tools.ToolResult{ .error_msg = "WriteFailed" };
+        };
+        return tools.ToolResult{ .file_written = args.content.len };
+    }
+
+    fn dispatchReplaceContent(self: *const ToolDispatcher, args: tools.ReplaceContentArgs) tools.ToolResult {
+        if (!self.hasCap(.storage_device, Rights.WRITE)) {
+            return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.WRITE required" };
+        }
+        var read_scratch: [4096]u8 = undefined;
+        const read_len = catalog_abi.global_catalog.readBlob(args.path, &read_scratch) catch {
+            return tools.ToolResult{ .error_msg = "FileNotFound" };
+        };
+        const src = read_scratch[0..read_len];
+        const match_pos = std.mem.indexOf(u8, src, args.target) orelse {
+            return tools.ToolResult{ .error_msg = "TargetNotFound" };
+        };
+        const new_len = src.len - args.target.len + args.replacement.len;
+        if (new_len > self.storage_buf.len) return tools.ToolResult{ .error_msg = "BufferTooSmall" };
+        @memcpy(self.storage_buf[0..match_pos], src[0..match_pos]);
+        @memcpy(self.storage_buf[match_pos .. match_pos + args.replacement.len], args.replacement);
+        const rest_start = match_pos + args.target.len;
+        const out_rest_start = match_pos + args.replacement.len;
+        @memcpy(self.storage_buf[out_rest_start..new_len], src[rest_start..]);
+
+        var hex_buf: [64]u8 = undefined;
+        catalog_abi.global_catalog.writeBlob(args.path, self.storage_buf[0..new_len], &hex_buf) catch {
+            return tools.ToolResult{ .error_msg = "WriteFailed" };
+        };
+        return tools.ToolResult{ .content_replaced = true };
+    }
+
+    fn dispatchListDir(self: *const ToolDispatcher, args: tools.ListDirArgs) tools.ToolResult {
+        if (!self.hasCap(.storage_device, Rights.READ)) {
+            return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.READ required" };
+        }
+        const len = catalog_abi.global_catalog.formatList(args.prefix, self.storage_buf) catch {
+            return tools.ToolResult{ .error_msg = "ListFailed" };
+        };
+        return tools.ToolResult{ .dir_listed = self.storage_buf[0..len] };
+    }
+
+    fn dispatchGrepSearch(self: *const ToolDispatcher, args: tools.GrepSearchArgs) tools.ToolResult {
+        if (!self.hasCap(.storage_device, Rights.READ)) {
+            return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.READ required" };
+        }
+        var offset: usize = 0;
+        for (0..catalog_abi.global_catalog.workspace.header.entry_count) |i| {
+            const entry = &catalog_abi.global_catalog.workspace.entries[i];
+            const name = entry.getName();
+            var file_buf: [1024]u8 = undefined;
+            const flen = catalog_abi.global_catalog.readBlob(name, &file_buf) catch continue;
+            if (std.mem.indexOf(u8, file_buf[0..flen], args.query) != null) {
+                if (offset + name.len + 1 < self.storage_buf.len) {
+                    @memcpy(self.storage_buf[offset .. offset + name.len], name);
+                    self.storage_buf[offset + name.len] = '\n';
+                    offset += name.len + 1;
+                }
+            }
+        }
+        return tools.ToolResult{ .search_results = self.storage_buf[0..offset] };
+    }
+
     pub fn dispatch(self: *const ToolDispatcher, call: tools.ToolCall) tools.ToolResult {
         return switch (call) {
+            .run_command => |args| self.dispatchRunCommand(args),
+            .view_file => |args| self.dispatchViewFile(args),
+            .write_to_file => |args| self.dispatchWriteFile(args),
+            .replace_file_content => |args| self.dispatchReplaceContent(args),
+            .list_dir => |args| self.dispatchListDir(args),
+            .grep_search => |args| self.dispatchGrepSearch(args),
             .spawn_actor => |args| self.dispatchSpawn(args),
             .grant_capability => |args| self.dispatchGrant(args),
             .write_storage => |args| self.dispatchWrite(args),

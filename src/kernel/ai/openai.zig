@@ -67,7 +67,7 @@ pub fn extractText(json_payload: []const u8, out_buf: []u8) ?usize {
 }
 
 test "openai request body generation" {
-    var buf: [2048]u8 = undefined;
+    var buf: [8192]u8 = undefined;
     const len = try buildRequestBody(&buf, "gpt-4o", "sys instruction", "user prompt");
     try std.testing.expect(len > 0);
     const body = buf[0..len];

@@ -72,6 +72,7 @@ var global_supervisor: ?supervisor_mod.Supervisor = null;
 var global_abi_ctx: ?abi_mod.AbiContext = null;
 var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
 var global_netd: ?netd_mod.NetDaemon = null;
+var global_tls_adapter: net_mod.tls_stream.TcpStreamAdapter = undefined;
 var global_aid: ?aid_mod.AiDaemon = null;
 var global_gopd: ?gopd_mod.GopDaemon = null;
 var global_storaged: ?storaged_mod.StorageDaemon = null;
@@ -176,7 +177,7 @@ fn dmaPinBridge(virt_addr: usize, len_bytes: usize) ?u64 {
     return @as(u64, @intCast(virt_addr));
 }
 
-fn initUserlandServices(allocator: std.mem.Allocator) void {
+fn initNetDaemon(allocator: std.mem.Allocator) void {
     const net_cap = cap_mod.Capability{
         .cap_type = .network_device,
         .rights = cap_mod.Rights.ALL,
@@ -193,7 +194,9 @@ fn initUserlandServices(allocator: std.mem.Allocator) void {
     };
     const virt_ptr = if (global_virtio_net != null) &global_virtio_net.? else null;
     global_netd = netd_mod.NetDaemon.init(allocator, virt_ptr, net_cap, irq_cap);
+}
 
+fn initAiDaemon(allocator: std.mem.Allocator) void {
     const ptype = ai_mod.provider.parseProviderType(config.ai_provider);
     const ai_cfg = ai_mod.provider.ProviderConfig{
         .provider_type = ptype,
@@ -214,7 +217,18 @@ fn initUserlandServices(allocator: std.mem.Allocator) void {
     global_aid = aid_mod.AiDaemon.init(allocator, ai_cfg, net_ptr, ipc_cap);
     if (global_aid) |*aid_inst| {
         aid_inst.setRings(&global_ai_req_ring, &global_ai_resp_ring);
+        if (global_netd) |*netd| {
+            if (netd.stack) |st| {
+                global_tls_adapter.init(st);
+                aid_inst.setTlsAdapter(&global_tls_adapter);
+            }
+        }
     }
+}
+
+fn initUserlandServices(allocator: std.mem.Allocator) void {
+    initNetDaemon(allocator);
+    initAiDaemon(allocator);
 }
 
 fn aiInferenceBridge(prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize {

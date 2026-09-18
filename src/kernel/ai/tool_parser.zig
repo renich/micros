@@ -157,6 +157,46 @@ pub fn extractEnvelopeOpenAi(json: []const u8, name_buf: []u8, arg_buf: []u8) ?R
     return null;
 }
 
+fn parseRunCommandArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
+    const cmd = findArgString(args_json, "command", str_buf) orelse return null;
+    return tools.ToolCall{ .run_command = .{ .command = cmd } };
+}
+
+fn parseViewFileArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
+    const path = findArgString(args_json, "path", str_buf) orelse return null;
+    return tools.ToolCall{ .view_file = .{ .path = path } };
+}
+
+fn parseWriteFileArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
+    if (str_buf.len <= NAME_BUF_LEN) return null;
+    const path_buf = str_buf[0..NAME_BUF_LEN];
+    const content_buf = str_buf[NAME_BUF_LEN..];
+    const path = findArgString(args_json, "path", path_buf) orelse return null;
+    const content = findArgString(args_json, "content", content_buf) orelse "";
+    return tools.ToolCall{ .write_to_file = .{ .path = path, .content = content } };
+}
+
+fn parseReplaceContentArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
+    if (str_buf.len < 512) return null;
+    const path_buf = str_buf[0..64];
+    const target_buf = str_buf[64..256];
+    const repl_buf = str_buf[256..];
+    const path = findArgString(args_json, "path", path_buf) orelse return null;
+    const target = findArgString(args_json, "target", target_buf) orelse return null;
+    const repl = findArgString(args_json, "replacement", repl_buf) orelse "";
+    return tools.ToolCall{ .replace_file_content = .{ .path = path, .target = target, .replacement = repl } };
+}
+
+fn parseListDirArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
+    const prefix = findArgString(args_json, "prefix", str_buf) orelse "";
+    return tools.ToolCall{ .list_dir = .{ .prefix = prefix } };
+}
+
+fn parseGrepSearchArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
+    const query = findArgString(args_json, "query", str_buf) orelse return null;
+    return tools.ToolCall{ .grep_search = .{ .query = query } };
+}
+
 fn parseSpawnActorArgs(args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
     if (str_buf.len <= NAME_BUF_LEN) return null;
     const name_buf = str_buf[0..NAME_BUF_LEN];
@@ -224,6 +264,12 @@ fn parseDrawCanvasArgs(args_json: []const u8) ?tools.ToolCall {
 pub fn parseToolCall(name: []const u8, args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
     const tt = tools.parseToolType(name) orelse return null;
     return switch (tt) {
+        .run_command => parseRunCommandArgs(args_json, str_buf),
+        .view_file => parseViewFileArgs(args_json, str_buf),
+        .write_to_file => parseWriteFileArgs(args_json, str_buf),
+        .replace_file_content => parseReplaceContentArgs(args_json, str_buf),
+        .list_dir => parseListDirArgs(args_json, str_buf),
+        .grep_search => parseGrepSearchArgs(args_json, str_buf),
         .spawn_actor => parseSpawnActorArgs(args_json, str_buf),
         .grant_capability => parseGrantCapArgs(args_json),
         .write_storage => parseWriteStorageArgs(args_json, str_buf),
@@ -249,6 +295,12 @@ pub fn extractToolCall(json_payload: []const u8, scratch_buf: []u8) ?tools.ToolC
 
 pub fn formatResultJson(result: tools.ToolResult, out_buf: []u8) !usize {
     return switch (result) {
+        .command_executed => |out| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"output\":\"{s}\"}}", .{out})).len,
+        .file_viewed => |content| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"bytes\":{d},\"content\":\"{s}\"}}", .{ content.len, content })).len,
+        .file_written => |bytes| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"bytes_written\":{d}}}", .{bytes})).len,
+        .content_replaced => |ok| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"replaced\":{}}}", .{ok})).len,
+        .dir_listed => |list| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"listing\":\"{s}\"}}", .{list})).len,
+        .search_results => |res| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"matches\":\"{s}\"}}", .{res})).len,
         .actor_spawned => |id| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"actor_id\":{d}}}", .{id})).len,
         .capability_granted => |ok| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"granted\":{}}}", .{ok})).len,
         .storage_written => |hash| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"hex_hash\":\"{s}\"}}", .{hash})).len,

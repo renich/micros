@@ -99,8 +99,8 @@ pub const AiDaemon = struct {
         const net_d = self.net_daemon orelse return 0;
         const adapter = self.tls_adapter orelse return 0;
 
-        var req_buf: [4096]u8 = undefined;
-        var body_buf: [4096]u8 = undefined;
+        var req_buf: [8192]u8 = undefined;
+        var body_buf: [8192]u8 = undefined;
         const req_len = self.client.formatPromptRequest(&req_buf, &body_buf, prompt) catch return 0;
 
         if (!adapter.connected) {

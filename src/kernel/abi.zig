@@ -420,6 +420,7 @@ fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .cas_get_fn = ctx.cas_get_fn,
         .draw_canvas_fn = ctx.draw_canvas_fn,
         .telemetry_fn = ctx.telemetry_fn,
+        .bundle_read_fn = ctx.bundle_read_fn,
     };
     const disp = ai_mod.dispatcher.ToolDispatcher.init(
         caller.cspace,
@@ -556,6 +557,18 @@ fn nativeSysActorWait(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = true };
 }
 
+fn nativeSysKbdLayout(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    const layout = args[0].integer;
+    if (layout == 0) {
+        ps2_mod.active_layout = .us_qwerty;
+    } else if (layout == 1) {
+        ps2_mod.active_layout = .es_latam;
+    }
+    return Value{ .integer = 0 };
+}
+
 pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_actor_count", Value{ .native = nativeSysActorCount });
     try vm.globals.put("sys_actor_spawn", Value{ .native = nativeSysActorSpawn });
@@ -568,6 +581,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_fault_count", Value{ .native = nativeSysFaultCount });
     try vm.globals.put("sys_serial_read", Value{ .native = nativeSysSerialRead });
     try vm.globals.put("sys_kbd_read", Value{ .native = nativeSysKbdRead });
+    try vm.globals.put("sys_kbd_layout", Value{ .native = nativeSysKbdLayout });
     try vm.globals.put("sys_ai_prompt", Value{ .native = nativeSysAiPrompt });
     try vm.globals.put("sys_ai_extract_code", Value{ .native = nativeSysAiExtractCode });
     try vm.globals.put("sys_ai_tool_call", Value{ .native = nativeSysAiToolCall });

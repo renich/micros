@@ -203,8 +203,8 @@ test "client polymorphic request dispatch" {
         .api_key = "key123",
     };
     const client = AiClient.init(gemini_cfg);
-    var req_buf: [4096]u8 = undefined;
-    var body_buf: [4096]u8 = undefined;
+    var req_buf: [8192]u8 = undefined;
+    var body_buf: [8192]u8 = undefined;
     const len = try client.formatPromptRequest(&req_buf, &body_buf, "Hello AI");
     try std.testing.expect(len > 0);
     try std.testing.expect(std.mem.indexOf(u8, req_buf[0..len], "POST /v1beta/models/") != null);

@@ -28,6 +28,10 @@ fn supervisor_loop(child_id) {
 }
 
 fn boot_init() {
+    // Set ES-LATAM as personal default for the user
+    // The kernel global default remains US-QWERTY
+    sys_kbd_layout(1);
+    
     msh_src = sys_bundle_read("msh.mx");
     if (len(msh_src) == 0) {
         print("[init] Fatal: msh.mx not found in genesis bundle.");
