@@ -486,7 +486,7 @@ pub fn writeFile(dev: *block.BlockDevice, path: []const u8, data: []const u8) !v
     const target = try resolveOrCreatePath(dev, &geom, path);
     try deleteExistingFile(dev, &geom, target.parent_cluster, target.target_name);
 
-    const needed_clusters: usize = if (data.len == 0) 1 else (data.len + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
+    const needed_clusters: usize = if (data.len == 0) 0 else (data.len + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
     var first_clus: ?u32 = null;
     var prev_clus: ?u32 = null;
 
@@ -514,7 +514,7 @@ pub fn writeFile(dev: *block.BlockDevice, path: []const u8, data: []const u8) !v
         .fst_clus_lo = 0,
         .file_size = @truncate(data.len),
     };
-    file_entry.setCluster(first_clus orelse ROOT_DIR_CLUSTER);
+    file_entry.setCluster(first_clus orelse 0);
     try insertDirEntry(dev, &geom, target.parent_cluster, file_entry);
     try dev.flush();
 }
@@ -542,7 +542,7 @@ pub fn readFile(dev: *block.BlockDevice, path: []const u8, allocator: std.mem.Al
 fn copyFileClusters(dev: *block.BlockDevice, geom: *const Geometry, start_cluster: u32, out_buf: []u8) !void {
     var curr = start_cluster;
     var offset: usize = 0;
-    while (curr < FAT_CLUSTER_BAD and offset < out_buf.len) {
+    while (curr >= 2 and curr < FAT_CLUSTER_BAD and offset < out_buf.len) {
         var clus_buf: [CLUSTER_SIZE]u8 = undefined;
         const lba = geom.clusterToLba(curr);
         try dev.readSectors(lba, SECTORS_PER_CLUSTER, &clus_buf);
@@ -680,4 +680,15 @@ test "fat32 sparse block mock format and file roundtrip" {
     const read_updated = try readFile(dev, "/EFI/BOOT/BOOTX64.EFI", std.testing.allocator);
     defer std.testing.allocator.free(read_updated);
     try std.testing.expectEqualStrings(updated_payload, read_updated);
+
+    // Empty file handling: verify cluster 0 assignment and safe overwrite
+    try writeFile(dev, "/EFI/BOOT/EMPTY.DAT", "");
+    const read_empty = try readFile(dev, "/EFI/BOOT/EMPTY.DAT", std.testing.allocator);
+    defer std.testing.allocator.free(read_empty);
+    try std.testing.expectEqual(@as(usize, 0), read_empty.len);
+
+    try writeFile(dev, "/EFI/BOOT/EMPTY.DAT", "populated_payload");
+    const read_populated = try readFile(dev, "/EFI/BOOT/EMPTY.DAT", std.testing.allocator);
+    defer std.testing.allocator.free(read_populated);
+    try std.testing.expectEqualStrings("populated_payload", read_populated);
 }

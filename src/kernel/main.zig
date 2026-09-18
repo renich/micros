@@ -85,8 +85,8 @@ var global_virtio_blk_dev: ?block_mod.BlockDevice = null;
 var global_nvme: ?nvme_mod.NvmeDevice = null;
 var global_nvme_blk_dev: ?block_mod.BlockDevice = null;
 var global_block_device: ?block_mod.BlockDevice = null;
-var global_block_cache: ?block_cache_mod.BlockCache = null;
-var global_cas: ?cas_mod.CasEngine = null;
+var global_block_cache: ?*block_cache_mod.BlockCache = null;
+var global_cas: ?*cas_mod.CasEngine = null;
 var global_rebuild: ?rebuild_mod.RebuildEngine = null;
 var global_bundle_data: ?[]const u8 = null;
 
@@ -559,24 +559,20 @@ fn initStorageDaemon(
 }
 
 fn initFallbackCas(allocator: std.mem.Allocator, dev: ?*block_mod.BlockDevice) void {
-    global_block_cache = block_cache_mod.BlockCache.init(allocator) catch |err| {
-        serial.writeString("[kernel] Block cache init failed: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return;
-    };
+    const cache_ptr = allocator.create(block_cache_mod.BlockCache) catch return;
+    cache_ptr.* = block_cache_mod.BlockCache.init(allocator) catch return;
+    global_block_cache = cache_ptr;
+
     const total_secs = if (dev != null) dev.?.total_sectors else 0;
-    global_cas = cas_mod.CasEngine.init(
-        &global_block_cache.?,
+    const cas_ptr = allocator.create(cas_mod.CasEngine) catch return;
+    cas_ptr.* = cas_mod.CasEngine.init(
+        global_block_cache.?,
         dev,
         total_secs,
-    ) catch |err| {
-        serial.writeString("[kernel] CAS engine init failed: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return;
-    };
-    global_rebuild = rebuild_mod.RebuildEngine.init(&global_cas.?, null, null);
+    ) catch return;
+    global_cas = cas_ptr;
+
+    global_rebuild = rebuild_mod.RebuildEngine.init(global_cas.?, null, null);
     abi_mod.setRebuildEngine(&global_rebuild.?);
     serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
 }
@@ -586,9 +582,9 @@ fn initStorageEngines(allocator: std.mem.Allocator) void {
     global_storaged = initStorageDaemon(allocator, dev);
 
     if (global_storaged) |*strd| {
-        global_block_cache = if (strd.block_cache) |c| c.* else null;
-        global_cas = if (strd.cas_engine) |c| c.* else null;
-        if (global_cas) |*cas| {
+        global_block_cache = strd.block_cache;
+        global_cas = strd.cas_engine;
+        if (global_cas) |cas| {
             global_rebuild = rebuild_mod.RebuildEngine.init(cas, null, null);
             abi_mod.setRebuildEngine(&global_rebuild.?);
         }
@@ -699,7 +695,7 @@ fn registerGenesisHardwareCaps(genesis: *actor_mod.Actor) !void {
             .cap_type = .storage_device,
             .rights = cap_mod.Rights.ALL,
             .object_id = CAP_OBJ_STORAGE,
-            .data_addr = @intFromPtr(&global_cas.?),
+            .data_addr = @intFromPtr(global_cas.?),
             .data_size = @sizeOf(cas_mod.CasEngine),
         });
     }
