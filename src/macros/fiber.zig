@@ -1,7 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const STACK_SIZE: usize = 512 * 1024; // 512 KB stack per fiber (accommodates TLS 1.3 cryptographic state)
+pub const STACK_SIZE: usize = 2 * 1024 * 1024; // 2 MB stack per fiber (accommodates TLS 1.3 ML-KEM-768 cryptographic state)
+pub const GUARD_SIZE: usize = 4096;
+pub const SLOT_SIZE: usize = STACK_SIZE + GUARD_SIZE;
+
+pub const CANARY_MAGIC: u64 = 0xDEADBEEFCAFEBABE;
+pub const MAX_STACK_SLOTS: usize = 4;
+var stack_pool: [MAX_STACK_SLOTS][SLOT_SIZE]u8 align(4096) = undefined;
+var stack_used: [MAX_STACK_SLOTS]bool = [_]bool{false} ** MAX_STACK_SLOTS;
 
 pub const FiberState = enum {
     ready,
@@ -20,10 +27,33 @@ pub const Fiber = struct {
     entry: ?FiberFn,
     user_data: ?*anyopaque,
     next: ?*Fiber,
+    pool_slot: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator, id: usize, entry: FiberFn, user_data: ?*anyopaque) !*Fiber {
-        const stack_slice = try allocator.alloc(u8, STACK_SIZE);
-        errdefer allocator.free(stack_slice);
+        var slot_idx: ?usize = null;
+        for (&stack_used, 0..) |*used, idx| {
+            if (!used.*) {
+                used.* = true;
+                slot_idx = idx;
+                break;
+            }
+        }
+
+        if (slot_idx) |idx| {
+            @memset(stack_pool[idx][0..GUARD_SIZE], 0xAA);
+        }
+
+        const stack_slice = if (slot_idx) |idx|
+            stack_pool[idx][GUARD_SIZE..SLOT_SIZE]
+        else
+            try allocator.alloc(u8, STACK_SIZE);
+        errdefer {
+            if (slot_idx) |idx| {
+                stack_used[idx] = false;
+            } else {
+                allocator.free(stack_slice);
+            }
+        }
 
         const fiber = try allocator.create(Fiber);
         fiber.* = Fiber{
@@ -34,33 +64,60 @@ pub const Fiber = struct {
             .entry = entry,
             .user_data = user_data,
             .next = null,
+            .pool_slot = slot_idx,
         };
         fiber.initStack();
         return fiber;
     }
 
     pub fn deinit(self: *Fiber, allocator: std.mem.Allocator) void {
-        allocator.free(self.stack);
+        if (self.pool_slot) |idx| {
+            stack_used[idx] = false;
+        } else {
+            allocator.free(self.stack);
+        }
         allocator.destroy(self);
     }
 
     fn initStack(self: *Fiber) void {
+        @as(*u64, @ptrCast(@alignCast(self.stack.ptr))).* = CANARY_MAGIC;
         const top = @intFromPtr(self.stack.ptr) + self.stack.len;
         var sp = std.mem.alignBackward(usize, top, 16);
 
-        // Position trampoline return address so that after ret, rsp % 16 == 8
-        sp -= 16;
-        const trampoline_ptr = @intFromPtr(&fiberTrampoline);
-        @as(*usize, @ptrFromInt(sp)).* = trampoline_ptr;
+        // Win64/SysV ABI: function entry requires (RSP + 8) % 16 == 0.
+        // Push 0 as dummy frame return address for fiberTrampoline
+        sp -= 8;
+        @as(*usize, @ptrFromInt(sp)).* = 0;
 
-        const reg_count: usize = if (builtin.os.tag == .uefi) 8 else 6;
+        // Push trampoline as return address popped by switchContext
+        sp -= 8;
+        @as(*usize, @ptrFromInt(sp)).* = @intFromPtr(&fiberTrampoline);
+
+        // Non-volatile registers (Win64: 8 regs, SysV: 6 regs)
+        const num_regs: usize = if (builtin.os.tag == .uefi) 8 else 6;
         var i: usize = 0;
-        while (i < reg_count) : (i += 1) {
+        while (i < num_regs) : (i += 1) {
             sp -= 8;
             @as(*usize, @ptrFromInt(sp)).* = 0;
         }
 
+        if (builtin.os.tag == .uefi) {
+            sp -= 160;
+            @memset(@as([*]u8, @ptrFromInt(sp))[0..160], 0);
+        }
+
         self.rsp = sp;
+    }
+
+    pub fn checkCanary(self: *const Fiber) bool {
+        const canary = @as(*const u64, @ptrCast(@alignCast(self.stack.ptr))).*;
+        if (canary != CANARY_MAGIC) return false;
+        if (self.pool_slot) |idx| {
+            for (stack_pool[idx][0..GUARD_SIZE]) |byte| {
+                if (byte != 0xAA) return false;
+            }
+        }
+        return true;
     }
 };
 
@@ -73,6 +130,19 @@ fn fiberTrampoline() callconv(.c) void {
             fib.state = .terminated;
             sched.yield();
         }
+    }
+    terminateCurrent();
+}
+
+pub fn terminateCurrent() noreturn {
+    if (current_scheduler) |sched| {
+        if (sched.current) |fib| {
+            fib.state = .terminated;
+            switchContext(&fib.rsp, sched.main_rsp);
+        }
+    }
+    while (true) {
+        asm volatile ("hlt");
     }
 }
 
@@ -96,6 +166,7 @@ pub const Scheduler = struct {
     head: ?*Fiber,
     tail: ?*Fiber,
     next_id: usize,
+    on_context_switch: ?*const fn (fib: ?*Fiber) void,
 
     pub fn init(allocator: std.mem.Allocator) Scheduler {
         return Scheduler{
@@ -105,6 +176,7 @@ pub const Scheduler = struct {
             .head = null,
             .tail = null,
             .next_id = 1,
+            .on_context_switch = null,
         };
     }
 
@@ -174,7 +246,13 @@ pub const Scheduler = struct {
 
         self.current = fib;
         fib.state = .running;
+        if (self.on_context_switch) |hook| hook(fib);
         switchContext(&self.main_rsp, fib.rsp);
+        if (self.on_context_switch) |hook| hook(null);
+
+        if (!fib.checkCanary()) {
+            fib.state = .terminated;
+        }
 
         if (fib.state == .ready or fib.state == .suspended) {
             self.enqueue(fib);

@@ -56,68 +56,103 @@ fn setGate(vec: u8, isr_addr: u64, flags: u8) void {
     };
 }
 
-export fn childFaultTrampoline() void {
-    serial.writeString("[kernel] Child actor safely caught by supervisor trampoline.\n");
-    fiber.yield();
+pub const ExceptionStackFrame = extern struct {
+    error_code: u64,
+    rip: u64,
+    cs: u64,
+    rflags: u64,
+    rsp: u64,
+    ss: u64,
+};
+
+export fn childFaultTrampoline() noreturn {
+    serial.writeString("[kernel] Child actor safely caught by supervisor trampoline. Terminating fiber.\n");
+    fiber.terminateCurrent();
 }
 
-fn handleRootPanic(cr2: u64, stack_ptr: [*]u64) noreturn {
+fn handleRootPanic(cr2: u64, frame: *const ExceptionStackFrame) noreturn {
     serial.writeString("\n[FATAL CPU EXCEPTION IN ACTOR 0]\n");
     serial.writeString("[exception] CR2: 0x");
     serial.writeHex(cr2);
-    serial.writeString("\n[exception] frame[0]: 0x");
-    serial.writeHex(stack_ptr[0]);
-    serial.writeString("\n[exception] frame[1]: 0x");
-    serial.writeHex(stack_ptr[1]);
-    serial.writeString("\n[exception] frame[2]: 0x");
-    serial.writeHex(stack_ptr[2]);
-    serial.writeString("\n[exception] frame[3]: 0x");
-    serial.writeHex(stack_ptr[3]);
+    serial.writeString("\n[exception] RIP: 0x");
+    serial.writeHex(frame.rip);
+    serial.writeString("\n[exception] RSP: 0x");
+    serial.writeHex(frame.rsp);
+    serial.writeString("\n[exception] ERR: 0x");
+    serial.writeHex(frame.error_code);
     serial.writeString("\n");
     while (true) {
         asm volatile ("hlt");
     }
 }
 
-export fn exceptionHandlerZig(saved_rip_ptr: *u64) void {
-    const rip = saved_rip_ptr.*;
+fn logSupervisorTrap(actor_id: u32, rip: u64, cr2: u64, frame: *const ExceptionStackFrame) void {
+    serial.writeString("\n[SUPERVISOR TRAP] Intercepted fault in Child Actor ");
+    serial.writeHex(actor_id);
+    serial.writeString(" at RIP 0x");
+    serial.writeHex(rip);
+    serial.writeString(" (CR2: 0x");
+    serial.writeHex(cr2);
+    serial.writeString(" err: 0x");
+    serial.writeHex(frame.error_code);
+    serial.writeString(" rsp: 0x");
+    serial.writeHex(frame.rsp);
+    serial.writeString(")\n");
+}
+
+export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
+    const rip = frame.rip;
     const cr2 = asm volatile ("mov %%cr2, %[ret]"
         : [ret] "=r" (-> u64),
     );
 
     if (current_actor_id == 0) {
-        handleRootPanic(cr2, @ptrCast(saved_rip_ptr));
+        handleRootPanic(cr2, frame);
     }
 
-    serial.writeString("\n[SUPERVISOR TRAP] Intercepted fault in Child Actor ");
-    serial.writeHex(current_actor_id);
-    serial.writeString(" at RIP 0x");
-    serial.writeHex(rip);
-    serial.writeString(" (CR2: 0x");
-    serial.writeHex(cr2);
-    serial.writeString(")\n");
+    logSupervisorTrap(current_actor_id, rip, cr2, frame);
 
     const fault = supervisor_mod.FaultFrame{
         .actor_id = current_actor_id,
-        .vector = supervisor_mod.FaultVector.PAGE_FAULT,
-        .error_code = 0,
+        .vector = supervisor_mod.FaultVector.GENERAL_PROTECTION,
+        .error_code = @truncate(frame.error_code),
         .rip = rip,
-        .rsp = 0,
+        .rsp = frame.rsp,
         .cr2 = cr2,
-        .rflags = 0,
+        .rflags = frame.rflags,
     };
 
     if (input_ring_ptr) |ring| {
         event_sequence +%= 1;
-        const frame = supervisor_mod.toMessageFrame(fault, event_sequence);
-        _ = ring.push(frame);
+        const msg = supervisor_mod.toMessageFrame(fault, event_sequence);
+        _ = ring.push(msg);
     }
 
-    saved_rip_ptr.* = @intFromPtr(&childFaultTrampoline);
+    frame.rip = @intFromPtr(&childFaultTrampoline);
     current_actor_id = 0;
 }
 
-fn genericExceptionHandler() callconv(.naked) void {
+fn isErrorCodeVector(vec: u8) bool {
+    return switch (vec) {
+        8, 10, 11, 12, 13, 14, 17, 21 => true,
+        else => false,
+    };
+}
+
+export fn exceptionHandlerWithError() callconv(.naked) void {
+    asm volatile (
+        \\ jmp commonExceptionHandler
+    );
+}
+
+export fn exceptionHandlerNoError() callconv(.naked) void {
+    asm volatile (
+        \\ pushq $0
+        \\ jmp commonExceptionHandler
+    );
+}
+
+export fn commonExceptionHandler() callconv(.naked) void {
     asm volatile (
         \\ push %%rax
         \\ push %%rcx
@@ -142,6 +177,7 @@ fn genericExceptionHandler() callconv(.naked) void {
         \\ pop %%rdx
         \\ pop %%rcx
         \\ pop %%rax
+        \\ addq $8, %%rsp
         \\ iretq
     );
 }
@@ -195,9 +231,12 @@ pub fn init() void {
         entry.* = std.mem.zeroes(IdtEntry);
     }
 
-    const handler_addr = @intFromPtr(&genericExceptionHandler);
     var i: u8 = 0;
     while (i < 32) : (i += 1) {
+        const handler_addr = if (isErrorCodeVector(i))
+            @intFromPtr(&exceptionHandlerWithError)
+        else
+            @intFromPtr(&exceptionHandlerNoError);
         setGate(i, handler_addr, 0x8E);
     }
 

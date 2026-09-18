@@ -88,6 +88,16 @@ pub fn escapeJsonString(buf: []u8, start_offset: usize, src: []const u8) !usize 
     return off;
 }
 
+fn decodeUnicodeEscape(hex: []const u8, out_buf: []u8, out_idx: *usize) bool {
+    const cp = std.fmt.parseInt(u21, hex, 16) catch return false;
+    var ubuf: [4]u8 = undefined;
+    const ulen = std.unicode.utf8Encode(cp, &ubuf) catch return false;
+    if (out_idx.* + ulen > out_buf.len) return false;
+    @memcpy(out_buf[out_idx.* .. out_idx.* + ulen], ubuf[0..ulen]);
+    out_idx.* += ulen;
+    return true;
+}
+
 pub fn unescapeJsonString(src: []const u8, out_buf: []u8) usize {
     var out_idx: usize = 0;
     var i: usize = 0;
@@ -96,13 +106,16 @@ pub fn unescapeJsonString(src: []const u8, out_buf: []u8) usize {
         if (c == '"') break;
         if (c == '\\' and i + 1 < src.len) {
             const next_c = src[i + 1];
-            switch (next_c) {
-                'n' => out_buf[out_idx] = '\n',
-                'r' => out_buf[out_idx] = '\r',
-                't' => out_buf[out_idx] = '\t',
-                '"', '\\' => out_buf[out_idx] = next_c,
-                else => out_buf[out_idx] = next_c,
+            if (next_c == 'u' and i + 5 < src.len and decodeUnicodeEscape(src[i + 2 .. i + 6], out_buf, &out_idx)) {
+                i += 6;
+                continue;
             }
+            out_buf[out_idx] = switch (next_c) {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                else => next_c,
+            };
             out_idx += 1;
             i += 2;
             continue;
@@ -133,4 +146,8 @@ test "unescape json string helper" {
     var buf: [64]u8 = undefined;
     const len = unescapeJsonString("hello \\\"world\\\"\\n\\\\\"after quote", &buf);
     try std.testing.expectEqualStrings("hello \"world\"\n\\", buf[0..len]);
+
+    var ubuf: [64]u8 = undefined;
+    const ulen = unescapeJsonString("\\u00a1Hola Mundo!\\u00a1\"", &ubuf);
+    try std.testing.expectEqualStrings("¡Hola Mundo!¡", ubuf[0..ulen]);
 }

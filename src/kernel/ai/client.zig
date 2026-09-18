@@ -77,8 +77,7 @@ pub const AiClient = struct {
         };
         if (text_res) |len| return len;
         if (std.mem.indexOf(u8, json_payload, "\"functionCall\"") != null or
-            std.mem.indexOf(u8, json_payload, "\"tool_calls\"") != null or
-            std.mem.indexOf(u8, json_payload, "\"function\"") != null)
+            std.mem.indexOf(u8, json_payload, "\"tool_calls\"") != null)
         {
             const copy_len = @min(json_payload.len, out_text.len);
             @memcpy(out_text[0..copy_len], json_payload[0..copy_len]);

@@ -39,7 +39,7 @@ const ai_mod = @import("ai.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
-const KERNEL_HEAP_SIZE: usize = 8 * 1024 * 1024;
+const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
 
 const COLOR_BG: u32 = 0x000000;
@@ -271,7 +271,9 @@ fn readAiResponse(out_text: []u8) usize {
         if (global_ai_client.extractResponseText(body, out_text)) |tlen| {
             return tlen;
         }
-        logRawBody(body);
+        serial.writeString("[ai] Raw body preview:\n");
+        serial.writeString(body[0..@min(body.len, 512)]);
+        serial.writeString("\n");
     }
     return 0;
 }
@@ -310,13 +312,6 @@ fn checkHttpDone(data: []const u8) bool {
     return false;
 }
 
-fn logRawBody(body: []const u8) void {
-    serial.writeString("[ai] Raw body preview:\n");
-    const print_len = @min(body.len, 512);
-    serial.writeString(body[0..print_len]);
-    serial.writeString("\n");
-}
-
 fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
     if (global_ai_client.config.provider_type == .mock) {
         return ai_mod.mock.generateResponse(prompt, out_text) catch 0;
@@ -325,11 +320,7 @@ fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
     serial.writeString("[ai] Dispatching prompt to Resident AI (");
     serial.writeString(global_ai_client.config.model);
     serial.writeString(")...\n");
-    const req_len = global_ai_client.formatPromptRequest(
-        &ai_http_req_buf,
-        &ai_http_body_buf,
-        prompt,
-    ) catch |err| {
+    const req_len = global_ai_client.formatPromptRequest(&ai_http_req_buf, &ai_http_body_buf, prompt) catch |err| {
         serial.writeString("[ai] Request format error: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");
@@ -346,12 +337,9 @@ fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
 }
 
 fn ensureTlsConnection() bool {
-    if (global_tls_ready and global_tls_adapter.connected) {
-        if (global_net_stack) |*stack| {
-            if (stack.tcp_client) |*client| {
-                if (client.state == .established) return true;
-            }
-        }
+    const is_connected = global_tls_ready and global_tls_adapter.connected;
+    if (is_connected and global_net_stack != null and global_net_stack.?.tcp_client != null) {
+        if (global_net_stack.?.tcp_client.?.state == .established) return true;
     }
     serial.writeString("[kernel] Re-establishing TLS connection...\n");
     global_tls_ready = false;
@@ -366,32 +354,49 @@ fn attemptEstablishSession() bool {
     return global_tls_ready;
 }
 
-fn aiInferenceBridge(prompt: []const u8, out_text: []u8) usize {
-    if (global_ai_client.config.provider_type != .mock) {
-        if (!ensureTlsConnection()) return 0;
-    }
-    return executeAiInference(prompt, out_text);
+fn aiInferenceBridge(prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize {
+    if (global_ai_client.config.provider_type != .mock and !ensureTlsConnection()) return 0;
+    return executeAiInference(prompt_ptr[0..prompt_len], out_ptr[0..out_len]);
 }
 
 const ActorThreadContext = struct {
+    allocator: std.mem.Allocator,
     actor: *actor_mod.Actor,
     vm: *vm_mod.VM,
 };
+
+fn onFiberContextSwitch(maybe_fib: ?*fiber_mod.Fiber) void {
+    if (maybe_fib) |fib| {
+        if (fib.entry == actorThread and fib.user_data != null) {
+            const act_ctx: *ActorThreadContext = @ptrCast(@alignCast(fib.user_data.?));
+            idt.current_actor_id = act_ctx.actor.id;
+            return;
+        }
+    }
+    idt.current_actor_id = 0;
+}
 
 fn actorThread(ctx: ?*anyopaque) void {
     const act_ctx = @as(*ActorThreadContext, @ptrCast(@alignCast(ctx.?)));
     const actor = act_ctx.actor;
     var vm = act_ctx.vm;
+    defer {
+        vm.deinit();
+        act_ctx.allocator.destroy(vm);
+        act_ctx.allocator.destroy(act_ctx);
+    }
     actor.state = .running;
     vm.run(0) catch |err| {
         actor.state = .faulted;
         serial.writeString("[kernel] Spawned Actor crashed: ");
         serial.writeString(@errorName(err));
-        if (vm.last_missing_symbol) |sym| {
-            serial.writeString(" [Undefined symbol: '");
-            serial.writeString(sym);
+        if (err == vm_mod.InterpretError.RuntimeError and vm.last_missing_symbol != null) {
+            serial.writeString(" [Undefined: '");
+            serial.writeString(vm.last_missing_symbol.?);
             serial.writeString("']");
         }
+        serial.writeString(" frames=");
+        serial.writeDec(vm.frame_count);
         serial.writeString(" ip=");
         serial.writeHex(vm.ip);
         serial.writeString(" sp=");
@@ -402,7 +407,7 @@ fn actorThread(ctx: ?*anyopaque) void {
     actor.state = .terminated;
 }
 
-fn compileActorScript(allocator: std.mem.Allocator, source: []const u8) !*chunk_mod.Chunk {
+fn compileActorScript(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!*chunk_mod.Chunk {
     const chunk = try allocator.create(chunk_mod.Chunk);
     chunk.* = chunk_mod.Chunk.init();
     errdefer {
@@ -412,7 +417,14 @@ fn compileActorScript(allocator: std.mem.Allocator, source: []const u8) !*chunk_
     var compiler = compiler_mod.Compiler.init(allocator, chunk);
     var p = parser_mod.Parser.init(allocator, source);
     while (p.current_token.token_type != .eof) {
-        const stmt = try p.parseStatement();
+        const stmt = p.parseStatement() catch |err| {
+            serial.writeString("[kernel] Actor compilation failed for '");
+            serial.writeString(name);
+            serial.writeString("': ");
+            serial.writeString(@errorName(err));
+            serial.writeString("\n");
+            return err;
+        };
         try compiler.compile(stmt);
     }
     return chunk;
@@ -426,17 +438,6 @@ fn logActorSpawn(id: u32, name: []const u8) void {
     serial.writeString("\x1b[97m) online\x1b[0m\n");
 }
 
-fn compileActorSource(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!*chunk_mod.Chunk {
-    return compileActorScript(allocator, source) catch |err| {
-        serial.writeString("[kernel] Actor compilation failed for '");
-        serial.writeString(name);
-        serial.writeString("': ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return err;
-    };
-}
-
 fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *chunk_mod.Chunk) !void {
     const child_vm = try allocator.create(vm_mod.VM);
     try child_vm.initInPlace(allocator, chunk);
@@ -447,6 +448,7 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
     try abi_mod.registerSyscalls(child_vm);
     const act_ctx = try allocator.create(ActorThreadContext);
     act_ctx.* = .{
+        .allocator = allocator,
         .actor = child,
         .vm = child_vm,
     };
@@ -500,7 +502,7 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
     const persistent_source = try allocator.dupe(u8, source);
     errdefer allocator.free(persistent_source);
 
-    const chunk = try compileActorSource(allocator, name, persistent_source);
+    const chunk = try compileActorScript(allocator, name, persistent_source);
     errdefer {
         chunk.deinit(allocator);
         allocator.destroy(chunk);
@@ -971,6 +973,7 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     serial.writeStatusOk("act ", "Genesis Actor 0 online (cooperative fiber scheduler)");
 
     var sched = fiber_mod.Scheduler.init(allocator);
+    sched.on_context_switch = onFiberContextSwitch;
     global_sched = &sched;
     _ = sched.spawn(vmThread, genesis_vm) catch kernelPanic("fiber_spawn");
     sched.run();

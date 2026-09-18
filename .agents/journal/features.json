@@ -1,5 +1,12 @@
 {
   "features": {
+    "SPEC-TECH-AI-002": {
+      "last_checked": "2026-09-18T05:41:33.906Z",
+      "name": "Resident AI Autonomous Tool & Script Synthesis",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/sovereign-ai-tool-synthesis.rst",
+      "verification_cmd": "zig build test"
+    },
     "SPEC-TECH-COMPOSITOR-001": {
       "last_checked": "2026-09-17T20:42:58.420Z",
       "name": "Reactive Vector Compositor & Multi-Actor Windowing",

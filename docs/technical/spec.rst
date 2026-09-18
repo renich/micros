@@ -35,6 +35,7 @@ Technical Sub-Specifications
    specs/fast-path-tcp-server
    specs/git-smart-http-ingestion
    specs/sovereign-workspace-catalog
+   specs/sovereign-ai-tool-synthesis
 
 Engineering & Coding Guides
 ===========================

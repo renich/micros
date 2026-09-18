@@ -45,7 +45,7 @@ pub const AbiContext = struct {
     wm: ?*WindowManager = null,
     canvas: ?*Canvas = null,
     pointer: ?*PointerState = null,
-    ai_inference_fn: ?*const fn (prompt: []const u8, out_text: []u8) usize = null,
+    ai_inference_fn: ?*const fn (prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize = null,
     spawn_code_fn: ?*const fn (allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 = null,
     cas_put_fn: ?*const fn (data: []const u8, out_hex: *[64]u8) anyerror!void = null,
     cas_get_fn: ?*const fn (hex_hash: []const u8, out_buf: []u8) anyerror!usize = null,
@@ -372,7 +372,7 @@ fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const ctx = active_ctx orelse return error.NoContext;
     const infer_fn = ctx.ai_inference_fn orelse return error.NoAiHandler;
     const prompt = args[0].string;
-    const len = infer_fn(prompt, &ai_prompt_resp_buf);
+    const len = infer_fn(prompt.ptr, prompt.len, &ai_prompt_resp_buf, ai_prompt_resp_buf.len);
     if (len == 0) return Value{ .string = "" };
     const duped = try vm.allocator.dupe(u8, ai_prompt_resp_buf[0..len]);
     return Value{ .string = duped };
