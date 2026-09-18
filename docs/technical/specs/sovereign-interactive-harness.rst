@@ -58,11 +58,17 @@ The Interactive Studio executes natively inside an application domain (App 1):
 
 3.1 Line Editing & Rendering Invariants
 ---------------------------------------
-* **Line Buffer**: 256-byte internal character array tracking cursor position.
-* **Printable ASCII**: Chars in range ``0x20..0x7E`` appended to buffer and blitted at current cursor coordinates.
-* **Backspace (`0x08` / `0x7F`)**: Decrements cursor, draws background color over character cell, and clears terminal index.
-* **Enter (`\r` / `\n`)**: Submits command line for evaluation and advances vertical cursor.
-* **Viewport Scrolling**: When cursor y exceeds 680px, the console window clears and resets to top (y=220px).
+* **Line Buffer & Readline**: Extensible character array supporting Emacs-style and Vim-style keybindings (Normal/Insert modes, motion, yanking/pasting) for rapid command construction and editing.
+* **Printable ASCII & Extended**: Supports standard and extended characters based on active keyboard layout (e.g., QWERTY, ES-LATAM) blitted at current cursor coordinates.
+* **Line Navigation**: Left/Right arrows, Word jumps, Home/End cursor positioning.
+* **History & Chat Capabilities**: Retains multi-turn conversation history. Implements capabilities of a modern chat interface:
+  * Persistent conversation logging and retrieval.
+  * Context auto-compression for long AI dialogue sequences.
+  * Copy/Yank support to extract AI-generated code or text.
+  * Live search (Ctrl+R / Vim `/`) across history.
+* **Backspace/Delete (`0x08` / `0x7F`)**: Modifies buffer at cursor, re-draws the line, and shifts trailing text left.
+* **Enter (`\r` / `\n`)**: Submits command line, records it to history, and advances vertical cursor.
+* **Viewport Scrolling**: When cursor y exceeds 680px, the console window clears and resets to top (y=220px) or triggers smooth scroll.
 
 3.2 Command Grammar
 -------------------

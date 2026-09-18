@@ -29,7 +29,7 @@ CACHE_DIR := .zig-cache
 # Default goal
 .DEFAULT_GOAL := all
 
-.PHONY: all clean test help run run-msh qemu-msh uefi-boot qemu-uefi tools fmt fmt-check lint spec-trace check
+.PHONY: all clean test help run run-msh qemu-msh uefi-boot uefi-disk-image qemu-uefi tools fmt fmt-check lint spec-trace check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
 all: tools src/kernel/genesis.mcb
@@ -104,6 +104,16 @@ uefi-boot: all
 	@cp zig-out/bin/boot.efi build/esp/EFI/BOOT/BOOTX64.EFI
 	@cp src/kernel/genesis.mcb build/esp/genesis.mcb
 	@echo "=> UEFI boot artifacts prepared successfully."
+
+## uefi-disk-image: Create a bootable GPT disk image for physical USB/NVMe deployment
+uefi-disk-image: uefi-boot
+	@echo "=> Emitting bootable raw UEFI GPT disk image in build/micros-uefi.img..."
+	@dd if=/dev/zero of=build/micros-uefi.img bs=1M count=64 status=none
+	@mkfs.vfat -F 32 build/micros-uefi.img >/dev/null 2>&1
+	@mmd -i build/micros-uefi.img ::EFI ::EFI/BOOT >/dev/null 2>&1 || true
+	@mcopy -i build/micros-uefi.img build/esp/EFI/BOOT/BOOTX64.EFI ::EFI/BOOT/BOOTX64.EFI >/dev/null 2>&1
+	@mcopy -i build/micros-uefi.img build/esp/genesis.mcb ::genesis.mcb >/dev/null 2>&1
+	@echo "=> Bootable UEFI disk image created successfully: build/micros-uefi.img"
 
 ## qemu-uefi: Boot bare-metal MicrOS UEFI in QEMU with live display & serial
 qemu-uefi: uefi-boot

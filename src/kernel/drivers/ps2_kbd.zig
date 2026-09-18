@@ -38,8 +38,18 @@ const UNPRINTABLE_MAP = [_]struct { scan: u8, code: u16, ascii: u8 }{
     .{ .scan = SCAN_SPACE, .code = KeyCode.SPACE, .ascii = ' ' },
 };
 
-const LOWER_MAP: []const u8 = "??1234567890-=\x08\tqwertyuiop[]\n?asdfghjkl;'`?\\zxcvbnm,./?*? ?";
-const UPPER_MAP: []const u8 = "??!@#$%^&*()_+\x08\tQWERTYUIOP{}\n?ASDFGHJKL:\"~?|ZXCVBNM<>??*? ?";
+pub const KeyboardLayout = enum {
+    us_qwerty,
+    es_latam,
+};
+
+pub var active_layout: KeyboardLayout = .us_qwerty;
+
+const US_LOWER_MAP: []const u8 = "??1234567890-=\x08\tqwertyuiop[]\n?asdfghjkl;'`?\\zxcvbnm,./?*? ?";
+const US_UPPER_MAP: []const u8 = "??!@#$%^&*()_+\x08\tQWERTYUIOP{}\n?ASDFGHJKL:\"~?|ZXCVBNM<>??*? ?";
+
+const LATAM_LOWER_MAP: []const u8 = "??1234567890'\xBF\x08\tqwertyuiop\xB4+\n?asdfghjkl\xF1{|?\\zxcvbnm,.-?*? ?";
+const LATAM_UPPER_MAP: []const u8 = "??!\"#$%&/()=?\xA1\x08\tQWERTYUIOP\xA8*\n?ASDFGHJKL\xD1}\xB0?|ZXCVBNM;:_?*? ?";
 
 const builtin = @import("builtin");
 
@@ -99,15 +109,31 @@ pub const Ps2Keyboard = struct {
     }
 
     fn resolveAscii(scan: u8, shift: bool, caps: bool) u8 {
-        if (scan >= LOWER_MAP.len) return 0;
-        const lower = LOWER_MAP[scan];
+        const lower_map = switch (active_layout) {
+            .us_qwerty => US_LOWER_MAP,
+            .es_latam => LATAM_LOWER_MAP,
+        };
+        const upper_map = switch (active_layout) {
+            .us_qwerty => US_UPPER_MAP,
+            .es_latam => LATAM_UPPER_MAP,
+        };
+
+        if (scan >= lower_map.len) return 0;
+        const lower = lower_map[scan];
         if (lower == '?') return 0;
 
         if (lower >= 'a' and lower <= 'z') {
             const is_upper = shift != caps;
-            return if (is_upper) UPPER_MAP[scan] else lower;
+            return if (is_upper) upper_map[scan] else lower;
         }
-        return if (shift) UPPER_MAP[scan] else lower;
+        // Extended characters in Spanish also respond to caps lock differently? 
+        // Typically, Ñ responds to caps lock. Let's handle it manually.
+        if (lower == '\xF1') { // ñ
+            const is_upper = shift != caps;
+            return if (is_upper) '\xD1' else lower; // Ñ
+        }
+
+        return if (shift) upper_map[scan] else lower;
     }
 
     fn resolveExtended(self: *Ps2Keyboard, scan: u8, is_release: bool) ?KeyEvent {

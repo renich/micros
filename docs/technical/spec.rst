@@ -43,6 +43,7 @@ Technical Sub-Specifications
    specs/smp-apic-preemption
    specs/pure-microkernel-compositor
    specs/pure-microkernel-storage
+   specs/microkernel-minimality-audit
 
 Engineering & Coding Guides
 ===========================
