@@ -43,6 +43,7 @@ pub const smp = @import("kernel/sched/smp.zig");
 pub const p2pd = @import("userland/p2pd/p2p.zig");
 pub const cas_sync = @import("userland/p2pd/cas_sync.zig");
 pub const remote_actor = @import("userland/p2pd/remote_actor.zig");
+pub const pkgd = @import("userland/pkgd/package.zig");
 
 test "kernel module tests" {
     _ = @import("kernel/cap/capability.zig");
@@ -86,6 +87,7 @@ test "kernel module tests" {
     _ = @import("userland/p2pd/p2p.zig");
     _ = @import("userland/p2pd/cas_sync.zig");
     _ = @import("userland/p2pd/remote_actor.zig");
+    _ = @import("userland/pkgd/package.zig");
     _ = @import("kernel/arch/x86_64/gdt.zig");
     _ = @import("kernel/arch/x86_64/syscall.zig");
     _ = @import("kernel/mem/vmm.zig");

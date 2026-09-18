@@ -16,7 +16,7 @@ Milestones & Deliverables
    - **Blocked By**: Phase 6 (M26), Phase 8 (M31).
    - **Unblocks**: M34, M35.
 
-* **Milestone 34: Sovereign Package & Module Federation Registry** [SCHEDULED]
+* **Milestone 34: Sovereign Package & Module Federation Registry** [COMPLETED]
    - **Decentralized Package Registry**: Package source code, compiled bytecode chunks, and actor manifests into verifiable capability bundles.
    - **Cryptographic Author Signatures**: Sign all releases with author Ed25519 keys; resolve module dependencies securely over P2P CAS without centralized npm/cargo registries.
    - **Blocked By**: M33, Phase 8 (M32).
