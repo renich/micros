@@ -410,7 +410,10 @@ pub const NetworkStack = struct {
         while (attempt < MAX_CHUNK_RETRIES) : (attempt += 1) {
             var tcp_buf: [1514]u8 = undefined;
             const total_len = try client.buildDataSegment(&tcp_buf, start_seq, chunk);
-            try self.sendIpv4(client.remote_ip, ipv4_mod.PROTO_TCP, tcp_buf[0..total_len]);
+            self.sendIpv4(client.remote_ip, ipv4_mod.PROTO_TCP, tcp_buf[0..total_len]) catch |err| {
+                client.seq = start_seq;
+                return err;
+            };
 
             const wait_iters = BASE_CHUNK_ITERS * (attempt + 1);
             var iter: usize = 0;
@@ -578,9 +581,15 @@ pub const NetworkStack = struct {
         var pkt_buf: [1514]u8 = undefined;
         const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
         while (conn.tx_sent < conn.tx_len) {
+            const start_seq = conn.local_seq;
+            const start_sent = conn.tx_sent;
             const pkt_len = try conn.buildData(my_ip, &pkt_buf);
             if (pkt_len == 0) break;
-            self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, pkt_buf[0..pkt_len]) catch break;
+            self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, pkt_buf[0..pkt_len]) catch {
+                conn.local_seq = start_seq;
+                conn.tx_sent = start_sent;
+                break;
+            };
         }
         return queued;
     }
