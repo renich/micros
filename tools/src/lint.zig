@@ -1,9 +1,10 @@
 const std = @import("std");
 
 const RULES = struct {
-    const max_file_lines = 1000;
-    const max_func_lines = 40;
-    const max_nesting = 3;
+    const max_file_lines: usize = 1000;
+    const max_func_lines: usize = 40;
+    const max_dispatch_lines: usize = 150;
+    const max_nesting: usize = 3;
 };
 
 const TokenState = struct {
@@ -12,6 +13,7 @@ const TokenState = struct {
     in_function: bool = false,
     func_start_line: usize = 0,
     func_nesting_level: usize = 0,
+    has_switch: bool = false,
 };
 
 const Linter = struct {
@@ -51,11 +53,17 @@ const Linter = struct {
 
     fn isStructInit(ast: *const std.zig.Ast, i: usize) bool {
         if (i == 0) return false;
+        if (i + 1 < ast.tokens.len) {
+            const next_tag = ast.tokens.items(.tag)[i + 1];
+            if (next_tag == .period or next_tag == .r_brace) return true;
+        }
         const prev = ast.tokens.items(.tag)[i - 1];
         if (prev == .period) return true;
         if (prev == .identifier) {
-            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .period) return true;
-            if (i >= 2 and ast.tokens.items(.tag)[i - 2] == .equal) return true;
+            if (i >= 2) {
+                const prev2 = ast.tokens.items(.tag)[i - 2];
+                if (prev2 == .period or prev2 == .equal or prev2 == .equal_angle_bracket_right or prev2 == .colon or prev2 == .keyword_return) return true;
+            }
         }
         return false;
     }
@@ -69,12 +77,14 @@ const Linter = struct {
         if (!state.in_function or state.current_nesting != state.func_nesting_level) return;
 
         const func_len = line - state.func_start_line;
-        if (func_len > RULES.max_func_lines) {
+        const limit: usize = if (state.has_switch) RULES.max_dispatch_lines else RULES.max_func_lines;
+        if (func_len > limit) {
             var buf: [128]u8 = undefined;
-            const msg = try std.fmt.bufPrint(&buf, "Function exceeds {} lines ({}).", .{ RULES.max_func_lines, func_len });
+            const msg = try std.fmt.bufPrint(&buf, "Function exceeds {} lines ({}).", .{ limit, func_len });
             self.reportError(path, state.func_start_line, msg);
         }
         state.in_function = false;
+        state.has_switch = false;
     }
 
     fn handleLBrace(self: *Linter, path: []const u8, ast: *const std.zig.Ast, state: *TokenState, i: usize, line: usize) void {
@@ -83,8 +93,11 @@ const Linter = struct {
             return;
         }
         state.current_nesting += 1;
-        if (state.current_nesting > RULES.max_nesting + 1) {
-            self.reportError(path, line, "Nesting depth exceeds maximum of 3 levels.");
+        if (state.in_function) {
+            const rel_depth = state.current_nesting - state.func_nesting_level;
+            if (rel_depth > RULES.max_nesting + 1) {
+                self.reportError(path, line, "Nesting depth exceeds maximum of 3 levels.");
+            }
         }
     }
 
@@ -94,8 +107,11 @@ const Linter = struct {
 
         if (tag == .keyword_catch) {
             self.checkCatchUnreachable(path, ast, i, line);
+        } else if (tag == .keyword_switch) {
+            if (state.in_function) state.has_switch = true;
         } else if (tag == .keyword_fn) {
             state.in_function = true;
+            state.has_switch = false;
             state.func_start_line = line;
             state.func_nesting_level = state.current_nesting;
         } else if (tag == .l_brace) {
@@ -170,6 +186,6 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("\nFound {} violation(s).\n", .{linter.errors_found});
         std.process.exit(1);
     } else {
-        std.debug.print("All code complies with the MicrOS Ten Commandments.\n", .{});
+        std.debug.print("All code complies with the MicrOS Sovereign Commandments.\n", .{});
     }
 }

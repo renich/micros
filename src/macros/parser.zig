@@ -340,54 +340,54 @@ pub const Parser = struct {
 
     fn parsePrimaryBase(self: *Parser) ParseError!*ast.Node {
         const tok = self.current_token;
-        if (tok.token_type == .number) {
-            self.advance();
-            const node = try self.allocator.create(ast.Node);
-            node.* = ast.Node{ .number_literal = ast.NumberLiteral{ .value = tok.lexeme } };
-            return node;
+        switch (tok.token_type) {
+            .number => {
+                self.advance();
+                const node = try self.allocator.create(ast.Node);
+                node.* = ast.Node{ .number_literal = ast.NumberLiteral{ .value = tok.lexeme } };
+                return node;
+            },
+            .string => {
+                self.advance();
+                const node = try self.allocator.create(ast.Node);
+                node.* = ast.Node{ .string_literal = ast.StringLiteral{ .value = tok.lexeme } };
+                return node;
+            },
+            .kw_true, .kw_false => {
+                self.advance();
+                const node = try self.allocator.create(ast.Node);
+                node.* = ast.Node{ .boolean_literal = ast.BooleanLiteral{ .value = (tok.token_type == .kw_true) } };
+                return node;
+            },
+            .lparen => {
+                self.advance();
+                const node = try self.parseExpression();
+                try self.match(.rparen);
+                return node;
+            },
+            .lbracket => return self.parseArrayLiteral(),
+            .kw_import => {
+                self.advance();
+                const has_paren = (self.current_token.token_type == .lparen);
+                if (has_paren) self.advance();
+                if (self.current_token.token_type != .string) return error.UnexpectedToken;
+                const path = self.current_token.lexeme;
+                self.advance();
+                if (has_paren) try self.match(.rparen);
+                const node = try self.allocator.create(ast.Node);
+                node.* = ast.Node{ .import_expr = ast.ImportExpr{ .path = path } };
+                return node;
+            },
+            .identifier => {
+                const name = tok.lexeme;
+                self.advance();
+                if (self.current_token.token_type == .lparen) return self.parseCall(name);
+                const node = try self.allocator.create(ast.Node);
+                node.* = ast.Node{ .identifier = ast.Identifier{ .name = name } };
+                return node;
+            },
+            else => return error.UnexpectedToken,
         }
-        if (tok.token_type == .string) {
-            self.advance();
-            const node = try self.allocator.create(ast.Node);
-            node.* = ast.Node{ .string_literal = ast.StringLiteral{ .value = tok.lexeme } };
-            return node;
-        }
-        if (tok.token_type == .kw_true or tok.token_type == .kw_false) {
-            self.advance();
-            const node = try self.allocator.create(ast.Node);
-            node.* = ast.Node{ .boolean_literal = ast.BooleanLiteral{ .value = (tok.token_type == .kw_true) } };
-            return node;
-        }
-        if (tok.token_type == .lparen) {
-            self.advance();
-            const node = try self.parseExpression();
-            try self.match(.rparen);
-            return node;
-        }
-        if (tok.token_type == .lbracket) {
-            return self.parseArrayLiteral();
-        }
-        if (tok.token_type == .kw_import) {
-            self.advance();
-            const has_paren = (self.current_token.token_type == .lparen);
-            if (has_paren) self.advance();
-            if (self.current_token.token_type != .string) return error.UnexpectedToken;
-            const path = self.current_token.lexeme;
-            self.advance();
-            if (has_paren) try self.match(.rparen);
-            const node = try self.allocator.create(ast.Node);
-            node.* = ast.Node{ .import_expr = ast.ImportExpr{ .path = path } };
-            return node;
-        }
-        if (tok.token_type == .identifier) {
-            const name = tok.lexeme;
-            self.advance();
-            if (self.current_token.token_type == .lparen) return self.parseCall(name);
-            const node = try self.allocator.create(ast.Node);
-            node.* = ast.Node{ .identifier = ast.Identifier{ .name = name } };
-            return node;
-        }
-        return error.UnexpectedToken;
     }
 
     fn parseMethodCall(self: *Parser, callee: *ast.Node) ParseError!*ast.Node {
