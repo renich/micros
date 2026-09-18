@@ -22,9 +22,9 @@
       "verification_cmd": "make check"
     },
     "SPEC-TECH-NET-002": {
-      "last_checked": "2026-09-18T02:11:58.934Z",
+      "last_checked": "2026-09-18T02:27:40.843Z",
       "name": "Fast-Path TCP Server Substrate",
-      "passes": false,
+      "passes": true,
       "spec_ref": "docs/technical/specs/fast-path-tcp-server.rst",
       "verification_cmd": "make check"
     },

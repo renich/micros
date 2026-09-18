@@ -28,6 +28,10 @@ const PointerState = compositor_mod.PointerState;
 pub const storage_abi = @import("storage/storage_abi.zig");
 pub const registerBlockDevice = storage_abi.registerBlockDevice;
 pub const setRebuildEngine = storage_abi.setRebuildEngine;
+pub const net_abi = @import("net/net_abi.zig");
+const cap_mod = @import("cap/capability.zig");
+const net_stack_mod = @import("net/stack.zig");
+const NetworkStack = net_stack_mod.NetworkStack;
 
 pub const AbiContext = struct {
     registry: *ActorRegistry,
@@ -50,6 +54,7 @@ pub const AbiContext = struct {
     telemetry_fn: ?*const fn () ai_mod.tools.TelemetrySnapshot = null,
     bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
     current_actor_fn: ?*const fn () ?*Actor = null,
+    net_stack: ?*NetworkStack = null,
 };
 
 pub const HarnessContext = AbiContext;
@@ -64,14 +69,23 @@ fn checkCallerAuthority(cap_type: @import("cap/capability.zig").CapType, rights:
     return actor.hasCap(cap_type, rights);
 }
 
+fn getCallerActorId() u32 {
+    const ctx = active_ctx orelse return 0;
+    const get_actor = ctx.current_actor_fn orelse return ctx.supervisor.id;
+    const actor = get_actor() orelse return ctx.supervisor.id;
+    return actor.id;
+}
+
 pub fn setContext(ctx: *AbiContext) void {
     active_ctx = ctx;
     storage_abi.caller_auth_fn = checkCallerAuthority;
+    net_abi.setNetworkContext(ctx.net_stack, checkCallerAuthority, getCallerActorId);
 }
 
 pub fn clearContext() void {
     active_ctx = null;
     storage_abi.caller_auth_fn = null;
+    net_abi.clearNetworkContext();
 }
 
 fn castToU32(val: i64) ?u32 {
@@ -415,6 +429,11 @@ fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysYield(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
+    if (active_ctx) |ctx| {
+        if (ctx.net_stack) |stack| {
+            stack.pollTcpServer();
+        }
+    }
     fiber_mod.yield();
     return Value{ .integer = 0 };
 }
@@ -510,6 +529,9 @@ fn nativeSysActorWait(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         if (actor == null or actor.?.state == .terminated or actor.?.state == .faulted) {
             break;
         }
+        if (ctx.net_stack) |stack| {
+            stack.pollTcpServer();
+        }
         fiber_mod.yield();
     }
     return Value{ .boolean = true };
@@ -548,6 +570,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_compositor_flush", Value{ .native = nativeSysCompositorFlush });
     try vm.globals.put("sys_pointer_read", Value{ .native = nativeSysPointerRead });
     try storage_abi.registerStorageSyscalls(vm);
+    try net_abi.registerNetworkSyscalls(vm);
 }
 
 pub const registerBindings = registerSyscalls;

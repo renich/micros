@@ -1,0 +1,127 @@
+// MicrOS (µOS) CAS-Backed HTTP/1.1 Web Server Actor
+// Serves static landing page, system telemetry, and content-addressed blobs from BLAKE3 CAS.
+// Freestanding Macros userspace actor.
+
+fn http_send_response(conn, status_code, status_text, content_type, body) {
+    resp = "HTTP/1.1 " + int_to_str(status_code) + " " + status_text + "\r\n";
+    resp = resp + "Content-Type: " + content_type + "\r\n";
+    resp = resp + "Content-Length: " + int_to_str(len(body)) + "\r\n";
+    resp = resp + "Connection: close\r\n\r\n";
+    resp = resp + body;
+    sys_net_send(conn, resp);
+    sys_net_close(conn);
+    return 0;
+}
+
+fn parse_http_path(req) {
+    if (len(req) < 5) {
+        return "";
+    }
+    if (substr(req, 0, 4) != "GET ") {
+        return "";
+    }
+    slen = len(req);
+    end_idx = 4;
+    while (end_idx < slen) {
+        ch = substr(req, end_idx, end_idx + 1);
+        if (ch == " ") {
+            return substr(req, 4, end_idx);
+        }
+        if (ch == "\r") {
+            return substr(req, 4, end_idx);
+        }
+        if (ch == "\n") {
+            return substr(req, 4, end_idx);
+        }
+        end_idx = end_idx + 1;
+    }
+    return substr(req, 4, end_idx);
+}
+
+fn serve_index(conn) {
+    html = "<!DOCTYPE html><html><head><title>MicrOS Autonomous Web</title></head>";
+    html = html + "<body style=\"background:#0d1117;color:#c9d1d9;font-family:sans-serif;padding:2rem;\">";
+    html = html + "<h1>MicrOS (uOS) Autonomous Substrate</h1>";
+    html = html + "<p>Fast-Path Zero-Copy TCP Server Online.</p>";
+    html = html + "<p>Direct BLAKE3 Content-Addressed Storage enabled.</p>";
+    html = html + "</body></html>\r\n";
+    http_send_response(conn, 200, "OK", "text/html", html);
+    return 0;
+}
+
+fn serve_status(conn) {
+    json = "{\"status\":\"healthy\",\"os\":\"micros\",\"version\":\"0.15.0\",\"arch\":\"x86_64\"}\r\n";
+    http_send_response(conn, 200, "OK", "application/json", json);
+    return 0;
+}
+
+fn serve_cas(conn, hash) {
+    blob = sys_cas_get(hash);
+    if (len(blob) > 0) {
+        http_send_response(conn, 200, "OK", "application/octet-stream", blob);
+        return 0;
+    }
+    http_send_response(conn, 404, "Not Found", "text/plain", "CAS Object Not Found\r\n");
+    return 0;
+}
+
+fn handle_connection(conn) {
+    req = sys_net_recv(conn, 2048);
+    if (len(req) == 0) {
+        sys_net_close(conn);
+        return 0;
+    }
+
+    path = parse_http_path(req);
+    if (len(path) == 0) {
+        http_send_response(conn, 400, "Bad Request", "text/plain", "Bad Request\r\n");
+        return 0;
+    }
+
+    if (path == "/") {
+        serve_index(conn);
+        return 0;
+    }
+    if (path == "/index.html") {
+        serve_index(conn);
+        return 0;
+    }
+    if (path == "/health") {
+        serve_status(conn);
+        return 0;
+    }
+    if (path == "/status") {
+        serve_status(conn);
+        return 0;
+    }
+    if (len(path) >= 68) {
+        if (substr(path, 0, 4) == "/b3/") {
+            serve_cas(conn, substr(path, 4, 68));
+            return 0;
+        }
+    }
+
+    http_send_response(conn, 404, "Not Found", "text/plain", "Route Not Found\r\n");
+    return 0;
+}
+
+fn run_server(port) {
+    print("[httpd] Binding HTTP listener on port " + int_to_str(port) + "...");
+    listener = sys_net_listen(port);
+    if (listener < 0) {
+        print("[httpd] Error: Failed to bind port " + int_to_str(port) + " (Permission Denied or Port Bound)");
+        return 1;
+    }
+    print("[httpd] Listening on port " + int_to_str(port) + " (listener ID: " + int_to_str(listener) + ")");
+
+    while (true) {
+        conn = sys_net_accept(listener);
+        if (conn >= 0) {
+            handle_connection(conn);
+        }
+        sys_yield();
+    }
+    return 0;
+}
+
+run_server(8080);

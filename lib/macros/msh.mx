@@ -81,6 +81,7 @@ fn cmd_help() {
     console_writeln("  spawn_cas <h> - Spawn isolated actor from CAS hash");
     console_writeln("  harness       - Launch visual studio");
     console_writeln("  install       - Launch standalone silicon installer");
+    console_writeln("  httpd         - Launch CAS-backed HTTP/1.1 web server");
     console_writeln("  rebuild       - Rebuild system kernel and stage to ESP");
     console_writeln("  reboot        - Reset system and reboot hardware");
     console_writeln("  exit          - Terminate MicroShell session");
@@ -219,6 +220,22 @@ fn cmd_rebuild() {
     return 0;
 }
 
+fn cmd_httpd() {
+    src = sys_bundle_read("http_server.mx");
+    if (len(src) == 0) {
+        console_writeln("Error: http_server.mx not found in genesis bundle.");
+        return 0;
+    }
+    console_writeln("Launching CAS HTTP/1.1 Web Server...");
+    h_id = sys_actor_spawn_code("httpd", src);
+    if (h_id < 0) {
+        console_writeln("Error: Failed to spawn httpd actor.");
+        return 0;
+    }
+    console_writeln("HTTP Server Actor " + int_to_str(h_id) + " running on port 8080.");
+    return 0;
+}
+
 fn cmd_reboot() {
     console_writeln("Restarting system...");
     sys_reboot();
@@ -236,6 +253,7 @@ fn eval_command(cmd) {
     }
     if (cmd == "harness") { return cmd_harness(); }
     if (cmd == "install") { return cmd_install(); }
+    if (cmd == "httpd") { return cmd_httpd(); }
     if (cmd == "rebuild") { return cmd_rebuild(); }
     if (cmd == "reboot") { return cmd_reboot(); }
     if (is_prefix(cmd, "spawn ")) { return cmd_spawn(substr(cmd, 6, len(cmd))); }

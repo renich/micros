@@ -183,6 +183,26 @@ test "Genesis Bundle contains and compiles rebuild.mx" {
     try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
+test "Genesis Bundle contains and compiles http_server.mx" {
+    const std_mod = @import("std");
+    const raw_bundle = @embedFile("kernel/genesis.mcb");
+    const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
+    const http_source = reader.findData("http_server.mx").?;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(std_mod.testing.allocator);
+
+    var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, http_source);
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        defer stmt.deinit(std_mod.testing.allocator);
+        try compiler.compile(stmt);
+    }
+    try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
+    try std_mod.testing.expect(chunk.code.items.len > 0);
+}
+
 test "Compiles and executes MOCK_RESPONSE code block" {
     const std_mod = @import("std");
     const source =

@@ -37,6 +37,11 @@ pub const NetworkStack = struct {
     tcp_rx_len: usize = 0,
     packet_id: u16 = 1,
     next_local_port: u16 = 50000,
+    listeners: [tcp_mod.MAX_LISTENERS]?tcp_mod.TcpListener = [_]?tcp_mod.TcpListener{null} ** tcp_mod.MAX_LISTENERS,
+    server_conns: [tcp_mod.MAX_SERVER_CONNECTIONS]tcp_mod.TcpServerConn = [_]tcp_mod.TcpServerConn{.{}} ** tcp_mod.MAX_SERVER_CONNECTIONS,
+    syn_secret_nonce: u64 = 0x5359_4E5F_4D49_4352,
+    next_conn_id: u32 = 1,
+    next_listener_id: u32 = 1,
 
     pub fn init(device: *virtio_net_mod.VirtioNetDevice) NetworkStack {
         return NetworkStack{ .device = device };
@@ -76,22 +81,74 @@ pub const NetworkStack = struct {
         switch (ip_hdr.protocol) {
             ipv4_mod.PROTO_ICMP => self.processIcmp(ip_hdr.src_ip, payload),
             ipv4_mod.PROTO_UDP => self.processUdp(payload),
-            ipv4_mod.PROTO_TCP => self.processTcp(ip_hdr.src_ip, payload),
+            ipv4_mod.PROTO_TCP => self.processTcp(src_mac, ip_hdr.src_ip, payload),
             else => {},
         }
     }
 
-    fn processTcp(self: *NetworkStack, src_ip: [4]u8, payload: []const u8) void {
+    fn findMatchingServerConn(self: *NetworkStack, src_ip: [4]u8, src_port: u16, dst_port: u16) ?*tcp_mod.TcpServerConn {
+        for (&self.server_conns) |*conn| {
+            if (conn.state != .closed and conn.local_port == dst_port and conn.remote_port == src_port) {
+                if (std.mem.eql(u8, &conn.remote_ip, &src_ip)) {
+                    return conn;
+                }
+            }
+        }
+        return null;
+    }
+
+    fn findListener(self: *const NetworkStack, port: u16) ?tcp_mod.TcpListener {
+        for (self.listeners) |l| {
+            if (l) |listener| {
+                if (listener.active and listener.port == port) return listener;
+            }
+        }
+        return null;
+    }
+
+    fn handleServerConnSegment(self: *NetworkStack, conn: *tcp_mod.TcpServerConn, tcp_hdr: tcp_mod.TcpHeader, data: []const u8) void {
+        if (!conn.processSegment(tcp_hdr, data)) return;
+
+        if (data.len > 0 or (tcp_hdr.flags & tcp_mod.FLAG_FIN) != 0) {
+            var ack_buf: [64]u8 = undefined;
+            const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+            const ack_len = conn.buildAck(my_ip, &ack_buf) catch return;
+            self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, ack_buf[0..ack_len]) catch {};
+        }
+    }
+
+    fn handleListenerSyn(self: *NetworkStack, src_ip: [4]u8, tcp_hdr: tcp_mod.TcpHeader) void {
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+        const cookie = tcp_mod.computeSynCookie(src_ip, my_ip, tcp_hdr.src_port, tcp_hdr.dst_port, tcp_hdr.seq_num, self.syn_secret_nonce);
+        var syn_ack_buf: [64]u8 = undefined;
+        const pkt_len = tcp_mod.writeSynAckPacket(&syn_ack_buf, my_ip, src_ip, tcp_hdr.dst_port, tcp_hdr.src_port, cookie, tcp_hdr.seq_num +% 1) catch return;
+        self.sendIpv4(src_ip, ipv4_mod.PROTO_TCP, syn_ack_buf[0..pkt_len]) catch {};
+    }
+
+    fn handleListenerAck(self: *NetworkStack, src_mac: [6]u8, src_ip: [4]u8, tcp_hdr: tcp_mod.TcpHeader, data: []const u8, listener: tcp_mod.TcpListener) void {
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+        const client_isn = tcp_hdr.seq_num -% 1;
+        const cookie = tcp_hdr.ack_num -% 1;
+        if (!tcp_mod.verifySynCookie(src_ip, my_ip, tcp_hdr.src_port, tcp_hdr.dst_port, client_isn, self.syn_secret_nonce, cookie)) {
+            return;
+        }
+
+        for (&self.server_conns) |*conn| {
+            if (conn.state != .closed) continue;
+            const id = self.next_conn_id;
+            self.next_conn_id +%= 1;
+            conn.* = tcp_mod.TcpServerConn.init(id, tcp_hdr.dst_port, tcp_hdr.src_port, src_ip, src_mac, cookie, client_isn, listener.owner_actor);
+            if (data.len > 0) _ = conn.processSegment(tcp_hdr, data);
+            return;
+        }
+    }
+
+    fn processClientTcp(self: *NetworkStack, src_ip: [4]u8, tcp_hdr: tcp_mod.TcpHeader, data: []const u8) void {
         const client = &(self.tcp_client orelse return);
         if (!std.mem.eql(u8, &src_ip, &client.remote_ip)) return;
-
-        const tcp_hdr = tcp_mod.parseHeader(payload) orelse return;
         if (tcp_hdr.src_port != client.remote_port) return;
 
-        const hdr_len = @as(usize, tcp_hdr.data_offset) * 4;
-        const data = if (payload.len > hdr_len) payload[hdr_len..] else &[_]u8{};
         const was_syn_sent = (client.state == .syn_sent);
-
         if (!client.processSegment(tcp_hdr, data)) return;
 
         if (data.len > 0) {
@@ -103,6 +160,29 @@ pub const NetworkStack = struct {
         } else if (data.len > 0 or (tcp_hdr.flags & tcp_mod.FLAG_FIN) != 0) {
             self.sendTcpAck(src_ip, client);
         }
+    }
+
+    fn processTcp(self: *NetworkStack, src_mac: [6]u8, src_ip: [4]u8, payload: []const u8) void {
+        const tcp_hdr = tcp_mod.parseHeader(payload) orelse return;
+        const hdr_len = @as(usize, tcp_hdr.data_offset) * 4;
+        const data = if (payload.len > hdr_len) payload[hdr_len..] else &[_]u8{};
+
+        if (self.findMatchingServerConn(src_ip, tcp_hdr.src_port, tcp_hdr.dst_port)) |conn| {
+            self.handleServerConnSegment(conn, tcp_hdr, data);
+            return;
+        }
+
+        if (self.findListener(tcp_hdr.dst_port)) |listener| {
+            if ((tcp_hdr.flags & tcp_mod.FLAG_SYN) != 0 and (tcp_hdr.flags & tcp_mod.FLAG_ACK) == 0) {
+                self.handleListenerSyn(src_ip, tcp_hdr);
+                return;
+            } else if ((tcp_hdr.flags & tcp_mod.FLAG_ACK) != 0) {
+                self.handleListenerAck(src_mac, src_ip, tcp_hdr, data, listener);
+                return;
+            }
+        }
+
+        self.processClientTcp(src_ip, tcp_hdr, data);
     }
 
     fn sendTcpAck(self: *NetworkStack, dst_ip: [4]u8, client: *tcp_mod.TcpClient) void {
@@ -441,6 +521,78 @@ pub const NetworkStack = struct {
 
         const total_frame_len = payload_offset + payload.len;
         try self.device.sendPacket(frame_buf[0..total_frame_len]);
+    }
+
+    pub fn listen(self: *NetworkStack, port: u16, owner_actor: u32) !u32 {
+        if (port == 0) return error.InvalidPort;
+        if (self.findListener(port) != null) return error.PortAlreadyBound;
+
+        for (&self.listeners) |*slot| {
+            if (slot.* == null) {
+                const id = self.next_listener_id;
+                self.next_listener_id +%= 1;
+                slot.* = tcp_mod.TcpListener.init(id, port, owner_actor);
+                return id;
+            }
+        }
+        return error.NoAvailableListeners;
+    }
+
+    pub fn accept(self: *NetworkStack, listener_id: u32, owner_actor: u32) ?u32 {
+        var port: ?u16 = null;
+        for (self.listeners) |l| {
+            const listener = l orelse continue;
+            if (listener.id == listener_id and listener.owner_actor == owner_actor) {
+                port = listener.port;
+                break;
+            }
+        }
+        const listen_port = port orelse return null;
+        for (&self.server_conns) |*conn| {
+            if (conn.state == .established and conn.local_port == listen_port and conn.owner_actor == owner_actor) {
+                return conn.id;
+            }
+        }
+        return null;
+    }
+
+    pub fn getServerConn(self: *NetworkStack, conn_id: u32, owner_actor: u32) ?*tcp_mod.TcpServerConn {
+        for (&self.server_conns) |*conn| {
+            if (conn.id == conn_id and conn.owner_actor == owner_actor and conn.state != .closed) {
+                return conn;
+            }
+        }
+        return null;
+    }
+
+    pub fn recvServer(self: *NetworkStack, conn_id: u32, owner_actor: u32, out_buf: []u8) usize {
+        const conn = self.getServerConn(conn_id, owner_actor) orelse return 0;
+        return conn.readRx(out_buf);
+    }
+
+    pub fn sendServer(self: *NetworkStack, conn_id: u32, owner_actor: u32, data: []const u8) !usize {
+        const conn = self.getServerConn(conn_id, owner_actor) orelse return error.ConnectionNotFound;
+        const queued = try conn.queueTx(data);
+        var pkt_buf: [1514]u8 = undefined;
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+        while (conn.tx_sent < conn.tx_len) {
+            const pkt_len = try conn.buildData(my_ip, &pkt_buf);
+            if (pkt_len == 0) break;
+            self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, pkt_buf[0..pkt_len]) catch break;
+        }
+        return queued;
+    }
+
+    pub fn closeServer(self: *NetworkStack, conn_id: u32, owner_actor: u32) !void {
+        const conn = self.getServerConn(conn_id, owner_actor) orelse return error.ConnectionNotFound;
+        var fin_buf: [64]u8 = undefined;
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+        const fin_len = try conn.buildFin(my_ip, &fin_buf);
+        try self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, fin_buf[0..fin_len]);
+    }
+
+    pub fn pollTcpServer(self: *NetworkStack) void {
+        self.poll();
     }
 
     pub fn poll(self: *NetworkStack) void {

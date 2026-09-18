@@ -10,6 +10,14 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 18 (Fast-Path TCP Server Substrate - SPEC-TECH-NET-002)**:
+  - **Stateless BLAKE3 SYN-Cookies**: Implemented ``computeSynCookie`` and ``verifySynCookie`` in ``src/kernel/net/tcp.zig``, hashing 24-byte 4-tuple, client ISN, and 64-bit kernel secret nonce with BLAKE3 to prevent SYN flood denial of service with zero pre-handshake memory allocation.
+  - **Fast-Path TCP Server Engine & In-Order Dropping**: Implemented ``TcpListener`` and ``TcpServerConn`` in ``src/kernel/net/tcp.zig`` with 9-state RFC 9293 state machine, 16 KiB circular RX/TX buffers, in-order packet dropping, and cooperative FIN/ACK teardown.
+  - **Network Stack Server Dispatcher**: Integrated server listeners and connection pool into ``NetworkStack`` in ``src/kernel/net/stack.zig``, routing incoming TCP segments between active server connections, SYN-cookie listener handshakes, and client connections.
+  - **Capability-Gated Network Syscall ABI**: Implemented ``src/kernel/net/net_abi.zig`` exposing 5 native syscalls (``sys_net_listen``, ``sys_net_accept``, ``sys_net_recv``, ``sys_net_send``, ``sys_net_close``) gated by ``CapType.network_device`` capabilities and caller actor ownership. Integrated network polling into ``sys_yield`` and ``sys_actor_wait``.
+  - **CAS-Backed HTTP/1.1 Web Server Actor**: Authored sovereign pure Macros HTTP web server in ``lib/macros/http_server.mx`` serving landing pages, health telemetry, and content-addressed blobs from BLAKE3 CAS (``GET /b3/<hash>``).
+  - **MicroShell Integration & QEMU Port Forwarding**: Added ``httpd`` command to ``lib/macros/msh.mx``, packaged ``http_server.mx`` into ``src/kernel/genesis.mcb``, configured ``hostfwd=tcp::8080-:8080`` in ``GNUmakefile`` and ``tools/micros-runner.bash``, and verified live end-to-end multi-route HTTP queries from host ``curl`` under QEMU with 0 defects.
+
 - **Crucible Protocol Hardening & Substrate Verification**:
    - **Ambient Syscall Authority & CSpace Isolation**: Restricted destructive operations (``sys_reboot``, ``sys_disk_gpt_format``, ``sys_disk_esp_format``, and ``sys_disk_cas_format``) in ``src/kernel/storage/storage_abi.zig`` to Actor 0 (Genesis) or child actors explicitly holding ``CapType.storage_device`` (WRITE) or ``CapType.actor_control`` (EXECUTE). Enforced caller CSpace lookup in ``src/kernel/abi.zig`` and ``src/kernel/main.zig`` for all dynamic tool dispatches.
    - **Syscall Integer Sanitization**: Replaced unchecked Ring 0 integer casts with bounds-checked ``castToU32``, ``castToUsize``, and ``castToU64`` helpers across ``src/kernel/abi.zig`` and ``src/kernel/storage/storage_abi.zig``, preventing kernel panics on negative inputs (e.g. ``kill -1``). Added input validation guards in ``lib/macros/init.mx`` and ``lib/macros/msh.mx``.

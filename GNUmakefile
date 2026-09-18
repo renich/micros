@@ -36,9 +36,9 @@ all: tools src/kernel/genesis.mcb
 	@echo "=> Building MicrOS..."
 	$(ZIG) build $(ZIG_BUILD_FLAGS)
 
-src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/msh.mx lib/macros/harness.mx lib/macros/installer.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx lib/macros/bundle.mx lib/macros/rebuild.mx | tools
+src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/msh.mx lib/macros/harness.mx lib/macros/installer.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx lib/macros/bundle.mx lib/macros/rebuild.mx lib/macros/http_server.mx | tools
 	@echo "=> Packaging Genesis MCB bundle..."
-	./tools/micros-bundle $@ init.mx=lib/macros/init.mx msh.mx=lib/macros/msh.mx harness.mx=lib/macros/harness.mx installer.mx=lib/macros/installer.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx
+	./tools/micros-bundle $@ init.mx=lib/macros/init.mx msh.mx=lib/macros/msh.mx harness.mx=lib/macros/harness.mx installer.mx=lib/macros/installer.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx http_server.mx=lib/macros/http_server.mx
 
 ## test: Execute the unit and integration test suite
 test:
@@ -115,7 +115,7 @@ qemu-uefi: uefi-boot
 		-drive format=raw,file=fat:rw:build/esp \
 		-drive id=disk0,if=none,format=raw,file=build/micros-disk.raw \
 		-device virtio-blk-pci,drive=disk0 \
-		-netdev user,id=net0 \
+		-netdev user,id=net0,hostfwd=tcp::8080-:8080 \
 		-device virtio-net-pci,netdev=net0 \
 		-serial stdio
 

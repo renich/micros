@@ -38,9 +38,7 @@ const net_mod = @import("net.zig");
 const ai_mod = @import("ai.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
-
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
-
 const KERNEL_HEAP_SIZE: usize = 8 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
 
@@ -95,21 +93,17 @@ fn initHardware(boot_info: *const BootInfo) void {
     asm volatile ("cli");
     serial.init();
     printBanner();
-
     if (boot_info.magic != boot_info_mod.BOOT_INFO_MAGIC) {
         serial.writeString("[kernel] Fatal: Invalid BootInfo signature!\n");
         haltLoop();
     }
     serial.writeStatusOk("boot", "UEFI handoff parameters validated");
-
     gdt.init();
     idt.init();
     serial.writeStatusOk("arch", "GDT and IDT fault containment active");
-
     pmm.init(boot_info);
     vmm.init(boot_info.hhdm_offset);
     serial.writeStatusOk("mmu ", "PMM physical and VMM virtual paging active");
-
     initNetwork(boot_info);
 }
 
@@ -331,7 +325,6 @@ fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
     serial.writeString("[ai] Dispatching prompt to Resident AI (");
     serial.writeString(global_ai_client.config.model);
     serial.writeString(")...\n");
-
     const req_len = global_ai_client.formatPromptRequest(
         &ai_http_req_buf,
         &ai_http_body_buf,
@@ -342,14 +335,12 @@ fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
         serial.writeString("\n");
         return 0;
     };
-
     global_tls_adapter.writeAll(ai_http_req_buf[0..req_len]) catch |err| {
         serial.writeString("[ai] Send error: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");
         return 0;
     };
-
     serial.writeString("[ai] Prompt sent! Awaiting cognitive response...\n");
     return readAiResponse(out_text);
 }
@@ -477,7 +468,8 @@ fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8) !void {
         });
     }
     const is_sys = std.mem.eql(u8, name, "msh") or std.mem.eql(u8, name, "harness") or
-        std.mem.eql(u8, name, "installer") or std.mem.eql(u8, name, "rebuild");
+        std.mem.eql(u8, name, "installer") or std.mem.eql(u8, name, "rebuild") or
+        std.mem.eql(u8, name, "httpd") or std.mem.eql(u8, name, "web");
     if (is_sys) {
         _ = try child.insertCap(cap_mod.Capability{
             .cap_type = .actor_control,
@@ -490,6 +482,13 @@ fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8) !void {
             .cap_type = .storage_device,
             .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
             .object_id = CAP_OBJ_STORAGE,
+            .data_addr = 0,
+            .data_size = 0,
+        });
+        _ = try child.insertCap(cap_mod.Capability{
+            .cap_type = .network_device,
+            .rights = cap_mod.Rights.ALL,
+            .object_id = CAP_OBJ_NETWORK,
             .data_addr = 0,
             .data_size = 0,
         });
@@ -923,6 +922,7 @@ fn setupAbiEnvironment(
         .telemetry_fn = telemetryBridge,
         .bundle_read_fn = bundleReadBridge,
         .current_actor_fn = getCurrentActorBridge,
+        .net_stack = if (global_net_stack != null) &global_net_stack.? else null,
     };
     abi_mod.setContext(&global_abi_ctx.?);
     abi_mod.registerSyscalls(vm) catch kernelPanic("abi_syscalls");
