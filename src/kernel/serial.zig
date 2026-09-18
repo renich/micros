@@ -240,4 +240,3 @@ test "serial Latin-1 and UTF-8 Spanish roundtrip" {
     try std.testing.expectEqual(@as(usize, 1), len_a);
     try std.testing.expectEqual(@as(u8, 'A'), out[0]);
 }
-

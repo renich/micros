@@ -2,6 +2,7 @@
 // Provides low-level IN/OUT instructions without libc.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub inline fn inb(port: u16) u8 {
     return asm volatile ("inb %[port], %[ret]"
@@ -49,6 +50,10 @@ pub inline fn outl(port: u16, val: u32) void {
 }
 
 pub inline fn ioWait() void {
+    if (builtin.is_test) {
+        pause();
+        return;
+    }
     outb(0x80, 0);
 }
 

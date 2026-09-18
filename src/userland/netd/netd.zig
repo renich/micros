@@ -10,6 +10,7 @@ const virtio_net_mod = @import("../../kernel/drivers/virtio_net.zig");
 const net_stack_mod = @import("../../kernel/net/stack.zig");
 const ring_mod = @import("../../kernel/ipc/ring.zig");
 const SpscRingBuffer = ring_mod.SpscRingBuffer;
+const io = @import("../../kernel/arch/x86_64/io.zig");
 
 pub const DaemonState = enum(u8) {
     uninitialized = 0,
@@ -97,11 +98,12 @@ pub const NetDaemon = struct {
         self.state = .dhcp_discovering;
 
         var attempt: usize = 0;
-        while (!self.stack.?.dhcp_config.bound and attempt < 3) : (attempt += 1) {
+        while (!self.stack.?.dhcp_config.bound and attempt < 5) : (attempt += 1) {
             self.stack.?.startDhcp() catch continue;
             var iter: usize = 0;
-            while (!self.stack.?.dhcp_config.bound and iter < 10_000) : (iter += 1) {
+            while (!self.stack.?.dhcp_config.bound and iter < 100_000) : (iter += 1) {
                 self.stack.?.poll();
+                io.ioWait();
             }
         }
 

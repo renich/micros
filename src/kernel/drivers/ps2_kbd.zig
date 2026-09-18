@@ -126,7 +126,7 @@ pub const Ps2Keyboard = struct {
             const is_upper = shift != caps;
             return if (is_upper) upper_map[scan] else lower;
         }
-        // Extended characters in Spanish also respond to caps lock differently? 
+        // Extended characters in Spanish also respond to caps lock differently?
         // Typically, Ñ responds to caps lock. Let's handle it manually.
         if (lower == '\xF1') { // ñ
             const is_upper = shift != caps;
@@ -299,4 +299,3 @@ test "Ps2Keyboard es_latam layout produces ñ and ¿" {
     try std.testing.expect(event_q != null);
     try std.testing.expectEqual(@as(u8, 0xBF), event_q.?.ascii);
 }
-

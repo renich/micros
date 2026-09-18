@@ -173,6 +173,15 @@ const SectionOffsets = struct {
     off_shstrtab: usize,
 };
 
+const SectionLengths = struct {
+    text: usize,
+    rodata: usize,
+    data: usize,
+    syms: usize,
+    strtab: usize,
+    shstrtab: usize,
+};
+
 fn appendSectionPayloads(
     out: *std.ArrayList(u8),
     allocator: std.mem.Allocator,
@@ -224,20 +233,20 @@ fn assembleElfObject(
     try out.appendNTimes(allocator, 0, ehdr_size);
 
     const offs = try appendSectionPayloads(&out, allocator, text, rodata, data, syms, strtab, shstrtab);
-    const off_shdrs = out.items.len;
-    const shdrs = createSectionHeaders(
-        text.len, offs.off_text,
-        rodata.len, offs.off_rodata,
-        data.len, offs.off_data,
-        syms.len, offs.off_symtab,
-        strtab.len, offs.off_strtab,
-        shstrtab.len, offs.off_shstrtab,
-    );
+    const lens = SectionLengths{
+        .text = text.len,
+        .rodata = rodata.len,
+        .data = data.len,
+        .syms = syms.len,
+        .strtab = strtab.len,
+        .shstrtab = shstrtab.len,
+    };
+    const shdrs = createSectionHeaders(lens, offs);
 
     const shdr_bytes: [*]const u8 = @ptrCast(&shdrs);
     try out.appendSlice(allocator, shdr_bytes[0..@sizeOf(@TypeOf(shdrs))]);
 
-    ehdr.e_shoff = off_shdrs;
+    ehdr.e_shoff = out.items.len - @sizeOf(@TypeOf(shdrs));
     ehdr.e_shnum = 7;
     ehdr.e_shstrndx = 6;
     const ehdr_bytes: [*]const u8 = @ptrCast(&ehdr);
@@ -246,27 +255,20 @@ fn assembleElfObject(
     return out.toOwnedSlice(allocator);
 }
 
-fn createSectionHeaders(
-    text_len: usize, off_text: usize,
-    rodata_len: usize, off_rodata: usize,
-    data_len: usize, off_data: usize,
-    sym_count: usize, off_symtab: usize,
-    strtab_len: usize, off_strtab: usize,
-    shstrtab_len: usize, off_shstrtab: usize,
-) [7]Elf64_Shdr {
+fn createSectionHeaders(lens: SectionLengths, offs: SectionOffsets) [7]Elf64_Shdr {
     var shdrs = std.mem.zeroes([7]Elf64_Shdr);
     // 1: .text (shstrtab off 1)
-    shdrs[1] = .{ .sh_name = 1, .sh_type = SHT_PROGBITS, .sh_flags = SHF_ALLOC | SHF_EXECINSTR, .sh_addr = 0, .sh_offset = off_text, .sh_size = text_len, .sh_link = 0, .sh_info = 0, .sh_addralign = 16, .sh_entsize = 0 };
+    shdrs[1] = .{ .sh_name = 1, .sh_type = SHT_PROGBITS, .sh_flags = SHF_ALLOC | SHF_EXECINSTR, .sh_addr = 0, .sh_offset = offs.off_text, .sh_size = lens.text, .sh_link = 0, .sh_info = 0, .sh_addralign = 16, .sh_entsize = 0 };
     // 2: .rodata (shstrtab off 7)
-    shdrs[2] = .{ .sh_name = 7, .sh_type = SHT_PROGBITS, .sh_flags = SHF_ALLOC, .sh_addr = 0, .sh_offset = off_rodata, .sh_size = rodata_len, .sh_link = 0, .sh_info = 0, .sh_addralign = 8, .sh_entsize = 0 };
+    shdrs[2] = .{ .sh_name = 7, .sh_type = SHT_PROGBITS, .sh_flags = SHF_ALLOC, .sh_addr = 0, .sh_offset = offs.off_rodata, .sh_size = lens.rodata, .sh_link = 0, .sh_info = 0, .sh_addralign = 8, .sh_entsize = 0 };
     // 3: .data (shstrtab off 15)
-    shdrs[3] = .{ .sh_name = 15, .sh_type = SHT_PROGBITS, .sh_flags = SHF_ALLOC | SHF_WRITE, .sh_addr = 0, .sh_offset = off_data, .sh_size = data_len, .sh_link = 0, .sh_info = 0, .sh_addralign = 8, .sh_entsize = 0 };
+    shdrs[3] = .{ .sh_name = 15, .sh_type = SHT_PROGBITS, .sh_flags = SHF_ALLOC | SHF_WRITE, .sh_addr = 0, .sh_offset = offs.off_data, .sh_size = lens.data, .sh_link = 0, .sh_info = 0, .sh_addralign = 8, .sh_entsize = 0 };
     // 4: .symtab (shstrtab off 21)
-    shdrs[4] = .{ .sh_name = 21, .sh_type = SHT_SYMTAB, .sh_flags = 0, .sh_addr = 0, .sh_offset = off_symtab, .sh_size = sym_count * @sizeOf(Elf64_Sym), .sh_link = 5, .sh_info = 1, .sh_addralign = 8, .sh_entsize = @sizeOf(Elf64_Sym) };
+    shdrs[4] = .{ .sh_name = 21, .sh_type = SHT_SYMTAB, .sh_flags = 0, .sh_addr = 0, .sh_offset = offs.off_symtab, .sh_size = lens.syms * @sizeOf(Elf64_Sym), .sh_link = 5, .sh_info = 1, .sh_addralign = 8, .sh_entsize = @sizeOf(Elf64_Sym) };
     // 5: .strtab (shstrtab off 29)
-    shdrs[5] = .{ .sh_name = 29, .sh_type = SHT_STRTAB, .sh_flags = 0, .sh_addr = 0, .sh_offset = off_strtab, .sh_size = strtab_len, .sh_link = 0, .sh_info = 0, .sh_addralign = 1, .sh_entsize = 0 };
+    shdrs[5] = .{ .sh_name = 29, .sh_type = SHT_STRTAB, .sh_flags = 0, .sh_addr = 0, .sh_offset = offs.off_strtab, .sh_size = lens.strtab, .sh_link = 0, .sh_info = 0, .sh_addralign = 1, .sh_entsize = 0 };
     // 6: .shstrtab (shstrtab off 37)
-    shdrs[6] = .{ .sh_name = 37, .sh_type = SHT_STRTAB, .sh_flags = 0, .sh_addr = 0, .sh_offset = off_shstrtab, .sh_size = shstrtab_len, .sh_link = 0, .sh_info = 0, .sh_addralign = 1, .sh_entsize = 0 };
+    shdrs[6] = .{ .sh_name = 37, .sh_type = SHT_STRTAB, .sh_flags = 0, .sh_addr = 0, .sh_offset = offs.off_shstrtab, .sh_size = lens.shstrtab, .sh_link = 0, .sh_info = 0, .sh_addralign = 1, .sh_entsize = 0 };
     return shdrs;
 }
 

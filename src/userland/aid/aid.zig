@@ -15,6 +15,7 @@ const ring_mod = @import("../../kernel/ipc/ring.zig");
 const SpscRingBuffer = ring_mod.SpscRingBuffer;
 const tls_stream_mod = @import("../../kernel/net/tls_stream.zig");
 const http_mod = @import("../../kernel/net/http.zig");
+const serial = @import("../../kernel/serial.zig");
 
 pub const AiDaemonState = enum(u8) {
     uninitialized = 0,
@@ -88,7 +89,91 @@ pub const AiDaemon = struct {
         const online_res = self.dispatchOnline(prompt, out_buf);
         if (online_res > 0) return online_res;
 
-        return mock_mod.generateResponse(prompt, out_buf) catch 0;
+        serial.writeString("[aid] Online dispatch returned 0; reporting error\n");
+        const err_msg = "[aid] Online AI inference failed. Verify network connectivity and GEMINI_API_KEY.";
+        const copy_len = @min(err_msg.len, out_buf.len);
+        @memcpy(out_buf[0..copy_len], err_msg[0..copy_len]);
+        return copy_len;
+    }
+
+    fn connectEndpoint(self: *AiDaemon) bool {
+        const net_d = self.net_daemon orelse return false;
+        const adapter = self.tls_adapter orelse return false;
+        if (adapter.connected) return true;
+
+        if (net_d.stack != null and !net_d.stack.?.dhcp_config.bound) {
+            _ = net_d.startDhcp() catch false;
+        }
+
+        const ip = net_d.resolveDns(self.config.endpoint) catch |err| {
+            serial.writeString("[aid] DNS failed for ");
+            serial.writeString(self.config.endpoint);
+            serial.writeString(": ");
+            serial.writeString(@errorName(err));
+            serial.writeString("\n");
+            return false;
+        };
+        const connected = net_d.connectTcp(ip, self.config.port) catch |err| {
+            serial.writeString("[aid] TCP connect failed: ");
+            serial.writeString(@errorName(err));
+            serial.writeString("\n");
+            return false;
+        };
+        if (!connected) return false;
+
+        adapter.handshake(self.config.endpoint) catch |err| {
+            serial.writeString("[aid] TLS handshake failed: ");
+            serial.writeString(@errorName(err));
+            serial.writeString("\n");
+            return false;
+        };
+        return true;
+    }
+
+    fn isResponseComplete(data: []const u8) bool {
+        const resp = http_mod.parseResponseHeaders(data, data.len) catch return false;
+        if (resp.content_length) |cl| {
+            return data.len >= resp.body_offset + cl;
+        }
+        if (resp.is_chunked) {
+            const body_slice = data[resp.body_offset..];
+            return std.mem.indexOf(u8, body_slice, "0\r\n\r\n") != null;
+        }
+        return false;
+    }
+
+    fn readFullResponse(adapter: *tls_stream_mod.TcpStreamAdapter, buf: []u8) usize {
+        var total: usize = 0;
+        while (total < buf.len) {
+            const n = adapter.readSlice(buf[total..]) catch |err| {
+                if (err != error.EndOfStream) {
+                    serial.writeString("[aid] readSlice: ");
+                    serial.writeString(@errorName(err));
+                    serial.writeString("\n");
+                }
+                break;
+            };
+            if (n == 0) break;
+            total += n;
+            if (isResponseComplete(buf[0..total])) break;
+        }
+        return total;
+    }
+
+    fn extractResponseBody(raw_data: []const u8, decoded_buf: []u8) ?[]const u8 {
+        const resp = http_mod.parseResponseHeaders(raw_data, raw_data.len) catch return null;
+        if (resp.body_offset >= raw_data.len) return null;
+        const raw_body = raw_data[resp.body_offset..];
+        if (resp.is_chunked) {
+            const dlen = http_mod.decodeChunkedBody(raw_body, decoded_buf) catch |err| {
+                serial.writeString("[aid] Chunked decode error: ");
+                serial.writeString(@errorName(err));
+                serial.writeString("\n");
+                return null;
+            };
+            return decoded_buf[0..dlen];
+        }
+        return raw_body;
     }
 
     fn dispatchOnline(
@@ -96,29 +181,32 @@ pub const AiDaemon = struct {
         prompt: []const u8,
         out_buf: []u8,
     ) usize {
-        const net_d = self.net_daemon orelse return 0;
         const adapter = self.tls_adapter orelse return 0;
+        if (!self.connectEndpoint()) return 0;
+        defer adapter.close();
 
         var req_buf: [8192]u8 = undefined;
         var body_buf: [8192]u8 = undefined;
-        const req_len = self.client.formatPromptRequest(&req_buf, &body_buf, prompt) catch return 0;
+        const req_len = self.client.formatPromptRequest(&req_buf, &body_buf, prompt) catch |err| {
+            serial.writeString("[aid] formatPromptRequest error: ");
+            serial.writeString(@errorName(err));
+            serial.writeString("\n");
+            return 0;
+        };
 
-        if (!adapter.connected) {
-            const ip = net_d.resolveDns(self.config.endpoint) catch return 0;
-            const connected = net_d.connectTcp(ip, self.config.port) catch false;
-            if (!connected) return 0;
-            adapter.handshake(self.config.endpoint) catch return 0;
-        }
+        adapter.writeAll(req_buf[0..req_len]) catch |err| {
+            serial.writeString("[aid] writeAll failed: ");
+            serial.writeString(@errorName(err));
+            serial.writeString("\n");
+            return 0;
+        };
 
-        adapter.writeAll(req_buf[0..req_len]) catch return 0;
-
-        var resp_buf: [8192]u8 = undefined;
-        const read_bytes = adapter.readSlice(&resp_buf) catch return 0;
+        var resp_buf: [16384]u8 = undefined;
+        var chunk_buf: [16384]u8 = undefined;
+        const read_bytes = readFullResponse(adapter, &resp_buf);
         if (read_bytes == 0) return 0;
 
-        const resp = http_mod.parseResponseHeaders(&resp_buf, read_bytes) catch return 0;
-        if (resp.body_offset >= read_bytes) return 0;
-        const body = resp_buf[resp.body_offset..read_bytes];
+        const body = extractResponseBody(resp_buf[0..read_bytes], &chunk_buf) orelse return 0;
         return self.client.extractResponseText(body, out_buf) orelse 0;
     }
 

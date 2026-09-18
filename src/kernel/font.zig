@@ -137,4 +137,3 @@ test "font getGlyph ascii and spanish support" {
     try std.testing.expect(getGlyph(0xE1) != null); // á
     try std.testing.expect(getGlyph(0) == null);
 }
-

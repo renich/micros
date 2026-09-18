@@ -194,6 +194,16 @@ fn initNetDaemon(allocator: std.mem.Allocator) void {
     };
     const virt_ptr = if (global_virtio_net != null) &global_virtio_net.? else null;
     global_netd = netd_mod.NetDaemon.init(allocator, virt_ptr, net_cap, irq_cap);
+    if (global_netd) |*netd| {
+        if (netd.virtio_dev != null) {
+            const bound = netd.startDhcp() catch false;
+            if (bound) {
+                serial.writeStatusOk("dhcp", "Network IPv4 lease acquired via VirtIO-Net");
+            } else {
+                serial.writeString("  \x1b[90m[\x1b[93m warn \x1b[90m]\x1b[0m \x1b[96mdhcp\x1b[90m: \x1b[93mDHCP lease timeout (offline fallback)\x1b[0m\n");
+            }
+        }
+    }
 }
 
 fn initAiDaemon(allocator: std.mem.Allocator) void {
@@ -223,6 +233,11 @@ fn initAiDaemon(allocator: std.mem.Allocator) void {
                 aid_inst.setTlsAdapter(&global_tls_adapter);
             }
         }
+    }
+    if (ptype == .mock) {
+        serial.writeStatusOk("aid ", "Resident AI daemon active (mock mode)");
+    } else {
+        serial.writeStatusOk("aid ", "Resident AI daemon active (online live inference)");
     }
 }
 
