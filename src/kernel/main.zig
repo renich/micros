@@ -466,6 +466,36 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
     }
 }
 
+fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8) !void {
+    if (global_fb) |*fb| {
+        _ = try child.insertCap(cap_mod.Capability{
+            .cap_type = .framebuffer,
+            .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+            .object_id = CAP_OBJ_FRAMEBUFFER,
+            .data_addr = @intFromPtr(fb),
+            .data_size = @sizeOf(fb_mod.Framebuffer),
+        });
+    }
+    const is_sys = std.mem.eql(u8, name, "msh") or std.mem.eql(u8, name, "harness") or
+        std.mem.eql(u8, name, "installer") or std.mem.eql(u8, name, "rebuild");
+    if (is_sys) {
+        _ = try child.insertCap(cap_mod.Capability{
+            .cap_type = .actor_control,
+            .rights = cap_mod.Rights.ALL,
+            .object_id = CAP_OBJ_ACTOR_CTRL,
+            .data_addr = 0,
+            .data_size = 0,
+        });
+        _ = try child.insertCap(cap_mod.Capability{
+            .cap_type = .storage_device,
+            .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+            .object_id = CAP_OBJ_STORAGE,
+            .data_addr = 0,
+            .data_size = 0,
+        });
+    }
+}
+
 fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
     const persistent_source = try allocator.dupe(u8, source);
     errdefer allocator.free(persistent_source);
@@ -479,16 +509,7 @@ fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []
     const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, 0);
     errdefer global_registry.terminate(allocator, child.id) catch {};
 
-    if (global_fb) |*fb| {
-        _ = try child.insertCap(cap_mod.Capability{
-            .cap_type = .framebuffer,
-            .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
-            .object_id = CAP_OBJ_FRAMEBUFFER,
-            .data_addr = @intFromPtr(fb),
-            .data_size = @sizeOf(fb_mod.Framebuffer),
-        });
-    }
-
+    try delegateInitialCaps(child, name);
     try attachActorVm(allocator, child, chunk);
     if (child.id < actor_mod.MAX_ACTORS) {
         global_actor_sources[child.id] = persistent_source;
@@ -540,8 +561,8 @@ fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u
 
 fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerror!bool {
     const target = global_registry.get(target_actor) orelse return error.ActorNotFound;
-    const genesis = global_registry.get(actor_mod.GENESIS_ACTOR_ID) orelse return error.ActorNotFound;
-    _ = try genesis.cspace.grant(source_slot, target.cspace, rights_mask);
+    const caller = getCurrentActorBridge() orelse global_registry.get(actor_mod.GENESIS_ACTOR_ID) orelse return error.ActorNotFound;
+    _ = try caller.cspace.grant(source_slot, target.cspace, rights_mask);
     return true;
 }
 

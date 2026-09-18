@@ -288,3 +288,82 @@ test "Tokenize mock extracted code" {
     const first_tok = lex.nextToken();
     try std_mod.testing.expectEqualStrings("sys_serial_write", first_tok.lexeme);
 }
+
+test "Tool call dispatch with actor_control capability succeeds" {
+    const std_mod = @import("std");
+    const allocator = std_mod.testing.allocator;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try @import("macros/vm.zig").VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var registry = @import("kernel/actor.zig").ActorRegistry.init();
+    var harness_actor = try @import("kernel/actor.zig").Actor.init(allocator, 2, "harness", 16, 0);
+    defer harness_actor.deinit(allocator);
+
+    _ = try harness_actor.insertCap(@import("kernel/cap/capability.zig").Capability{
+        .cap_type = .actor_control,
+        .rights = @import("kernel/cap/capability.zig").Rights.ALL,
+        .object_id = 6,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+
+    var ctx = @import("kernel/abi.zig").AbiContext{
+        .registry = &registry,
+        .supervisor = harness_actor,
+        .spawn_code_fn = testSpawnCodeMock,
+    };
+    @import("kernel/abi.zig").setContext(&ctx);
+    defer @import("kernel/abi.zig").clearContext();
+
+    try @import("kernel/abi.zig").registerSyscalls(&vm);
+
+    const tool_call_json =
+        "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"spawn_actor\",\"args\":{\"name\":\"worker\",\"source\":\"print(1);\"}}}]}}]}";
+    var tool_args = [_]@import("macros/eval.zig").Value{
+        @import("macros/eval.zig").Value{ .string = tool_call_json },
+    };
+    const res = try vm.globals.get("sys_ai_tool_call").?.native(&vm, &tool_args);
+    defer allocator.free(res.string);
+
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, res.string, "\"status\":\"ok\"") != null);
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, res.string, "\"actor_id\":1") != null);
+}
+
+test "Tool call dispatch without actor_control capability fails with PermissionDenied" {
+    const std_mod = @import("std");
+    const allocator = std_mod.testing.allocator;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+
+    var vm = try @import("macros/vm.zig").VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    var registry = @import("kernel/actor.zig").ActorRegistry.init();
+    var unpriv_actor = try @import("kernel/actor.zig").Actor.init(allocator, 5, "untrusted", 16, 0);
+    defer unpriv_actor.deinit(allocator);
+
+    var ctx = @import("kernel/abi.zig").AbiContext{
+        .registry = &registry,
+        .supervisor = unpriv_actor,
+        .spawn_code_fn = testSpawnCodeMock,
+    };
+    @import("kernel/abi.zig").setContext(&ctx);
+    defer @import("kernel/abi.zig").clearContext();
+
+    try @import("kernel/abi.zig").registerSyscalls(&vm);
+
+    const tool_call_json =
+        "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"spawn_actor\",\"args\":{\"name\":\"worker\",\"source\":\"print(1);\"}}}]}}]}";
+    var tool_args = [_]@import("macros/eval.zig").Value{
+        @import("macros/eval.zig").Value{ .string = tool_call_json },
+    };
+    const res = try vm.globals.get("sys_ai_tool_call").?.native(&vm, &tool_args);
+    defer allocator.free(res.string);
+
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, res.string, "PermissionDenied: actor_control.EXECUTE required") != null);
+}

@@ -286,15 +286,19 @@ fn cmd_ai(prompt) {
             turn = turn + 1;
         }
     }
-    code = extract_code(resp);
-    if (len(code) > 0) {
-        console_writeln("[ai] Synthesized Actor code detected. Spawning...", CLR_GREEN);
-        actor_id = sys_actor_spawn_code("child_worker", code);
-        if (actor_id < 0) {
-            console_writeln("[kernel] Failed to compile or spawn actor from AI code.", CLR_WARN);
+    if (turn == 0) {
+        code = extract_code(resp);
+        if (len(code) > 0) {
+            console_writeln("[ai] Synthesized Actor code detected. Spawning...", CLR_GREEN);
+            actor_id = sys_actor_spawn_code("child_worker", code);
+            if (actor_id < 0) {
+                console_writeln("[kernel] Failed to compile or spawn actor from AI code.", CLR_WARN);
+            } else {
+                console_writeln("[kernel] Spawned dynamic Actor " + int_to_str(actor_id), CLR_GREEN);
+                render_inspector();
+            }
         } else {
-            console_writeln("[kernel] Spawned dynamic Actor " + int_to_str(actor_id), CLR_GREEN);
-            render_inspector();
+            console_print_wrapped(resp, CLR_TEXT);
         }
     } else {
         console_print_wrapped(resp, CLR_TEXT);
