@@ -237,7 +237,7 @@ pub fn nativeSysClose(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return eval.Value{ .nil = {} };
 }
 
-var active_bundle_data: ?[]const u8 = null;
+pub var active_bundle_data: ?[]const u8 = null;
 
 pub fn setActiveBundle(bundle_bytes: ?[]const u8) void {
     active_bundle_data = bundle_bytes;

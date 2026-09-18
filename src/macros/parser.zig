@@ -62,6 +62,7 @@ pub const Parser = struct {
         if (t == .kw_while) return self.parseWhile();
         if (t == .kw_return) return self.parseReturn();
         if (t == .lbrace) return self.parseBlock();
+        if (t == .kw_export) return self.parseExport();
 
         const expr = try self.parseExpression();
         if (self.current_token.token_type == .equal) {
@@ -118,6 +119,45 @@ pub const Parser = struct {
         const node = try self.allocator.create(ast.Node);
         node.* = ast.Node{ .return_expr = ast.ReturnExpr{ .value = val } };
         return node;
+    }
+
+    fn parseExport(self: *Parser) ParseError!*ast.Node {
+        self.advance(); // consume 'export'
+        if (self.current_token.token_type == .kw_fn) {
+            const fn_node = try self.parseFunctionDecl();
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{
+                .export_stmt = ast.ExportStmt{
+                    .name = fn_node.function_decl.name,
+                    .value = fn_node,
+                },
+            };
+            return node;
+        }
+        if (self.current_token.token_type == .identifier) {
+            const name = self.current_token.lexeme;
+            self.advance();
+            var val_node: *ast.Node = undefined;
+            if (self.current_token.token_type == .equal) {
+                self.advance();
+                val_node = try self.parseExpression();
+            } else {
+                val_node = try self.allocator.create(ast.Node);
+                val_node.* = ast.Node{ .identifier = ast.Identifier{ .name = name } };
+            }
+            if (self.current_token.token_type == .semicolon) {
+                self.advance();
+            }
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{
+                .export_stmt = ast.ExportStmt{
+                    .name = name,
+                    .value = val_node,
+                },
+            };
+            return node;
+        }
+        return error.UnexpectedToken;
     }
 
     fn parseIf(self: *Parser) ParseError!*ast.Node {
@@ -327,6 +367,18 @@ pub const Parser = struct {
         if (tok.token_type == .lbracket) {
             return self.parseArrayLiteral();
         }
+        if (tok.token_type == .kw_import) {
+            self.advance();
+            const has_paren = (self.current_token.token_type == .lparen);
+            if (has_paren) self.advance();
+            if (self.current_token.token_type != .string) return error.UnexpectedToken;
+            const path = self.current_token.lexeme;
+            self.advance();
+            if (has_paren) try self.match(.rparen);
+            const node = try self.allocator.create(ast.Node);
+            node.* = ast.Node{ .import_expr = ast.ImportExpr{ .path = path } };
+            return node;
+        }
         if (tok.token_type == .identifier) {
             const name = tok.lexeme;
             self.advance();
@@ -338,20 +390,54 @@ pub const Parser = struct {
         return error.UnexpectedToken;
     }
 
+    fn parseMethodCall(self: *Parser, callee: *ast.Node) ParseError!*ast.Node {
+        self.advance();
+        var args: std.ArrayList(*ast.Node) = .empty;
+        errdefer {
+            for (args.items) |arg| arg.deinit(self.allocator);
+            args.deinit(self.allocator);
+        }
+        if (self.current_token.token_type != .rparen) {
+            while (true) {
+                const a = try self.parseExpression();
+                try args.append(self.allocator, a);
+                if (self.current_token.token_type == .comma) {
+                    self.advance();
+                } else break;
+            }
+        }
+        try self.match(.rparen);
+        const call_node = try self.allocator.create(ast.Node);
+        call_node.* = ast.Node{
+            .expr_call = ast.ExprCall{
+                .callee = callee,
+                .args = try args.toOwnedSlice(self.allocator),
+            },
+        };
+        return call_node;
+    }
+
     fn parsePostfixIndex(self: *Parser, base: *ast.Node) ParseError!*ast.Node {
         var node = base;
-        while (self.current_token.token_type == .lbracket) {
-            self.advance();
-            const idx = try self.parseExpression();
-            try self.match(.rbracket);
-            const index_node = try self.allocator.create(ast.Node);
-            index_node.* = ast.Node{
-                .index_expr = ast.IndexExpr{
-                    .target = node,
-                    .index = idx,
-                },
-            };
-            node = index_node;
+        while (true) {
+            if (self.current_token.token_type == .lbracket) {
+                self.advance();
+                const idx = try self.parseExpression();
+                try self.match(.rbracket);
+                const index_node = try self.allocator.create(ast.Node);
+                index_node.* = ast.Node{ .index_expr = .{ .target = node, .index = idx } };
+                node = index_node;
+            } else if (self.current_token.token_type == .dot) {
+                self.advance();
+                if (self.current_token.token_type != .identifier) return error.UnexpectedToken;
+                const prop = self.current_token.lexeme;
+                self.advance();
+                const prop_node = try self.allocator.create(ast.Node);
+                prop_node.* = ast.Node{ .property_access = .{ .target = node, .property = prop } };
+                node = prop_node;
+            } else if (self.current_token.token_type == .lparen and node.* == .property_access) {
+                node = try self.parseMethodCall(node);
+            } else break;
         }
         return node;
     }

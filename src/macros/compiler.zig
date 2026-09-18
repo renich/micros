@@ -70,6 +70,10 @@ pub const Compiler = struct {
             .array_literal => |array| try self.compileArrayLiteral(array),
             .index_assignment => |ia| try self.compileIndexAssignment(ia),
             .unary_expr => |unary| try self.compileUnaryExpr(unary),
+            .import_expr => |imp| try self.compileImportExpr(imp),
+            .export_stmt => |exp| try self.compileExportStmt(exp),
+            .property_access => |prop| try self.compilePropertyAccess(prop),
+            .expr_call => |call| try self.compileExprCall(call),
         }
     }
     fn compileBooleanLiteral(self: *Compiler, lit: ast.BooleanLiteral) anyerror!void {
@@ -376,6 +380,38 @@ pub const Compiler = struct {
         try self.compile(ia.target);
         try self.compile(ia.index);
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.index_set));
+    }
+
+    fn compileImportExpr(self: *Compiler, imp: ast.ImportExpr) anyerror!void {
+        const idx = try self.addStringConstant(imp.path);
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.import_op));
+        try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
+        try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
+    }
+
+    fn compileExportStmt(self: *Compiler, exp: ast.ExportStmt) anyerror!void {
+        try self.compile(exp.value);
+        const idx = try self.addStringConstant(exp.name);
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.export_op));
+        try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
+        try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
+    }
+
+    fn compilePropertyAccess(self: *Compiler, prop: ast.PropertyAccess) anyerror!void {
+        try self.compile(prop.target);
+        const idx = try self.addStringConstant(prop.property);
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.get_property));
+        try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
+        try self.chunk.writeChunk(self.allocator, @intCast(idx & 0xFF));
+    }
+
+    fn compileExprCall(self: *Compiler, call: ast.ExprCall) anyerror!void {
+        try self.compile(call.callee);
+        for (call.args) |arg| {
+            try self.compile(arg);
+        }
+        try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.call));
+        try self.chunk.writeChunk(self.allocator, @intCast(call.args.len));
     }
 };
 

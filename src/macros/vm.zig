@@ -9,6 +9,7 @@ const OpCode = chunk_mod.OpCode;
 const gc = @import("gc.zig");
 const tracer = @import("tracer.zig");
 const fiber = @import("fiber.zig");
+const module_mod = @import("module.zig");
 
 pub const PREEMPTION_QUANTUM: usize = 1024;
 
@@ -17,6 +18,9 @@ pub const InterpretError = error{
     RuntimeError,
     StackOverflow,
     StackUnderflow,
+    CircularDependency,
+    ModuleNotFound,
+    InvalidHexHash,
 };
 
 pub const builtins = @import("builtins.zig");
@@ -51,6 +55,8 @@ pub const VM = struct {
     last_missing_symbol: ?[]const u8 = null,
     instruction_count: usize = 0,
     yield_hook: ?*const fn (vm: *VM) anyerror!void = null,
+    module_resolver: ?*module_mod.ModuleResolver = null,
+    current_exports: ?*std.ArrayList(eval.Dict.Entry) = null,
 
     pub fn initInPlace(self: *VM, allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !void {
         self.allocator = allocator;
@@ -63,9 +69,15 @@ pub const VM = struct {
         self.last_missing_symbol = null;
         self.instruction_count = 0;
         self.yield_hook = null;
+        self.module_resolver = null;
+        self.current_exports = null;
         self.globals = std.StringHashMap(Value).init(allocator);
         self.allocated_keys = .empty;
         try builtins.registerBuiltins(self);
+    }
+
+    pub fn setModuleResolver(self: *VM, resolver: *module_mod.ModuleResolver) void {
+        self.module_resolver = resolver;
     }
 
     pub fn init(allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !VM {
@@ -87,7 +99,7 @@ pub const VM = struct {
         self.globals.deinit();
     }
 
-    pub fn executeChunk(self: *VM, new_chunk: *chunk_mod.Chunk) !void {
+    pub fn executeChunk(self: *VM, new_chunk: *chunk_mod.Chunk) anyerror!void {
         const old_frame_count = self.frame_count;
         const old_chunk = self.chunk;
         const old_ip = self.ip;
@@ -117,6 +129,13 @@ pub const VM = struct {
             if (ch == self.chunk) continue;
             for (ch.constants.items) |constant| {
                 tracer.traceValue(heap, constant);
+            }
+        }
+        if (self.module_resolver) |resolver| {
+            for (resolver.dynamic_chunks.items) |ch| {
+                for (ch.constants.items) |constant| {
+                    tracer.traceValue(heap, constant);
+                }
             }
         }
 
@@ -263,6 +282,8 @@ pub const VM = struct {
             .get_upvalue => try self.execGetUpvalue(),
             .set_upvalue => try self.execSetUpvalue(),
             .close_upvalue => try self.execCloseUpvalue(),
+            .import_op => try self.execImport(),
+            .export_op => try self.execExport(),
         }
         return false;
     }
@@ -334,6 +355,37 @@ pub const VM = struct {
         if (self.sp == 0) return InterpretError.StackUnderflow;
         self.closeUpvalues(&self.stack[self.sp - 1]);
         _ = try self.pop();
+    }
+
+    fn execExport(self: *VM) !void {
+        const name_val = self.readConstant();
+        if (name_val != .string) return InterpretError.RuntimeError;
+        if (self.sp == 0) return InterpretError.StackUnderflow;
+        const val = self.stack[self.sp - 1];
+        const exports_list = self.current_exports orelse return;
+        for (exports_list.items) |*entry| {
+            if (std.mem.eql(u8, entry.key, name_val.string)) {
+                entry.value = val;
+                return;
+            }
+        }
+        try exports_list.append(self.allocator, .{
+            .key = name_val.string,
+            .value = val,
+        });
+    }
+
+    fn execImport(self: *VM) !void {
+        const path_val = self.readConstant();
+        if (path_val != .string) return InterpretError.RuntimeError;
+        const resolver = self.module_resolver orelse return InterpretError.RuntimeError;
+        const dict_val = resolver.importModule(self, path_val.string) catch |err| switch (err) {
+            error.CircularDependency => return InterpretError.CircularDependency,
+            error.ModuleNotFound => return InterpretError.ModuleNotFound,
+            error.InvalidHexHash => return InterpretError.InvalidHexHash,
+            else => return InterpretError.RuntimeError,
+        };
+        try self.push(dict_val);
     }
 
     fn execGetLocal(self: *VM) !void {

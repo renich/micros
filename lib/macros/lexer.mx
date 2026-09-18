@@ -46,6 +46,7 @@ fn process_punct(c) {
     if (c == 38) { return 34; }
     if (c == 124) { return 35; }
     if (c == 94) { return 36; }
+    if (c == 46) { return 40; }
     return 99;
 }
 
@@ -66,6 +67,7 @@ fn get_punct_str(c) {
     if (c == 38) { return "&"; }
     if (c == 124) { return "|"; }
     if (c == 94) { return "^"; }
+    if (c == 46) { return "."; }
     return "";
 }
 
@@ -126,6 +128,28 @@ fn match_len_6(lexeme) {
                 if (lexeme[3] == 117) {
                     if (lexeme[4] == 114) {
                         if (lexeme[5] == 110) { return 4; }
+                    }
+                }
+            }
+        }
+    }
+    if (lexeme[0] == 105) {
+        if (lexeme[1] == 109) {
+            if (lexeme[2] == 112) {
+                if (lexeme[3] == 111) {
+                    if (lexeme[4] == 114) {
+                        if (lexeme[5] == 116) { return 41; }
+                    }
+                }
+            }
+        }
+    }
+    if (lexeme[0] == 101) {
+        if (lexeme[1] == 120) {
+            if (lexeme[2] == 112) {
+                if (lexeme[3] == 111) {
+                    if (lexeme[4] == 114) {
+                        if (lexeme[5] == 116) { return 42; }
                     }
                 }
             }

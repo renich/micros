@@ -11,6 +11,8 @@ pub const TokenType = enum {
     kw_while,
     kw_true,
     kw_false,
+    kw_import,
+    kw_export,
     plus,
     minus,
     star,
@@ -38,6 +40,7 @@ pub const TokenType = enum {
     comma,
     semicolon,
     colon,
+    dot,
     eof,
     invalid,
 };
@@ -83,6 +86,8 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, lex, "while")) return .kw_while;
         if (std.mem.eql(u8, lex, "true")) return .kw_true;
         if (std.mem.eql(u8, lex, "false")) return .kw_false;
+        if (std.mem.eql(u8, lex, "import")) return .kw_import;
+        if (std.mem.eql(u8, lex, "export")) return .kw_export;
         return .identifier;
     }
 
@@ -165,6 +170,7 @@ pub const Lexer = struct {
             ',' => self.advanceAndReturn(.comma, ","),
             ';' => self.advanceAndReturn(.semicolon, ";"),
             ':' => self.advanceAndReturn(.colon, ":"),
+            '.' => self.advanceAndReturn(.dot, "."),
             '+' => self.advanceAndReturn(.plus, "+"),
             '-' => self.advanceAndReturn(.minus, "-"),
             '*' => self.advanceAndReturn(.star, "*"),

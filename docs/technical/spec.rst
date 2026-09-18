@@ -36,6 +36,8 @@ Technical Sub-Specifications
    specs/git-smart-http-ingestion
    specs/sovereign-workspace-catalog
    specs/sovereign-ai-tool-synthesis
+   specs/content-addressed-modules
+   specs/microkernel-network-decoupling
 
 Engineering & Coding Guides
 ===========================

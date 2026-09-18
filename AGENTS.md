@@ -3,15 +3,15 @@
 This repository is co-developed by human engineers and autonomous AI agents. To maintain absolute computational sovereignty and security, all agents operating on this codebase MUST adhere to the following directives.
 
 ## 1. The Ten Commandments of Code Quality
-1. **File Size**: No file shall exceed 1,000 lines of code.
-2. **Function Size**: No function shall exceed 40 lines.
-3. **Nesting Depth**: Maximum indentation depth is 3 levels.
-4. **Formatting**: Never use spaces around forward slashes in text/markdown (e.g., `word/word`, not `word / word`).
+1. **File Size & Domain Boundaries**: No file shall exceed 1,000 lines of code. Generic names (`utils.zig`, `common.zig`, `helpers.zig`) are strictly forbidden; all modules must represent concrete domain boundaries.
+2. **Function Size**: No function shall exceed 40 lines of executable logic (declarative `switch` dispatch tables are exempt from artificial fragmentation).
+3. **Nesting Depth**: Maximum indentation depth is 3 levels. Favor early returns and guard clauses.
+4. **Capability Discipline**: Zero ambient authority. Direct hardware, network, storage, or actor manipulation requires explicit CSpace capability tokens.
 5. **No Magic Numbers**: All constants must be strongly typed or defined in `UPPER_SNAKE_CASE` (e.g., `0x4D494352_4F534B45` for `MICROSKE`).
-6. **Explicit Errors**: No `catch unreachable` outside of tests. All errors must be explicitly bubbled up using Zig error unions.
-7. **No Libc**: The substrate layer (`src/sys/` and the kernel) must never link against or `#include` libc. Use direct Linux syscalls or native x86_64 inline assembly.
-8. **Memory Safety**: All allocations must take an explicit `Allocator`. No hidden global state allocations.
-9. **Page Alignment**: All `mmap` and hardware memory boundaries must strictly enforce 4096-byte page alignment mathematically.
+6. **Explicit Errors**: No `catch unreachable` outside of tests. All runtime errors must be explicitly bubbled up using Zig error unions.
+7. **Freestanding Substrate**: The substrate layer and kernel must never link against or `#include` libc. Hardware interaction strictly via VirtIO/NVMe DMA, MMIO, Port I/O, or native x86_64 inline assembly.
+8. **Memory Safety**: All dynamic allocations must take an explicit `std.mem.Allocator`. Hidden global state allocations are forbidden, and hot driver/interrupt paths must be strictly zero-allocation.
+9. **Page & Sector Alignment**: All PMM/VMM frames, DMA virtqueues, and storage buffers must mathematically enforce 4096-byte page and 512-byte sector alignment.
 10. **Test Colocation**: Tests must reside alongside the code they test within the same module, natively leveraging Zig's `test` blocks.
 
 ## 2. The Verification Doctrine

@@ -43,6 +43,8 @@ pub const OpCode = enum(u8) {
     shift_right,
     negate,
     not,
+    import_op,
+    export_op,
 };
 
 pub const Chunk = struct {

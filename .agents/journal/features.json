@@ -35,6 +35,13 @@
       "spec_ref": "docs/technical/specs/self-hosting-macros.rst",
       "verification_cmd": "make check"
     },
+    "SPEC-TECH-LANG-003": {
+      "last_checked": "2026-09-18T06:15:33.739Z",
+      "name": "Content-Addressed & Workspace Module System",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/content-addressed-modules.rst",
+      "verification_cmd": "zig build test"
+    },
     "SPEC-TECH-NET-002": {
       "last_checked": "2026-09-18T02:27:40.843Z",
       "name": "Fast-Path TCP Server Substrate",
@@ -48,6 +55,13 @@
       "passes": true,
       "spec_ref": "docs/technical/specs/git-smart-http-ingestion.rst",
       "verification_cmd": "make check"
+    },
+    "SPEC-TECH-NET-004": {
+      "last_checked": "2026-09-18T05:58:00.851Z",
+      "name": "Pure Microkernel Network & AI Decoupling Substrate",
+      "passes": false,
+      "spec_ref": "docs/technical/specs/microkernel-network-decoupling.rst",
+      "verification_cmd": "zig build test"
     },
     "SPEC-TECH-SILICON-001": {
       "last_checked": "2026-09-17T22:43:23.538Z",

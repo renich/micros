@@ -17,6 +17,10 @@ pub const Node = union(enum) {
     index_expr: IndexExpr,
     array_literal: ArrayLiteral,
     unary_expr: UnaryExpr,
+    import_expr: ImportExpr,
+    export_stmt: ExportStmt,
+    property_access: PropertyAccess,
+    expr_call: ExprCall,
 
     pub fn deinit(self: *Node, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -37,9 +41,45 @@ pub const Node = union(enum) {
             .return_expr => |ret| {
                 if (ret.value) |v| v.deinit(allocator);
             },
+            .export_stmt => |*exp| exp.deinit(allocator),
+            .property_access => |*prop| prop.deinit(allocator),
+            .expr_call => |*call| call.deinit(allocator),
             else => {},
         }
         allocator.destroy(self);
+    }
+};
+
+pub const ImportExpr = struct {
+    path: []const u8,
+};
+
+pub const ExportStmt = struct {
+    name: []const u8,
+    value: *Node,
+
+    pub fn deinit(self: *ExportStmt, allocator: std.mem.Allocator) void {
+        self.value.deinit(allocator);
+    }
+};
+
+pub const PropertyAccess = struct {
+    target: *Node,
+    property: []const u8,
+
+    pub fn deinit(self: *PropertyAccess, allocator: std.mem.Allocator) void {
+        self.target.deinit(allocator);
+    }
+};
+
+pub const ExprCall = struct {
+    callee: *Node,
+    args: []*Node,
+
+    pub fn deinit(self: *ExprCall, allocator: std.mem.Allocator) void {
+        self.callee.deinit(allocator);
+        for (self.args) |arg| arg.deinit(allocator);
+        allocator.free(self.args);
     }
 };
 

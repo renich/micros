@@ -57,6 +57,13 @@ fn parse_postfix(tokens, pos, tokens_len, expr) {
                 post_res = parse_index_expr(tokens, pos, tokens_len);
                 pos = post_res[0];
                 expr = ["index_get", expr, post_res[1]];
+            } else if (post_tok_type == 40) {
+                pos = pos + 1;
+                if (pos < tokens_len) {
+                    prop_name = tokens[pos][1];
+                    pos = pos + 1;
+                    expr = ["get_property", expr, prop_name];
+                }
             } else {
                 post_cond = false;
             }
@@ -144,6 +151,23 @@ fn parse_primary(tokens, pos, tokens_len) {
     }
     if (prim_type == 3) {
         return parse_function_expr(tokens, pos, tokens_len);
+    }
+    if (prim_type == 41) {
+        pos = pos + 1;
+        if (pos < tokens_len) {
+            if (tokens[pos][0] == 21) {
+                pos = pos + 1;
+                path_str = tokens[pos][1];
+                pos = pos + 1;
+                if (pos < tokens_len) {
+                    if (tokens[pos][0] == 22) { pos = pos + 1; }
+                }
+                return parse_postfix(tokens, pos, tokens_len, ["import_expr", path_str]);
+            }
+            path_str = tokens[pos][1];
+            pos = pos + 1;
+            return parse_postfix(tokens, pos, tokens_len, ["import_expr", path_str]);
+        }
     }
     return [pos, []];
 }
@@ -444,6 +468,37 @@ fn parse_while_statement(tokens, pos, tokens_len) {
     return [pos, ["while_statement", wh_cond, wh_body_res[1]]];
 }
 
+fn parse_export_statement(tokens, pos, tokens_len) {
+    pos = pos + 1;
+    if (pos >= tokens_len) { return [pos, ["error", "unexpected eof after export"]]; }
+    next_tok = tokens[pos][0];
+    if (next_tok == 3) {
+        fn_res = parse_function_decl(tokens, pos, tokens_len);
+        fn_name = fn_res[1][1];
+        return [fn_res[0], ["export_statement", fn_name, fn_res[1]]];
+    }
+    if (next_tok == 0) {
+        var_name = tokens[pos][1];
+        pos = pos + 1;
+        if (pos < tokens_len) {
+            if (tokens[pos][0] == 14) {
+                pos = pos + 1;
+                exp_res = parse_expr(tokens, pos, tokens_len);
+                pos = exp_res[0];
+                if (pos < tokens_len) {
+                    if (tokens[pos][0] == 28) { pos = pos + 1; }
+                }
+                return [pos, ["export_statement", var_name, exp_res[1]]];
+            }
+        }
+        if (pos < tokens_len) {
+            if (tokens[pos][0] == 28) { pos = pos + 1; }
+        }
+        return [pos, ["export_statement", var_name, ["identifier", var_name]]];
+    }
+    return [pos, ["error", "invalid export target"]];
+}
+
 fn parse_statement(tokens, pos, tokens_len) {
     if (pos >= tokens_len) { return [pos, []]; }
     stmt_tok_type = tokens[pos][0];
@@ -452,6 +507,7 @@ fn parse_statement(tokens, pos, tokens_len) {
     if (stmt_tok_type == 4) { return parse_return_statement(tokens, pos, tokens_len); }
     if (stmt_tok_type == 5) { return parse_if_statement(tokens, pos, tokens_len); }
     if (stmt_tok_type == 7) { return parse_while_statement(tokens, pos, tokens_len); }
+    if (stmt_tok_type == 42) { return parse_export_statement(tokens, pos, tokens_len); }
 
     if (stmt_tok_type == 0) {
         if (pos + 1 < tokens_len) {

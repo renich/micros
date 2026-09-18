@@ -38,6 +38,9 @@ fn op_shift_left() { return 36; }
 fn op_shift_right() { return 37; }
 fn op_negate() { return 38; }
 fn op_not() { return 39; }
+fn op_get_property() { return 18; }
+fn op_import() { return 40; }
+fn op_export() { return 41; }
 
 fn init_compiler() {
     return [[], [], [], 0, [], []];
@@ -295,6 +298,29 @@ fn compile_expr(state, node) {
         res = write_byte(state, op_index_get());
         return res[0];
     }
+    if (type == "get_property") {
+        state = compile_expr(state, node[1]);
+        res = add_constant(state, node[2]);
+        state = res[0];
+        idx = res[1];
+        res = write_byte(state, op_get_property());
+        state = res[0];
+        res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+        state = res[0];
+        res = write_byte(state, bit_and(idx, 255));
+        return res[0];
+    }
+    if (type == "import_expr") {
+        res = add_constant(state, node[1]);
+        state = res[0];
+        idx = res[1];
+        res = write_byte(state, op_import());
+        state = res[0];
+        res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+        state = res[0];
+        res = write_byte(state, bit_and(idx, 255));
+        return res[0];
+    }
     if (type == "binary_expr") {
         state = compile_expr(state, node[2]);
         state = compile_expr(state, node[3]);
@@ -416,6 +442,31 @@ fn compile_expr_statement(state, inner) {
     return res[0];
 }
 
+fn compile_export_statement(state, name, val_node) {
+    if (val_node[0] == "function_decl") {
+        state = compile_function(state, val_node[1], val_node[2], val_node[3]);
+        res = add_constant(state, name);
+        state = res[0];
+        name_idx = res[1];
+        res = write_byte(state, op_get_global()); state = res[0];
+        res = write_byte(state, bit_and(bit_shr(name_idx, 8), 255)); state = res[0];
+        res = write_byte(state, bit_and(name_idx, 255)); state = res[0];
+    } else {
+        state = compile_expr(state, val_node);
+    }
+    res = add_constant(state, name);
+    state = res[0];
+    idx = res[1];
+    res = write_byte(state, op_export());
+    state = res[0];
+    res = write_byte(state, bit_and(bit_shr(idx, 8), 255));
+    state = res[0];
+    res = write_byte(state, bit_and(idx, 255));
+    state = res[0];
+    res = write_byte(state, op_pop());
+    return res[0];
+}
+
 fn compile_statement(state, node) {
     type = node[0];
 
@@ -433,6 +484,9 @@ fn compile_statement(state, node) {
     }
     if (type == "function_decl") {
         return compile_function(state, node[1], node[2], node[3]);
+    }
+    if (type == "export_statement") {
+        return compile_export_statement(state, node[1], node[2]);
     }
     if (type == "return_statement") {
         state = compile_expr(state, node[1]);
