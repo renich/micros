@@ -16,6 +16,17 @@ const kernel_main = @import("../kernel/main.zig");
 
 fn initFramebuffer(bs: *const uefi.tables.BootServices, info: *FramebufferInfo) void {
     const gop = bs.locateProtocol(uefi.protocol.GraphicsOutput, null) catch null orelse return;
+
+    var m: u32 = 0;
+    while (m < gop.mode.max_mode) : (m += 1) {
+        if (gop.queryMode(m)) |mode_info| {
+            if (mode_info.horizontal_resolution == 1280 and mode_info.vertical_resolution == 800) {
+                _ = gop.setMode(m) catch {};
+                break;
+            }
+        } else |_| {}
+    }
+
     info.base_addr = gop.mode.frame_buffer_base;
     info.size_bytes = gop.mode.frame_buffer_size;
     info.width = gop.mode.info.horizontal_resolution;

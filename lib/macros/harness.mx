@@ -25,20 +25,16 @@ fn init_theme() {
     conv_stores = push([], []);
     conv_color_stores = push([], []);
     conv_prompt_stores = push([], []);
-    
     clipboard_buf = "";
     last_resp_text = "";
     last_resp_code = "";
     compressed_summary = "";
-    
     prompt_history = [];
     hist_pos = 0 - 1;
     saved_draft = "";
-
     line_buf = "";
     line_pos = 0;
     vim_mode = 0;
-    
     PROMPT_Y = 750;
 }
 
@@ -80,7 +76,9 @@ fn render_chat() {
         if (start_y < 50) {
             idx = 0 - 1;
         } else {
-            sys_fb_draw_string(20, start_y, chat_lines[idx], chat_colors[idx], CLR_BG);
+            line_txt = chat_lines[idx];
+            if (len(line_txt) > 102) { line_txt = substr(line_txt, 0, 102); }
+            sys_fb_draw_string(20, start_y, line_txt, chat_colors[idx], CLR_BG);
             start_y = start_y - 16;
             idx = idx - 1;
         }
@@ -106,7 +104,7 @@ fn console_newline() {
     chat_colors = push(chat_colors, cur_line_color);
     cur_line_text = "";
     render_chat();
-    sys_serial_write("\n");
+    sys_serial_write("\r\n");
 }
 
 fn console_writeln(text, color) {
@@ -184,7 +182,10 @@ fn console_print_wrapped(text, color) {
 }
 
 fn render_inspector() {
-    sys_fb_draw_rect(880, 58, 380, 730, CLR_BG);
+    sys_fb_draw_rect(861, 25, 419, 775, CLR_BG);
+    sys_fb_draw_rect(860, 25, 1, 775, CLR_BORDER);
+    sys_fb_draw_string(880, 32, "ACTORS & TELEMETRY", CLR_MUTED, CLR_BG);
+    sys_fb_draw_rect(880, 48, 380, 1, CLR_BORDER);
     sys_fb_draw_string(880, 60, "Active Actors:  " + int_to_str(sys_actor_count()), CLR_TEXT, CLR_BG);
     
     var_y = 84;
@@ -329,47 +330,30 @@ fn delete_word_backward() {
 
 fn cmd_help() {
     console_writeln("-- Harness Slash Commands ----------------------", CLR_MUTED);
-    console_writeln("  /help           - Show command and tool reference", CLR_TEXT);
-    console_writeln("  /tools          - List all resident AI tools & capabilities", CLR_TEXT);
-    console_writeln("  /files [prefix] - List workspace files & genesis modules", CLR_TEXT);
-    console_writeln("  /cat <path>     - View file contents (workspace or bundle)", CLR_TEXT);
-    console_writeln("  /run <path>     - Spawn and execute actor from script", CLR_TEXT);
-    console_writeln("  /stats          - Display session and telemetry metrics", CLR_TEXT);
-    console_writeln("  /status         - System health, actors & containment state", CLR_TEXT);
-    console_writeln("  /actors         - List registered actors / subagents", CLR_TEXT);
-    console_writeln("  /chats          - List active conversation sessions", CLR_TEXT);
-    console_writeln("  /new [title]    - Start new conversation session", CLR_TEXT);
-    console_writeln("  /switch <id>    - Switch to conversation session", CLR_TEXT);
+    console_writeln("  /help, /tools   - Commands, tools & capabilities", CLR_TEXT);
+    console_writeln("  /files, /cat    - Workspace & genesis files inspection", CLR_TEXT);
+    console_writeln("  /run [path]     - Execute script or last synthesized code", CLR_TEXT);
+    console_writeln("  /stats, /status - Session metrics & system health", CLR_TEXT);
+    console_writeln("  /actors, /kill  - List or terminate active actors", CLR_TEXT);
+    console_writeln("  /chats, /new    - List or create conversation sessions", CLR_TEXT);
+    console_writeln("  /switch, /clear - Switch conversation or clear log", CLR_TEXT);
     console_writeln("  /search <query> - Search chat history for text", CLR_TEXT);
-    console_writeln("  /copy [code]    - Copy last response (or code) to clipboard", CLR_TEXT);
-    console_writeln("  /paste          - Paste clipboard into prompt line", CLR_TEXT);
+    console_writeln("  /copy, /paste   - Clipboard copy (resp/code) and paste", CLR_TEXT);
     console_writeln("  /compress       - Compress older context turns", CLR_TEXT);
-    console_writeln("  /clear          - Clear the conversation log", CLR_TEXT);
-    console_writeln("  /history        - Display recent prompt history", CLR_TEXT);
-    console_writeln("  /reset          - Reset agent conversation context", CLR_TEXT);
-    console_writeln("  /model          - Display active LLM model info", CLR_TEXT);
-    console_writeln("  /layout <l>     - Set keyboard layout (es or us)", CLR_TEXT);
-    console_writeln("  /kill <id>      - Terminate actor by ID", CLR_TEXT);
+    console_writeln("  /history, /reset- Display history or reset agent context", CLR_TEXT);
+    console_writeln("  /model, /layout - Model details & keyboard layout (es/us)", CLR_TEXT);
     console_writeln("  /exit           - Return to MicroShell (msh)", CLR_TEXT);
-    console_writeln("-- Modes: Readline (^A,^E,^K,^U,^W,^Y) | Vim (ESC: h,j,k,l,w,b,x,d,c,i,a,p)", CLR_MUTED);
+    console_writeln("-- Modes: Readline (^A,^E,^K,^U,^W,^Y) | Vim (ESC)", CLR_MUTED);
     console_writeln("------------------------------------------------", CLR_MUTED);
     return 0;
 }
 
 fn cmd_tools() {
     console_writeln("-- Resident AI Tools & Capabilities ------------", CLR_MUTED);
-    console_writeln("  run_command          : Execute MicroShell command / script", CLR_TEXT);
-    console_writeln("  view_file            : View file in workspace / bundle", CLR_TEXT);
-    console_writeln("  write_to_file        : Create / overwrite file in workspace", CLR_TEXT);
-    console_writeln("  replace_file_content : In-place text replacement in file", CLR_TEXT);
-    console_writeln("  list_dir             : List files in workspace / bundle", CLR_TEXT);
-    console_writeln("  grep_search          : Pattern search across workspace files", CLR_TEXT);
-    console_writeln("  spawn_actor          : Spawn child actor with source code", CLR_TEXT);
-    console_writeln("  grant_capability     : Delegate attenuated capability", CLR_TEXT);
-    console_writeln("  write_storage        : Store immutable payload in CAS", CLR_TEXT);
-    console_writeln("  read_storage         : Retrieve CAS chunk by hex hash", CLR_TEXT);
-    console_writeln("  draw_canvas          : Draw vector graphics on framebuffer", CLR_TEXT);
-    console_writeln("  query_telemetry      : Query active actors, faults, memory", CLR_TEXT);
+    console_writeln("  run_command, view_file, write_to_file", CLR_TEXT);
+    console_writeln("  replace_file_content, list_dir, grep_search", CLR_TEXT);
+    console_writeln("  spawn_actor, grant_capability, query_telemetry", CLR_TEXT);
+    console_writeln("  write_storage, read_storage, draw_canvas", CLR_TEXT);
     console_writeln("------------------------------------------------", CLR_MUTED);
     return 0;
 }
@@ -406,7 +390,18 @@ fn cmd_cat(path) {
 
 fn cmd_run(arg) {
     if (len(arg) == 0) {
-        console_writeln("Usage: /run <path>", CLR_WARN);
+        if (len(last_resp_code) == 0) {
+            console_writeln("Usage: /run <path> or /run (execute synthesized code)", CLR_WARN);
+            return 0;
+        }
+        console_writeln("[harness] Executing synthesized code...", CLR_GREEN);
+        id = sys_actor_spawn_code("ai_task", last_resp_code);
+        if (id < 0) {
+            console_writeln("Error: Failed to compile/spawn synthesized code.", CLR_WARN);
+        } else {
+            console_writeln("Spawned Actor " + int_to_str(id) + " (ai_task)", CLR_GREEN);
+            render_inspector();
+        }
         return 0;
     }
     src = sys_catalog_read(arg);
@@ -698,7 +693,11 @@ fn cmd_ai(prompt) {
         if (len(tool_res) == 0) {
             turn = 999;
         } else {
-            console_writeln("● " + tool_res, CLR_GREEN);
+            if (len(tool_res) > 96) {
+                console_writeln("● " + substr(tool_res, 0, 96) + "...", CLR_GREEN);
+            } else {
+                console_writeln("● " + tool_res, CLR_GREEN);
+            }
             render_inspector();
             resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or provide final summary.");
             if (len(resp) == 0) {
@@ -713,16 +712,8 @@ fn cmd_ai(prompt) {
     }
     console_write("harness> ", CLR_GREEN);
     console_print_wrapped(resp, CLR_TEXT);
-    code = last_resp_code;
-    if (len(code) > 0) {
-        console_writeln("[harness] Synthesized Actor code detected. Spawning...", CLR_GREEN);
-        actor_id = sys_actor_spawn_code("child_worker", code);
-        if (actor_id < 0) {
-            console_writeln("[kernel] Failed to compile or spawn actor from AI code.", CLR_WARN);
-        } else {
-            console_writeln("  └─> Spawned dynamic Actor " + int_to_str(actor_id), CLR_GREEN);
-            render_inspector();
-        }
+    if (len(last_resp_code) > 0) {
+        console_writeln("[harness] Code synthesized. Type '/run' to execute.", CLR_MUTED);
     }
     return 0;
 }
@@ -802,6 +793,8 @@ fn eval_command(cmd) {
     if (is_prefix(c, "cat ")) { return cmd_cat(substr(c, 4, len(c))); }
     if (is_prefix(c, "view ")) { return cmd_cat(substr(c, 5, len(c))); }
     if (is_prefix(c, "files ")) { return cmd_files(substr(c, 6, len(c))); }
+    if (c == "run") { return cmd_run(""); }
+    if (c == "exec") { return cmd_run(""); }
     if (is_prefix(c, "ls ")) { return cmd_files(substr(c, 3, len(c))); }
     if (is_prefix(c, "run ")) { return cmd_run(substr(c, 4, len(c))); }
     if (is_prefix(c, "exec ")) { return cmd_run(substr(c, 5, len(c))); }
@@ -857,8 +850,11 @@ fn poll_char() {
 }
 
 fn handle_newline() {
-    console_writeln("user> " + line_buf, CLR_ACCENT);
+    sys_serial_write("\r\n");
     if (len(line_buf) > 0) {
+        chat_lines = push(chat_lines, "user> " + line_buf);
+        chat_colors = push(chat_colors, CLR_ACCENT);
+        render_chat();
         c_exit = line_buf;
         if (is_prefix(c_exit, "/")) { c_exit = substr(c_exit, 1, len(c_exit)); }
         if (c_exit == "exit") { console_writeln("Halting harness. Returning to msh.", CLR_MUTED); return false; }

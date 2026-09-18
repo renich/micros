@@ -127,6 +127,8 @@ qemu-uefi: uefi-boot
 		-device virtio-blk-pci,drive=disk0 \
 		-netdev user,id=net0,hostfwd=tcp::8080-:8080 \
 		-device virtio-net-pci,netdev=net0 \
+		-device virtio-vga,xres=1280,yres=800 \
+		-display gtk,zoom-to-fit=on \
 		-serial stdio
 
 ## tools: Compile the substrate toolchain
