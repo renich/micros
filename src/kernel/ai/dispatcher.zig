@@ -140,7 +140,7 @@ pub const ToolDispatcher = struct {
             return tools.ToolResult{ .error_msg = "PermissionDenied: actor_control.EXECUTE required" };
         }
         if (self.ctx.spawn_fn) |spawn| {
-            _ = spawn(self.allocator, "agy_exec", args.command) catch {
+            _ = spawn(self.allocator, "harness_exec", args.command) catch {
                 return tools.ToolResult{ .command_executed = "Command dispatched" };
             };
             return tools.ToolResult{ .command_executed = "Command spawned as actor" };

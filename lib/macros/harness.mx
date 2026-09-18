@@ -36,7 +36,7 @@ fn init_ansi() {
 
 fn draw_header() {
     sys_fb_draw_rect(0, 0, 1280, 24, CLR_HEADER_BG);
-    sys_fb_draw_string(20, 4, "uOS Autonomous Studio (agy)", CLR_TEXT, CLR_HEADER_BG);
+    sys_fb_draw_string(20, 4, "uOS Autonomous Studio (harness)", CLR_TEXT, CLR_HEADER_BG);
     sys_fb_draw_string(1140, 4, "Gemini 3.8", CLR_ACCENT, CLR_HEADER_BG);
     sys_fb_draw_rect(0, 24, 1280, 1, CLR_BORDER);
 }
@@ -229,7 +229,7 @@ fn is_prefix(str, pre) {
 }
 
 fn cmd_help() {
-    console_writeln("-- agy Slash Commands --------------------------", CLR_MUTED);
+    console_writeln("-- Harness Slash Commands ----------------------", CLR_MUTED);
     console_writeln("  /help         - Show command and tool reference", CLR_TEXT);
     console_writeln("  /status       - System telemetry and agent state", CLR_TEXT);
     console_writeln("  /actors       - List registered actors / subagents", CLR_TEXT);
@@ -240,7 +240,7 @@ fn cmd_help() {
     console_writeln("  /model        - Display active LLM model info", CLR_TEXT);
     console_writeln("  /kill <id>    - Terminate actor by ID", CLR_TEXT);
     console_writeln("  /exit         - Return to MicroShell (msh)", CLR_TEXT);
-    console_writeln("-- Resident AI Tools (agy Suite) ---------------", CLR_MUTED);
+    console_writeln("-- Resident AI Tools (Harness Suite) -----------", CLR_MUTED);
     console_writeln("  run_command(cmd)          - Execute command/code", CLR_TEXT);
     console_writeln("  view_file(path)           - Read file content", CLR_TEXT);
     console_writeln("  write_to_file(path, txt)  - Create/overwrite file", CLR_TEXT);
@@ -254,7 +254,7 @@ fn cmd_help() {
 }
 
 fn cmd_status() {
-    console_writeln("* Agent     : Online (agy mode)", CLR_GREEN);
+    console_writeln("* Agent     : Online (harness mode)", CLR_GREEN);
     console_writeln("* Model     : Gemini 3.8 Flash (Sovereign ABI)", CLR_ACCENT);
     console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active", CLR_TEXT);
     console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained", CLR_TEXT);
@@ -285,7 +285,7 @@ fn cmd_history() {
 fn cmd_reset() {
     conv_history = [];
     cmd_clear();
-    console_writeln("[agy] Conversation context reset.", CLR_GREEN);
+    console_writeln("[harness] Conversation context reset.", CLR_GREEN);
     return 0;
 }
 
@@ -328,10 +328,10 @@ fn cmd_actors() {
 
 fn cmd_ai(prompt) {
     conv_history = push(conv_history, prompt);
-    console_writeln("[agy] Thinking...", CLR_MUTED);
+    console_writeln("[harness] Thinking...", CLR_MUTED);
     resp = sys_ai_prompt(prompt);
     if (len(resp) == 0) {
-        console_writeln("[agy] Offline or auth failure (check network / API key).", CLR_WARN);
+        console_writeln("[harness] Offline or auth failure (check network / API key).", CLR_WARN);
         return 0;
     }
     turn = 0;
@@ -344,17 +344,17 @@ fn cmd_ai(prompt) {
             render_inspector();
             resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or provide final summary.");
             if (len(resp) == 0) {
-                console_writeln("[agy] Follow-up turn failed.", CLR_WARN);
+                console_writeln("[harness] Follow-up turn failed.", CLR_WARN);
                 return 0;
             }
             turn = turn + 1;
         }
     }
-    console_write("agy> ", CLR_GREEN);
+    console_write("harness> ", CLR_GREEN);
     console_print_wrapped(resp, CLR_TEXT);
     code = extract_code(resp);
     if (len(code) > 0) {
-        console_writeln("[agy] Synthesized Actor code detected. Spawning...", CLR_GREEN);
+        console_writeln("[harness] Synthesized Actor code detected. Spawning...", CLR_GREEN);
         actor_id = sys_actor_spawn_code("child_worker", code);
         if (actor_id < 0) {
             console_writeln("[kernel] Failed to compile or spawn actor from AI code.", CLR_WARN);
@@ -467,10 +467,10 @@ vim_mode = 0; // 0 = insert, 1 = normal
 
 fn render_prompt() {
     sys_fb_draw_rect(20, PROMPT_Y, 835, 16, CLR_BG);
-    sys_fb_draw_string(20, PROMPT_Y, "agy> ", CLR_ACCENT, CLR_BG);
-    sys_fb_draw_string(68, PROMPT_Y, line_buf, CLR_TEXT, CLR_BG);
+    sys_fb_draw_string(20, PROMPT_Y, "harness> ", CLR_ACCENT, CLR_BG);
+    sys_fb_draw_string(92, PROMPT_Y, line_buf, CLR_TEXT, CLR_BG);
     
-    cur_px = 68 + line_pos * 8;
+    cur_px = 92 + line_pos * 8;
     if (vim_mode == 0) {
         sys_fb_draw_rect(cur_px, PROMPT_Y, 2, 16, CLR_GREEN);
     } else {
@@ -483,7 +483,7 @@ fn render_prompt() {
     
     esc = char_to_str(27);
     cr = char_to_str(13);
-    sys_serial_write(cr + esc + "[K" + ANSI_BOLD + ANSI_CYAN + "agy> " + ANSI_RESET + line_buf);
+    sys_serial_write(cr + esc + "[K" + ANSI_BOLD + ANSI_CYAN + "harness> " + ANSI_RESET + line_buf);
     back_steps = len(line_buf) - line_pos;
     if (back_steps > 0) {
         sys_serial_write(esc + "[" + int_to_str(back_steps) + "D");
@@ -601,7 +601,7 @@ fn harness_main() {
     draw_header();
     draw_panels();
     render_inspector();
-    console_writeln("uOS Autonomous Agent Studio (agy)", CLR_ACCENT);
+    console_writeln("uOS Autonomous Agent Studio (harness)", CLR_ACCENT);
     console_writeln("Resident AI: Gemini 3.8 Flash | Protocol: Sovereign ABI", CLR_MUTED);
     console_writeln("Type /help for commands. Unprefixed text is sent to AI Agent.", CLR_MUTED);
     console_writeln("------------------------------------------------", CLR_BORDER);

@@ -20,8 +20,8 @@ pub const MOCK_LIST_DIR_RESPONSE: []const u8 =
     "\"args\":{\"prefix\":\"\"}}}]}}]}";
 
 pub const MOCK_GREETING_RESPONSE: []const u8 =
-    "Status: MOCK-0001 (agy offline mode)\n" ++
-    "Hello! I am your Resident AI agent (agy mode). I have tools to inspect your workspace (view_file, list_dir, grep_search), edit code (write_to_file, replace_file_content), run commands (run_command), and manage actors (spawn_actor). How can I help you with MicrOS today?";
+    "Status: MOCK-0001 (harness offline mode)\n" ++
+    "Hello! I am your Resident AI agent (harness mode). I have tools to inspect your workspace (view_file, list_dir, grep_search), edit code (write_to_file, replace_file_content), run commands (run_command), and manage actors (spawn_actor). How can I help you with MicrOS today?";
 
 pub const MOCK_TOOL_FOLLOWUP_RESPONSE: []const u8 =
     "Tool execution completed successfully. Workspace catalog and system state verified.";
