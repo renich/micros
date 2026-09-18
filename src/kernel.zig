@@ -30,6 +30,7 @@ pub const bundle_writer = @import("kernel/storage/bundle_writer.zig");
 pub const kernel_synthesizer = @import("kernel/storage/kernel_synthesizer.zig");
 pub const storage_abi = @import("kernel/storage/storage_abi.zig");
 pub const pe_emitter = @import("boot/pe_emitter.zig");
+pub const elf_emitter = @import("macros/elf_emitter.zig");
 pub const net = @import("kernel/net.zig");
 pub const ai = @import("kernel/ai.zig");
 pub const compositor = @import("kernel/compositor.zig");
@@ -72,6 +73,7 @@ test "kernel module tests" {
     _ = @import("kernel/storage/kernel_synthesizer.zig");
     _ = @import("kernel/storage/storage_abi.zig");
     _ = @import("boot/pe_emitter.zig");
+    _ = @import("macros/elf_emitter.zig");
     _ = @import("kernel/net.zig");
     _ = @import("kernel/ai.zig");
     _ = @import("kernel/compositor.zig");
