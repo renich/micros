@@ -9,6 +9,7 @@ const ring_mod = @import("../../ipc/ring.zig");
 const events_mod = @import("../../ipc/events.zig");
 const ps2_kbd = @import("../../drivers/ps2_kbd.zig");
 const supervisor_mod = @import("../../supervisor.zig");
+const actor_mod = @import("../../actor.zig");
 const apic = @import("apic.zig");
 const smp = @import("../../sched/smp.zig");
 
@@ -135,6 +136,15 @@ fn logSupervisorTrap(actor_id: u32, rip: u64, cr2: u64, frame: *const ExceptionS
     serial.writeString(")\n");
 }
 
+fn markActorFaulted(actor_id: u32) void {
+    if (actor_mod.active_registry) |reg| {
+        if (reg.get(actor_id)) |act| {
+            act.state = .faulted;
+            act.release();
+        }
+    }
+}
+
 export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     const rip = frame.rip;
     const cr2 = if (builtin.is_test) 0 else asm volatile ("mov %%cr2, %[ret]"
@@ -149,6 +159,7 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     }
 
     logSupervisorTrap(actor_id, rip, cr2, frame);
+    markActorFaulted(actor_id);
 
     const fault = supervisor_mod.FaultFrame{
         .actor_id = actor_id,
@@ -377,4 +388,37 @@ test "IDT exception gates have distinct vector ISR handlers" {
     try std.testing.expect(de_isr != ud_isr);
     try std.testing.expect(gp_isr != pf_isr);
     try std.testing.expect(ud_isr != pf_isr);
+}
+
+test "IDT exceptionHandlerZig transitions child actor to faulted in registry" {
+    const allocator = std.testing.allocator;
+    var reg = actor_mod.ActorRegistry.init();
+    actor_mod.active_registry = &reg;
+    defer {
+        actor_mod.active_registry = null;
+    }
+
+    const genesis = try reg.spawn(allocator, 0, "genesis", 16, 0);
+    defer reg.terminate(allocator, genesis.id) catch {};
+
+    const child = try reg.spawn(allocator, genesis.id, "test_child", 16, 0x1000);
+    defer reg.terminate(allocator, child.id) catch {};
+    try std.testing.expectEqual(actor_mod.ActorState.ready, child.state);
+    try std.testing.expect(child.id != 0);
+
+    var frame = ExceptionStackFrame{
+        .vector = 14,
+        .error_code = 0,
+        .rip = 0x400000,
+        .cs = 0x23,
+        .rflags = 0x202,
+        .rsp = 0x7FFF0000,
+        .ss = 0x1B,
+    };
+
+    current_actor_id = child.id;
+    exceptionHandlerZig(&frame);
+
+    try std.testing.expectEqual(actor_mod.ActorState.faulted, child.state);
+    try std.testing.expectEqual(@intFromPtr(&childFaultTrampoline), frame.rip);
 }

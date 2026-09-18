@@ -108,7 +108,15 @@ pub const NetworkStack = struct {
     }
 
     fn handleServerConnSegment(self: *NetworkStack, conn: *tcp_mod.TcpServerConn, tcp_hdr: tcp_mod.TcpHeader, data: []const u8) void {
-        if (!conn.processSegment(tcp_hdr, data)) return;
+        if (!conn.processSegment(tcp_hdr, data)) {
+            if (conn.state == .established and (data.len > 0 or (tcp_hdr.flags & tcp_mod.FLAG_FIN) != 0)) {
+                var ack_buf: [64]u8 = undefined;
+                const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+                const ack_len = conn.buildAck(my_ip, &ack_buf) catch return;
+                self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, ack_buf[0..ack_len]) catch {};
+            }
+            return;
+        }
 
         if (data.len > 0 or (tcp_hdr.flags & tcp_mod.FLAG_FIN) != 0) {
             var ack_buf: [64]u8 = undefined;
@@ -150,7 +158,12 @@ pub const NetworkStack = struct {
         if (tcp_hdr.src_port != client.remote_port) return;
 
         const was_syn_sent = (client.state == .syn_sent);
-        if (!client.processSegment(tcp_hdr, data)) return;
+        if (!client.processSegment(tcp_hdr, data)) {
+            if (client.state == .established and (data.len > 0 or (tcp_hdr.flags & tcp_mod.FLAG_FIN) != 0)) {
+                self.sendTcpAck(src_ip, client);
+            }
+            return;
+        }
 
         if (data.len > 0) {
             self.storeTcpData(data);
@@ -712,4 +725,39 @@ test "retransmitServerConn handles closing state and retries exhaustion" {
     conn.retries = tcp_mod.TCP_MAX_RETRIES;
     stack.retransmitServerConn(&conn, conn.last_activity_ticks + tcp_mod.TCP_RTO_TICKS + 1, my_ip);
     try std.testing.expectEqual(tcp_mod.ServerState.closed, conn.state);
+}
+
+test "processClientTcp and handleServerConnSegment emit duplicate ACKs on out-of-order segments" {
+    var dummy_dev: virtio_net_mod.VirtioNetDevice = undefined;
+    dummy_dev.initialized = false;
+    var stack = NetworkStack.init(&dummy_dev);
+
+    const local_ip = [_]u8{ 10, 0, 2, 15 };
+    const remote_ip = [_]u8{ 10, 0, 2, 2 };
+
+    // Setup client in established state
+    var client = tcp_mod.TcpClient.init(local_ip, remote_ip, 49152, 80, 1000);
+    client.state = .established;
+    client.ack = 5000;
+    client.seq = 1000;
+    stack.tcp_client = client;
+
+    // Out-of-order segment with seq_num 6000 != ack (5000)
+    const out_of_order_hdr = tcp_mod.TcpHeader{
+        .src_port = 80,
+        .dst_port = 49152,
+        .seq_num = 6000,
+        .ack_num = 1000,
+        .data_offset = 5,
+        .flags = tcp_mod.FLAG_ACK,
+        .window_size = 8192,
+        .checksum = 0,
+        .urgent_ptr = 0,
+    };
+
+    stack.processClientTcp(remote_ip, out_of_order_hdr, "Out of order payload");
+    // Client ack should remain at 5000 (not advanced)
+    try std.testing.expectEqual(@as(u32, 5000), stack.tcp_client.?.ack);
+    // Buffer should not receive out of order payload
+    try std.testing.expectEqual(@as(usize, 0), stack.tcp_rx_len);
 }

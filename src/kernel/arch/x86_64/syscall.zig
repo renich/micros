@@ -41,13 +41,12 @@ pub const CpuControlBlock = extern struct {
 
 pub var cpu_control_blocks: [smp.MAX_CORES]CpuControlBlock = [_]CpuControlBlock{.{}} ** smp.MAX_CORES;
 var syscall_stacks: [smp.MAX_CORES][16384]u8 align(4096) = undefined;
-var active_registry: ?*actor_mod.ActorRegistry = null;
 pub var kernel_allocator: ?std.mem.Allocator = null;
 pub var frame_info_fn: ?*const fn (usize) ?u64 = null;
 pub var irq_ack_fn: ?*const fn (u8) void = null;
 
 pub fn setRegistry(registry: *actor_mod.ActorRegistry) void {
-    active_registry = registry;
+    actor_mod.active_registry = registry;
 }
 
 pub fn setAllocator(allocator: std.mem.Allocator) void {
@@ -73,7 +72,7 @@ pub fn setActorId(id: u32) void {
 }
 
 pub fn getCallerActor() ?*actor_mod.Actor {
-    const reg = active_registry orelse return null;
+    const reg = actor_mod.active_registry orelse return null;
     return reg.get(getCurrentActorId());
 }
 
@@ -157,7 +156,7 @@ fn handleActorSpawn(name_ptr: u64, name_len: u64) i64 {
     if (name_len == 0 or name_len > 32 or name_ptr == 0) return -3;
     const USERLAND_MAX: u64 = 0x0000_7FFF_FFFF_FFFF;
     if (name_ptr >= USERLAND_MAX or name_len > USERLAND_MAX - name_ptr) return -3;
-    const reg = active_registry orelse return -2;
+    const reg = actor_mod.active_registry orelse return -2;
     const alloc = kernel_allocator orelse return -2;
     const name: []const u8 = @as([*]const u8, @ptrFromInt(name_ptr))[0..@intCast(name_len)];
     const pml4_phys = vmm.createActorAddressSpace() orelse return -2;
@@ -176,7 +175,7 @@ fn handleActorSpawn(name_ptr: u64, name_len: u64) i64 {
 
 fn handleActorKill(id_val: u64) i64 {
     if (!checkCallerAuthority(.actor_control, Rights.REVOKE)) return -1;
-    const reg = active_registry orelse return -2;
+    const reg = actor_mod.active_registry orelse return -2;
     const alloc = kernel_allocator orelse return -2;
     if (id_val > std.math.maxInt(u32)) return -3;
     const id: u32 = @intCast(id_val);
@@ -185,7 +184,7 @@ fn handleActorKill(id_val: u64) i64 {
 }
 
 fn handleActorStatus(id_val: u64) i64 {
-    const reg = active_registry orelse return -1;
+    const reg = actor_mod.active_registry orelse return -1;
     if (id_val > std.math.maxInt(u32)) return -1;
     const actor = reg.get(@intCast(id_val)) orelse return -1;
     defer releaseActorRef(actor);
@@ -202,7 +201,7 @@ fn handleCapGrant(target_id: u64, cap_slot: u64, rights_mask: u64) i64 {
     const cap = caller.getCap(slot) orelse return -2;
     if (!cap.canGrant()) return -1;
 
-    const reg = active_registry orelse return -4;
+    const reg = actor_mod.active_registry orelse return -4;
     const dest = reg.get(target) orelse return -4;
     defer releaseActorRef(dest);
 
@@ -281,7 +280,7 @@ pub export fn kernelSyscallDispatch(
     return switch (sys_enum) {
         .yield_cpu => 0,
         .actor_count => blk: {
-            if (active_registry) |reg| {
+            if (actor_mod.active_registry) |reg| {
                 break :blk @as(i64, @intCast(reg.active_count));
             }
             break :blk 0;
@@ -324,7 +323,7 @@ test "syscall dispatch: genesis actor has root authority" {
     setAllocator(allocator);
     setActorId(0);
     defer {
-        active_registry = null;
+        actor_mod.active_registry = null;
         kernel_allocator = null;
     }
 
@@ -353,7 +352,7 @@ test "syscall dispatch: capability gating rejects untrusted actor without capabi
     setRegistry(&registry);
     setAllocator(allocator);
     defer {
-        active_registry = null;
+        actor_mod.active_registry = null;
         kernel_allocator = null;
     }
 
@@ -400,7 +399,7 @@ test "handleMemMap capability extent check and PAGE_ANON sanitization" {
     setRegistry(&registry);
     setAllocator(allocator);
     defer {
-        active_registry = null;
+        actor_mod.active_registry = null;
         kernel_allocator = null;
     }
 
@@ -435,7 +434,7 @@ test "handleActorSpawn rejects kernel virtual addresses" {
     setRegistry(&registry);
     setAllocator(allocator);
     defer {
-        active_registry = null;
+        actor_mod.active_registry = null;
         kernel_allocator = null;
     }
 

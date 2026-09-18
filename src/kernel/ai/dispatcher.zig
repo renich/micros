@@ -42,14 +42,7 @@ pub const ToolDispatcher = struct {
     }
 
     pub fn hasCap(self: *const ToolDispatcher, cap_type: CapType, required_right: u16) bool {
-        var i: usize = 0;
-        while (i < self.caller_cspace.capacity) : (i += 1) {
-            const entry = self.caller_cspace.entries[i];
-            if (entry.isValid() and entry.cap_type == cap_type and entry.hasRight(required_right)) {
-                return true;
-            }
-        }
-        return false;
+        return self.caller_cspace.hasCap(cap_type, required_right);
     }
 
     fn dispatchSpawn(self: *const ToolDispatcher, args: tools.SpawnActorArgs) tools.ToolResult {

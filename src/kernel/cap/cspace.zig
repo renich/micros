@@ -2,6 +2,8 @@
 // Local per-domain capability table for object authorization and delegation.
 
 const std = @import("std");
+const builtin = @import("builtin");
+const io = @import("../arch/x86_64/io.zig");
 const capability_mod = @import("capability.zig");
 const Capability = capability_mod.Capability;
 const CapType = capability_mod.CapType;
@@ -19,6 +21,22 @@ pub const DEFAULT_CSPACE_CAPACITY: usize = 256;
 pub const CSpace = struct {
     entries: []align(4096) Capability,
     capacity: usize,
+    lock: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    fn acquireLock(self: *const CSpace) u64 {
+        const flags = if (!builtin.is_test) io.pushfqAndCli() else 0;
+        const lock_ptr: *std.atomic.Value(u32) = @constCast(&self.lock);
+        while (lock_ptr.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            if (!builtin.is_test) io.pause();
+        }
+        return flags;
+    }
+
+    fn releaseLock(self: *const CSpace, flags: u64) void {
+        const lock_ptr: *std.atomic.Value(u32) = @constCast(&self.lock);
+        lock_ptr.store(0, .release);
+        if (!builtin.is_test) io.popfq(flags);
+    }
 
     pub fn init(allocator: std.mem.Allocator, capacity: usize) !*CSpace {
         const cspace = try allocator.create(CSpace);
@@ -31,6 +49,7 @@ pub const CSpace = struct {
         cspace.* = CSpace{
             .entries = entries,
             .capacity = capacity,
+            .lock = std.atomic.Value(u32).init(0),
         };
         return cspace;
     }
@@ -42,6 +61,9 @@ pub const CSpace = struct {
 
     pub fn insert(self: *CSpace, cap: Capability) CapError!u32 {
         if (!cap.isValid()) return CapError.InvalidHandle;
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
         var idx: usize = 0;
         while (idx < self.capacity) : (idx += 1) {
             if (!self.entries[idx].isValid()) {
@@ -54,6 +76,9 @@ pub const CSpace = struct {
 
     pub fn get(self: *const CSpace, handle: u32) ?Capability {
         if (handle >= self.capacity) return null;
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
         const cap = self.entries[handle];
         if (!cap.isValid()) return null;
         return cap;
@@ -61,12 +86,18 @@ pub const CSpace = struct {
 
     pub fn drop(self: *CSpace, handle: u32) CapError!void {
         if (handle >= self.capacity) return CapError.InvalidHandle;
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
         if (!self.entries[handle].isValid()) return CapError.InvalidHandle;
         self.entries[handle] = Capability.NULL_CAP;
     }
 
     pub fn revoke(self: *CSpace, handle: u32) CapError!void {
         if (handle >= self.capacity) return CapError.InvalidHandle;
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
         if (!self.entries[handle].isValid()) return CapError.InvalidHandle;
         if (!self.entries[handle].hasRight(Rights.REVOKE)) return CapError.PermissionDenied;
         self.entries[handle] = Capability.NULL_CAP;
@@ -101,6 +132,43 @@ pub const CSpace = struct {
         if (cap.cap_type != expected_type) return CapError.TypeMismatch;
         if (!cap.hasRight(required_rights)) return CapError.PermissionDenied;
         return cap;
+    }
+
+    pub fn hasCap(self: *const CSpace, cap_type: CapType, required_right: u16) bool {
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
+        var i: usize = 0;
+        while (i < self.capacity) : (i += 1) {
+            const entry = self.entries[i];
+            if (entry.isValid() and entry.cap_type == cap_type and entry.hasRight(required_right)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn authorizesPhysicalExtent(self: *const CSpace, phys: u64, size: u64, required_rights: u16) bool {
+        if (size == 0) return true;
+        if (size > std.math.maxInt(u64) - phys) return false;
+        const phys_end = phys + size;
+
+        const flags = self.acquireLock();
+        defer self.releaseLock(flags);
+
+        var i: usize = 0;
+        while (i < self.capacity) : (i += 1) {
+            const entry = self.entries[i];
+            if (entry.isValid() and entry.cap_type == .memory_extent and entry.hasRight(required_rights)) {
+                const ext_start = entry.data_addr;
+                const ext_size = entry.data_size;
+                if (ext_size <= std.math.maxInt(u64) - ext_start) {
+                    const ext_end = ext_start + ext_size;
+                    if (phys >= ext_start and phys_end <= ext_end) return true;
+                }
+            }
+        }
+        return false;
     }
 };
 

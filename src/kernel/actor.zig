@@ -151,33 +151,12 @@ pub const Actor = struct {
     }
 
     pub fn hasCap(self: *const Actor, cap_type: CapType, required_rights: u16) bool {
-        var i: usize = 0;
-        while (i < self.cspace.capacity) : (i += 1) {
-            const entry = self.cspace.entries[i];
-            if (entry.isValid() and entry.cap_type == cap_type and entry.hasRight(required_rights)) {
-                return true;
-            }
-        }
-        return false;
+        return self.cspace.hasCap(cap_type, required_rights);
     }
 
     pub fn authorizesPhysicalExtent(self: *const Actor, phys: u64, size: u64, required_rights: u16) bool {
         if (self.id == GENESIS_ACTOR_ID) return true;
-        if (size == 0) return true;
-        if (size > std.math.maxInt(u64) - phys) return false;
-        const phys_end = phys + size;
-        var i: usize = 0;
-        while (i < self.cspace.capacity) : (i += 1) {
-            const entry = self.cspace.entries[i];
-            if (entry.isValid() and entry.cap_type == .memory_extent and entry.hasRight(required_rights)) {
-                if (entry.data_size > std.math.maxInt(u64) - entry.data_addr) continue;
-                const entry_end = entry.data_addr + entry.data_size;
-                if (phys >= entry.data_addr and phys_end <= entry_end) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return self.cspace.authorizesPhysicalExtent(phys, size, required_rights);
     }
 };
 
@@ -288,6 +267,8 @@ pub const ActorRegistry = struct {
         actor.release();
     }
 };
+
+pub var active_registry: ?*ActorRegistry = null;
 
 test "Genesis Actor initialization and capability insertion" {
     const allocator = std.testing.allocator;

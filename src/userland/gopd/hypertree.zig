@@ -167,6 +167,11 @@ pub const HyperTree = struct {
 
     pub fn insertNode(self: *HyperTree, node: HyperNode, payload: []const u8) !u32 {
         if (self.node_count >= MAX_NODES) return error.TreeFull;
+        if (node.parent_id != 0) {
+            if (node.parent_id > MAX_NODES or !self.node_active[node.parent_id - 1]) {
+                return error.ParentNotFound;
+            }
+        }
         if (self.payload_used + payload.len > MAX_PAYLOAD_BYTES) {
             self.compactPayloads();
             if (self.payload_used + payload.len > MAX_PAYLOAD_BYTES) return error.PayloadOutOfMemory;
@@ -222,23 +227,40 @@ pub const HyperTree = struct {
         self.accumulated_damage.include(x, y, w, h);
     }
 
-    pub fn removeNode(self: *HyperTree, id: u32) !void {
-        if (id == 0 or id > MAX_NODES) return error.NodeNotFound;
-        const idx = id - 1;
-        if (!self.node_active[idx]) return error.NodeNotFound;
-
-        const node = &self.nodes[idx];
-        self.accumulated_damage.include(node.x, node.y, node.width, node.height);
-        self.node_active[idx] = false;
-        self.node_count -= 1;
-        if (self.focused_node_id == id) self.focused_node_id = null;
-
-        // Recursively remove children
+    fn markDescendants(self: *const HyperTree, to_remove: *std.StaticBitSet(MAX_NODES)) bool {
+        var changed = false;
         for (0..MAX_NODES) |i| {
-            if (self.node_active[i] and self.nodes[i].parent_id == id) {
-                try self.removeNode(@intCast(i + 1));
+            if (!self.node_active[i] or to_remove.isSet(i)) continue;
+            const pid = self.nodes[i].parent_id;
+            if (pid != 0 and pid <= MAX_NODES and to_remove.isSet(pid - 1)) {
+                to_remove.set(i);
+                changed = true;
             }
         }
+        return changed;
+    }
+
+    pub fn removeNode(self: *HyperTree, id: u32) !void {
+        if (id == 0 or id > MAX_NODES) return error.NodeNotFound;
+        const initial_idx = id - 1;
+        if (!self.node_active[initial_idx]) return error.NodeNotFound;
+
+        var to_remove = std.StaticBitSet(MAX_NODES).initEmpty();
+        to_remove.set(initial_idx);
+
+        while (self.markDescendants(&to_remove)) {}
+
+        for (0..MAX_NODES) |i| {
+            if (!to_remove.isSet(i) or !self.node_active[i]) continue;
+            const node = &self.nodes[i];
+            self.accumulated_damage.include(node.x, node.y, node.width, node.height);
+            self.node_active[i] = false;
+            self.node_count -= 1;
+            if (self.focused_node_id == @as(u32, @intCast(i + 1))) {
+                self.focused_node_id = null;
+            }
+        }
+
         if (self.node_count == 0) {
             self.payload_used = 0;
         } else if (self.payload_used > MAX_PAYLOAD_BYTES * 8 / 10) {
@@ -431,4 +453,50 @@ test "DamageRect and HyperNode bounds overflow protection" {
     };
     try std.testing.expect(node.contains(200, 200));
     try std.testing.expect(!node.contains(50, 50));
+}
+
+test "HyperTree DAG parent validation and iterative multi-level child deletion" {
+    const allocator = std.testing.allocator;
+    var tree = HyperTree.init(allocator);
+
+    // Reject nonexistent parent
+    const invalid_child = HyperNode{
+        .id = 0,
+        .parent_id = 99,
+        .node_type = .button,
+        .flags = NodeFlags.VISIBLE,
+        .layout_dir = 0,
+        .reserved = 0,
+        .x = 0,
+        .y = 0,
+        .width = 10,
+        .height = 10,
+        .color_fg = 0,
+        .color_bg = 0,
+        .payload_len = 0,
+        .payload_offset = 0,
+    };
+    try std.testing.expectError(error.ParentNotFound, tree.insertNode(invalid_child, "bad"));
+
+    // Insert root (1) -> child (2) -> grandchild (3)
+    var root_node = invalid_child;
+    root_node.parent_id = 0;
+    const root_id = try tree.insertNode(root_node, "root");
+
+    var child_node = invalid_child;
+    child_node.parent_id = root_id;
+    const child_id = try tree.insertNode(child_node, "child");
+
+    var gchild_node = invalid_child;
+    gchild_node.parent_id = child_id;
+    const gchild_id = try tree.insertNode(gchild_node, "grandchild");
+
+    try std.testing.expectEqual(@as(usize, 3), tree.node_count);
+
+    // Removing root must iteratively remove child and grandchild without recursion
+    try tree.removeNode(root_id);
+    try std.testing.expectEqual(@as(usize, 0), tree.node_count);
+    try std.testing.expect(tree.getNode(root_id) == null);
+    try std.testing.expect(tree.getNode(child_id) == null);
+    try std.testing.expect(tree.getNode(gchild_id) == null);
 }
