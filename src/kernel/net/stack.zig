@@ -602,12 +602,27 @@ pub const NetworkStack = struct {
         try self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, fin_buf[0..fin_len]);
     }
 
+    fn retransmitServerFin(self: *NetworkStack, conn: *tcp_mod.TcpServerConn, my_ip: [4]u8) void {
+        var fin_buf: [64]u8 = undefined;
+        const fin_len = tcp_mod.writePacket(
+            &fin_buf,
+            my_ip,
+            conn.remote_ip,
+            conn.local_port,
+            conn.remote_port,
+            conn.local_seq,
+            conn.remote_seq,
+            tcp_mod.FLAG_FIN | tcp_mod.FLAG_ACK,
+            &[_]u8{},
+        ) catch return;
+        self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, fin_buf[0..fin_len]) catch return;
+        conn.local_seq +%= 1;
+    }
+
     fn retransmitServerConn(self: *NetworkStack, conn: *tcp_mod.TcpServerConn, current_ticks: u64, my_ip: [4]u8) void {
-        if (conn.state != .established or conn.tx_sent == 0 or conn.unacked_seq == conn.local_seq) return;
+        if (conn.state == .closed or conn.unacked_seq == conn.local_seq) return;
         if (current_ticks - conn.last_activity_ticks <= tcp_mod.TCP_RTO_TICKS) return;
 
-        conn.tx_sent = 0;
-        conn.local_seq = conn.unacked_seq;
         conn.last_activity_ticks = current_ticks;
         conn.retries +%= 1;
         if (conn.retries > tcp_mod.TCP_MAX_RETRIES) {
@@ -615,12 +630,22 @@ pub const NetworkStack = struct {
             return;
         }
 
+        conn.tx_sent = 0;
+        const original_local_seq = conn.local_seq;
+        conn.local_seq = conn.unacked_seq;
+
         var pkt_buf: [1514]u8 = undefined;
         while (conn.tx_sent < conn.tx_len) {
             const pkt_len = conn.buildData(my_ip, &pkt_buf) catch break;
             if (pkt_len == 0) break;
             self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, pkt_buf[0..pkt_len]) catch break;
         }
+
+        if (conn.tx_sent == conn.tx_len and (conn.state == .last_ack or conn.state == .fin_wait_1)) {
+            self.retransmitServerFin(conn, my_ip);
+        }
+
+        conn.local_seq = @max(conn.local_seq, original_local_seq);
     }
 
     pub fn pollTcpServer(self: *NetworkStack) void {
@@ -656,4 +681,34 @@ fn printDec(val: u8) void {
     } else {
         serial.writeChar('0' + val);
     }
+}
+
+test "retransmitServerConn handles closing state and retries exhaustion" {
+    var dummy_dev: virtio_net_mod.VirtioNetDevice = undefined;
+    dummy_dev.initialized = false;
+    var stack = NetworkStack.init(&dummy_dev);
+
+    const remote_ip = [_]u8{ 10, 0, 2, 2 };
+    const remote_mac = [_]u8{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
+    var conn = tcp_mod.TcpServerConn.init(1, 80, 54321, remote_ip, remote_mac, 1000, 5000, 0);
+
+    conn.state = .last_ack;
+    conn.unacked_seq = 1000;
+    conn.local_seq = 1001;
+    conn.last_activity_ticks = 10;
+    conn.retries = 0;
+
+    const my_ip = [_]u8{ 10, 0, 2, 15 };
+
+    stack.retransmitServerConn(&conn, 10 + tcp_mod.TCP_RTO_TICKS, my_ip);
+    try std.testing.expectEqual(@as(u8, 0), conn.retries);
+    try std.testing.expectEqual(tcp_mod.ServerState.last_ack, conn.state);
+
+    stack.retransmitServerConn(&conn, 10 + tcp_mod.TCP_RTO_TICKS + 1, my_ip);
+    try std.testing.expectEqual(@as(u8, 1), conn.retries);
+    try std.testing.expectEqual(tcp_mod.ServerState.last_ack, conn.state);
+
+    conn.retries = tcp_mod.TCP_MAX_RETRIES;
+    stack.retransmitServerConn(&conn, conn.last_activity_ticks + tcp_mod.TCP_RTO_TICKS + 1, my_ip);
+    try std.testing.expectEqual(tcp_mod.ServerState.closed, conn.state);
 }

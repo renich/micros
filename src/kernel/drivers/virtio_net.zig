@@ -130,6 +130,7 @@ pub const VirtioNetDevice = struct {
 
     pub fn sendPacket(self: *VirtioNetDevice, packet: []const u8) !void {
         if (packet.len > MAX_PACKET_SIZE) return error.PacketTooLarge;
+        if (!self.initialized) return error.DeviceNotInitialized;
 
         if (self.tx_in_flight) {
             try self.retireTx();
@@ -147,10 +148,10 @@ pub const VirtioNetDevice = struct {
             .next = 0,
         };
 
-        const avail_idx = self.tx_queue.avail.idx;
-        self.tx_queue.avail.ring[avail_idx % QUEUE_SIZE] = 0;
+        const avail_idx = self.tx_queue.avail.idx % QUEUE_SIZE;
+        self.tx_queue.avail.ring[avail_idx] = 0;
         asm volatile ("" ::: .{ .memory = true });
-        self.tx_queue.avail.idx = avail_idx +% 1;
+        self.tx_queue.avail.idx +%= 1;
         asm volatile ("" ::: .{ .memory = true });
 
         io.outw(self.io_base + REG_QUEUE_NOTIFY, QUEUE_TX);
@@ -158,6 +159,7 @@ pub const VirtioNetDevice = struct {
     }
 
     pub fn flushTx(self: *VirtioNetDevice) !void {
+        if (!self.initialized) return;
         if (self.tx_in_flight) {
             try self.retireTx();
         }
@@ -175,6 +177,7 @@ pub const VirtioNetDevice = struct {
     }
 
     pub fn pollReceive(self: *VirtioNetDevice, out_buffer: []u8) ?usize {
+        if (!self.initialized) return null;
         if (self.rx_queue.last_used_idx == self.rx_queue.used.idx) return null;
 
         const used_idx = self.rx_queue.last_used_idx % QUEUE_SIZE;
