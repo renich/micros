@@ -750,6 +750,25 @@ fn bundleReadBridge(name: []const u8) ?[]const u8 {
     return reader.findData(name);
 }
 
+fn bundleListBridge(prefix: []const u8, out_buf: []u8) usize {
+    const raw = global_bundle_data orelse return 0;
+    const reader = bundle_mod.BundleReader.init(raw) catch return 0;
+    var written: usize = 0;
+    var i: usize = 0;
+    while (i < reader.header.entry_count) : (i += 1) {
+        const entry = reader.getEntry(i) orelse break;
+        const tag = entry.getTag();
+        if (prefix.len == 0 or std.mem.startsWith(u8, tag, prefix)) {
+            if (written + tag.len + 1 <= out_buf.len) {
+                @memcpy(out_buf[written .. written + tag.len], tag);
+                out_buf[written + tag.len] = '\n';
+                written += tag.len + 1;
+            }
+        }
+    }
+    return written;
+}
+
 fn getCurrentActorBridge() ?*actor_mod.Actor {
     if (global_sched) |sched| {
         if (sched.current) |fib| {
@@ -843,6 +862,7 @@ fn createAbiContext(genesis: *actor_mod.Actor, ipc_ring: *ipc_mod.RingBuffer) ab
         .draw_canvas_fn = drawCanvasBridge,
         .telemetry_fn = telemetryBridge,
         .bundle_read_fn = bundleReadBridge,
+        .bundle_list_fn = bundleListBridge,
         .current_actor_fn = getCurrentActorBridge,
         .net_stack = if (global_netd != null) global_netd.?.stack else null,
         .frame_info_fn = frameInfoBridge,

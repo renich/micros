@@ -26,8 +26,15 @@ pub const MOCK_GREETING_RESPONSE: []const u8 =
 pub const MOCK_TOOL_FOLLOWUP_RESPONSE: []const u8 =
     "Tool execution completed successfully. Workspace catalog and system state verified.";
 
+pub const MOCK_DIR_FOLLOWUP_RESPONSE: []const u8 =
+    "Workspace files retrieved:\n" ++
+    "  init.mx, msh.mx, harness.mx, installer.mx, lexer.mx, parser.mx, compiler.mx, bundle.mx, rebuild.mx\n" ++
+    "All genesis modules are verified and ready.";
+
 pub fn generateResponse(user_prompt: []const u8, out_buf: []u8) !usize {
-    const resp = if (std.mem.indexOf(u8, user_prompt, "Tool result:") != null)
+    const resp = if (std.mem.indexOf(u8, user_prompt, "dir_listed") != null)
+        MOCK_DIR_FOLLOWUP_RESPONSE
+    else if (std.mem.indexOf(u8, user_prompt, "Tool result:") != null)
         MOCK_TOOL_FOLLOWUP_RESPONSE
     else if (std.mem.indexOf(u8, user_prompt, "tool") != null)
         MOCK_TOOL_RESPONSE

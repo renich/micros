@@ -18,6 +18,7 @@ pub const DispatcherContext = struct {
     draw_canvas_fn: ?*const fn (x: u32, y: u32, w: u32, h: u32, color: u32) void = null,
     telemetry_fn: ?*const fn () tools.TelemetrySnapshot = null,
     bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
+    bundle_list_fn: ?*const fn (prefix: []const u8, out_buf: []u8) usize = null,
 };
 
 pub const ToolDispatcher = struct {
@@ -206,9 +207,10 @@ pub const ToolDispatcher = struct {
         if (!self.hasCap(.storage_device, Rights.READ)) {
             return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.READ required" };
         }
-        const len = catalog_abi.global_catalog.formatList(args.prefix, self.storage_buf) catch {
-            return tools.ToolResult{ .error_msg = "ListFailed" };
-        };
+        var len = catalog_abi.global_catalog.formatList(args.prefix, self.storage_buf) catch 0;
+        if (len == 0 and self.ctx.bundle_list_fn != null) {
+            len = self.ctx.bundle_list_fn.?(args.prefix, self.storage_buf);
+        }
         return tools.ToolResult{ .dir_listed = self.storage_buf[0..len] };
     }
 

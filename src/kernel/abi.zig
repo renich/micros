@@ -57,6 +57,7 @@ pub const AbiContext = struct {
     draw_canvas_fn: ?*const fn (x: u32, y: u32, w: u32, h: u32, color: u32) void = null,
     telemetry_fn: ?*const fn () ai_mod.tools.TelemetrySnapshot = null,
     bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
+    bundle_list_fn: ?*const fn (prefix: []const u8, out_buf: []u8) usize = null,
     current_actor_fn: ?*const fn () ?*Actor = null,
     net_stack: ?*NetworkStack = null,
     frame_info_fn: ?*const fn (frame_idx: usize) ?u64 = null,
@@ -421,6 +422,7 @@ fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .draw_canvas_fn = ctx.draw_canvas_fn,
         .telemetry_fn = ctx.telemetry_fn,
         .bundle_read_fn = ctx.bundle_read_fn,
+        .bundle_list_fn = ctx.bundle_list_fn,
     };
     const disp = ai_mod.dispatcher.ToolDispatcher.init(
         caller.cspace,
