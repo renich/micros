@@ -42,12 +42,7 @@ fn init_ansi() {
     ESC = char_to_str(27);
     ANSI_RESET = ESC + "[0m";
     ANSI_BOLD = ESC + "[1m";
-    ANSI_DIM = ESC + "[2m";
     ANSI_CYAN = ESC + "[96m";
-    ANSI_GREEN = ESC + "[92m";
-    ANSI_YELLOW = ESC + "[93m";
-    ANSI_GRAY = ESC + "[90m";
-    ANSI_WHITE = ESC + "[97m";
 }
 
 fn draw_header() {
@@ -313,19 +308,14 @@ fn jump_word_backward() {
 fn delete_char_at_cursor() {
     blen = len(line_buf);
     if (line_pos < blen) {
-        left = substr(line_buf, 0, line_pos);
-        right = substr(line_buf, line_pos + 1, blen);
-        line_buf = left + right;
+        line_buf = substr(line_buf, 0, line_pos) + substr(line_buf, line_pos + 1, blen);
     }
 }
 
 fn delete_word_backward() {
     old_p = line_pos;
     jump_word_backward();
-    new_p = line_pos;
-    left = substr(line_buf, 0, new_p);
-    right = substr(line_buf, old_p, len(line_buf));
-    line_buf = left + right;
+    line_buf = substr(line_buf, 0, line_pos) + substr(line_buf, old_p, len(line_buf));
 }
 
 fn cmd_help() {
@@ -432,16 +422,13 @@ fn cmd_stats() {
 }
 
 fn cmd_status() {
-    console_writeln("* Agent     : Online (harness mode)", CLR_GREEN);
-    console_writeln("* Model     : Gemini 3.8 Flash (Sovereign ABI)", CLR_ACCENT);
-    console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active", CLR_TEXT);
-    console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained", CLR_TEXT);
+    console_writeln("* Agent: Online (harness) | Model: Gemini 3.8", CLR_GREEN);
+    console_writeln("* Actors: " + int_to_str(sys_actor_count()) + " | Faults: " + int_to_str(sys_fault_count()), CLR_TEXT);
+    return 0;
 }
 
 fn cmd_model() {
-    console_writeln("Active AI Provider: Gemini (TLS 1.3)", CLR_ACCENT);
-    console_writeln("Model Identifier  : gemini-3.8-flash", CLR_TEXT);
-    console_writeln("Thinking Level    : Low (zero-alloc streaming)", CLR_MUTED);
+    console_writeln("AI Provider: Gemini 3.8 Flash (TLS 1.3 / Low thinking)", CLR_ACCENT);
     return 0;
 }
 
@@ -599,29 +586,27 @@ fn cmd_paste() {
 
 fn cmd_compress() {
     hlen = len(conv_history);
-    if (hlen <= 2) {
-        console_writeln("[harness] Context is already minimal (" + int_to_str(hlen) + " turns).", CLR_MUTED);
+    if (hlen <= 4) {
+        console_writeln("[harness] Context minimal (" + int_to_str(hlen) + " entries).", CLR_MUTED);
         return 0;
     }
-    old_size = 0;
     ci = 0;
     topics = "";
-    while (ci < hlen - 2) {
+    while (ci < hlen - 4) {
         msg = conv_history[ci];
-        old_size = old_size + len(msg);
-        if (len(msg) > 30) { msg = substr(msg, 0, 30) + "..."; }
+        if (len(msg) > 36) { msg = substr(msg, 0, 36) + ".."; }
         if (len(topics) > 0) { topics = topics + " | "; }
         topics = topics + msg;
         ci = ci + 1;
     }
-    compressed_summary = "[Summary of turns 1.." + int_to_str(hlen - 2) + ": " + topics + "]";
+    compressed_summary = "[Summary: " + topics + "]";
     new_h = [];
+    new_h = push(new_h, conv_history[hlen - 4]);
+    new_h = push(new_h, conv_history[hlen - 3]);
     new_h = push(new_h, conv_history[hlen - 2]);
     new_h = push(new_h, conv_history[hlen - 1]);
     conv_history = new_h;
-    saved = old_size - len(compressed_summary);
-    if (saved < 0) { saved = 0; }
-    console_writeln("[harness] Context compressed (" + int_to_str(hlen - 2) + " turns condensed, " + int_to_str(saved) + " chars saved).", CLR_GREEN);
+    console_writeln("[harness] Context auto-compressed.", CLR_GREEN);
     return 0;
 }
 
@@ -632,10 +617,26 @@ fn auto_compress_context() {
 }
 
 fn build_prompt_with_context(prompt) {
-    if (len(compressed_summary) > 0) {
-        return compressed_summary + "\n\nUser: " + prompt;
+    hlen = len(conv_history);
+    has_sum = len(compressed_summary);
+    if (hlen == 0) {
+        if (has_sum == 0) { return prompt; }
     }
-    return prompt;
+    ctx = "";
+    if (has_sum > 0) {
+        ctx = compressed_summary + "\n\n";
+    }
+    if (hlen > 0) {
+        ctx = ctx + "Conversation history:\n";
+        ci = 0;
+        while (ci < hlen) {
+            ctx = ctx + conv_history[ci] + "\n";
+            ci = ci + 1;
+        }
+        ctx = ctx + "\n";
+    }
+    ctx = ctx + "Current user request:\n" + prompt;
+    return ctx;
 }
 
 fn state_name(st) {
@@ -675,8 +676,38 @@ fn cmd_actors() {
     console_writeln("------------------------------------------------", CLR_BORDER);
 }
 
+fn resolve_tool_calls(initial_resp) {
+    cur_resp = initial_resp;
+    turn = 0;
+    while (turn < 5) {
+        tool_res = sys_ai_tool_call(cur_resp);
+        if (len(tool_res) == 0) {
+            return cur_resp;
+        }
+        if (len(tool_res) > 96) {
+            console_writeln("● " + substr(tool_res, 0, 96) + "...", CLR_GREEN);
+        } else {
+            console_writeln("● " + tool_res, CLR_GREEN);
+        }
+        render_inspector();
+        cur_resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or provide final summary.");
+        if (len(cur_resp) == 0) {
+            console_writeln("[harness] Follow-up turn failed.", CLR_WARN);
+            return initial_resp;
+        }
+        turn = turn + 1;
+    }
+    return cur_resp;
+}
+
+fn record_history_turn(prompt, resp) {
+    conv_history = push(conv_history, "User: " + prompt);
+    r_save = resp;
+    if (len(r_save) > 500) { r_save = substr(r_save, 0, 500) + "..."; }
+    conv_history = push(conv_history, "Assistant: " + r_save);
+}
+
 fn cmd_ai(prompt) {
-    conv_history = push(conv_history, prompt);
     auto_compress_context();
     console_writeln("[harness] Thinking...", CLR_MUTED);
     payload = build_prompt_with_context(prompt);
@@ -685,36 +716,15 @@ fn cmd_ai(prompt) {
         console_writeln("[harness] Offline or auth failure (check network / API key).", CLR_WARN);
         return 0;
     }
+    resp = resolve_tool_calls(resp);
     last_resp_text = resp;
     last_resp_code = extract_code(resp);
-    turn = 0;
-    while (turn < 5) {
-        tool_res = sys_ai_tool_call(resp);
-        if (len(tool_res) == 0) {
-            turn = 999;
-        } else {
-            if (len(tool_res) > 96) {
-                console_writeln("● " + substr(tool_res, 0, 96) + "...", CLR_GREEN);
-            } else {
-                console_writeln("● " + tool_res, CLR_GREEN);
-            }
-            render_inspector();
-            resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or provide final summary.");
-            if (len(resp) == 0) {
-                console_writeln("[harness] Follow-up turn failed.", CLR_WARN);
-                return 0;
-            }
-            last_resp_text = resp;
-            c_ext = extract_code(resp);
-            if (len(c_ext) > 0) { last_resp_code = c_ext; }
-            turn = turn + 1;
-        }
-    }
     console_write("harness> ", CLR_GREEN);
     console_print_wrapped(resp, CLR_TEXT);
     if (len(last_resp_code) > 0) {
         console_writeln("[harness] Code synthesized. Type '/run' to execute.", CLR_MUTED);
     }
+    record_history_turn(prompt, resp);
     return 0;
 }
 
@@ -779,25 +789,19 @@ fn eval_command(cmd) {
     if (c == "reset") { return cmd_reset(); }
     if (c == "model") { return cmd_model(); }
     if (c == "chats") { return cmd_conversations(); }
-    if (c == "conversations") { return cmd_conversations(); }
     if (c == "compress") { return cmd_compress(); }
     if (c == "paste") { return cmd_paste(); }
     if (c == "copy") { return cmd_copy(""); }
     if (c == "copy code") { return cmd_copy("code"); }
     if (c == "new") { return cmd_new_conv(""); }
+    if (c == "run") { return cmd_run(""); }
     if (is_prefix(c, "copy ")) { return cmd_copy(substr(c, 5, len(c))); }
     if (is_prefix(c, "new ")) { return cmd_new_conv(substr(c, 4, len(c))); }
     if (is_prefix(c, "switch ")) { return cmd_switch_conv(substr(c, 7, len(c))); }
     if (is_prefix(c, "search ")) { return cmd_search(substr(c, 7, len(c))); }
-    if (is_prefix(c, "find ")) { return cmd_search(substr(c, 5, len(c))); }
     if (is_prefix(c, "cat ")) { return cmd_cat(substr(c, 4, len(c))); }
-    if (is_prefix(c, "view ")) { return cmd_cat(substr(c, 5, len(c))); }
     if (is_prefix(c, "files ")) { return cmd_files(substr(c, 6, len(c))); }
-    if (c == "run") { return cmd_run(""); }
-    if (c == "exec") { return cmd_run(""); }
-    if (is_prefix(c, "ls ")) { return cmd_files(substr(c, 3, len(c))); }
     if (is_prefix(c, "run ")) { return cmd_run(substr(c, 4, len(c))); }
-    if (is_prefix(c, "exec ")) { return cmd_run(substr(c, 5, len(c))); }
     if (is_prefix(c, "store ")) { return cmd_store(substr(c, 6, len(c))); }
     if (is_prefix(c, "fetch ")) { return cmd_fetch(substr(c, 6, len(c))); }
     if (is_prefix(c, "persist ")) { return cmd_persist(substr(c, 8, len(c))); }
@@ -872,18 +876,13 @@ fn handle_newline() {
 
 fn handle_backspace() {
     if (line_pos > 0) {
-        left = substr(line_buf, 0, line_pos - 1);
-        right = substr(line_buf, line_pos, len(line_buf));
-        line_buf = left + right;
+        line_buf = substr(line_buf, 0, line_pos - 1) + substr(line_buf, line_pos, len(line_buf));
         line_pos = line_pos - 1;
     }
 }
 
 fn handle_printable(c) {
-    ch_str = char_to_str(c);
-    left = substr(line_buf, 0, line_pos);
-    right = substr(line_buf, line_pos, len(line_buf));
-    line_buf = left + ch_str + right;
+    line_buf = substr(line_buf, 0, line_pos) + char_to_str(c) + substr(line_buf, line_pos, len(line_buf));
     line_pos = line_pos + 1;
 }
 

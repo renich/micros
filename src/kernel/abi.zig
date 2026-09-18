@@ -343,7 +343,7 @@ fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .integer = 0 };
 }
 
-var ai_prompt_resp_buf: [4096]u8 = undefined;
+var ai_prompt_resp_buf: [8192]u8 = undefined;
 
 fn decodeSerialEscape() ?i64 {
     if (!serial.hasChar()) return null;

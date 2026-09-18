@@ -38,7 +38,7 @@ pub const SYSTEM_PROMPT: []const u8 =
     "sys_fb_draw_string(x, y, text, fg, bg), sys_fb_draw_rect(x, y, w, h, color), sys_yield(). " ++
     "9. Numbers are decimal integers (e.g. 16777215 white, 65280 green, 0 black). All statements end in semicolons. " ++
     "Format responses using reStructuredText (.rst). When providing code, use: .. code-block:: macros (with 3-space indentation). " ++
-    "Respond conversationally, crisply, and concisely. Do not invoke tools for simple greetings or conversational questions; only invoke tools when an explicit action or telemetry inspection is needed.";
+    "Respond conversationally, crisply, and concisely. Maintain strict conversational continuity across turns based on the provided Conversation history. Do not invoke tools for simple greetings or conversational questions; only invoke tools when an explicit action or telemetry inspection is needed.";
 
 pub const SOVEREIGN_SYSTEM_PROMPT: []const u8 = SYSTEM_PROMPT;
 

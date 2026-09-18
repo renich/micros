@@ -185,8 +185,8 @@ pub const AiDaemon = struct {
         if (!self.connectEndpoint()) return 0;
         defer adapter.close();
 
-        var req_buf: [8192]u8 = undefined;
-        var body_buf: [8192]u8 = undefined;
+        var req_buf: [16384]u8 = undefined;
+        var body_buf: [16384]u8 = undefined;
         const req_len = self.client.formatPromptRequest(&req_buf, &body_buf, prompt) catch |err| {
             serial.writeString("[aid] formatPromptRequest error: ");
             serial.writeString(@errorName(err));
