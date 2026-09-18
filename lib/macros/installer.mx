@@ -92,7 +92,7 @@ fn install_to_disk(target_idx) {
 }
 
 fn run_installer() {
-    print_banner();
+    draw_installer_banner();
     target = scan_drives();
     install_to_disk(target);
 }
