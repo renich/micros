@@ -21,6 +21,13 @@
       "spec_ref": "docs/technical/specs/self-hosting-macros.rst",
       "verification_cmd": "make check"
     },
+    "SPEC-TECH-NET-002": {
+      "last_checked": "2026-09-18T02:11:58.934Z",
+      "name": "Fast-Path TCP Server Substrate",
+      "passes": false,
+      "spec_ref": "docs/technical/specs/fast-path-tcp-server.rst",
+      "verification_cmd": "make check"
+    },
     "SPEC-TECH-SILICON-001": {
       "last_checked": "2026-09-17T22:43:23.538Z",
       "name": "Sovereign Cord-Cutting & Silicon Deployment",

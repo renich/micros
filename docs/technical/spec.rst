@@ -32,6 +32,7 @@ Technical Sub-Specifications
    specs/process-hierarchy
    specs/reactive-compositor
    specs/sovereign-cord-cutting
+   specs/fast-path-tcp-server
 
 Engineering & Coding Guides
 ===========================
