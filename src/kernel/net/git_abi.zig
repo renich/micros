@@ -364,8 +364,9 @@ pub fn nativeSysGitCatFile(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const cas_hash = repo.findFileCasHash(args[1].string) orelse return Value{ .string = "" };
 
     const get_fn = cas_get_fn orelse return Value{ .string = "" };
-    var scratch: [8192]u8 = undefined;
-    const n = get_fn(cas_hash, &scratch) catch return Value{ .string = "" };
+    const scratch = vm.allocator.alloc(u8, git_pack.MAX_GIT_OBJECT_SIZE) catch return Value{ .string = "" };
+    defer vm.allocator.free(scratch);
+    const n = get_fn(cas_hash, scratch) catch return Value{ .string = "" };
     const duped = try vm.allocator.dupe(u8, scratch[0..n]);
     return Value{ .string = duped };
 }

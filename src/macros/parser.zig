@@ -202,7 +202,7 @@ pub const Parser = struct {
         self.advance(); // consume '{'
         var stmts: std.ArrayList(*ast.Node) = .empty;
         errdefer {
-            for (stmts.items) |stmt| self.allocator.destroy(stmt);
+            for (stmts.items) |stmt| stmt.deinit(self.allocator);
             stmts.deinit(self.allocator);
         }
         while (self.current_token.token_type != .rbrace and self.current_token.token_type != .eof) {
@@ -226,6 +226,7 @@ pub const Parser = struct {
         self.advance();
         try self.match(.lparen);
         var params: std.ArrayList([]const u8) = .empty;
+        errdefer params.deinit(self.allocator);
         while (self.current_token.token_type == .identifier) {
             try params.append(self.allocator, self.current_token.lexeme);
             self.advance();
@@ -233,6 +234,7 @@ pub const Parser = struct {
         }
         try self.match(.rparen);
         const body = try self.parseBlock();
+        errdefer body.deinit(self.allocator);
         const node = try self.allocator.create(ast.Node);
         node.* = ast.Node{
             .function_decl = ast.FunctionDecl{
@@ -300,6 +302,10 @@ pub const Parser = struct {
     fn parseCall(self: *Parser, name: []const u8) ParseError!*ast.Node {
         self.advance(); // consume '('
         var args: std.ArrayList(*ast.Node) = .empty;
+        errdefer {
+            for (args.items) |arg| arg.deinit(self.allocator);
+            args.deinit(self.allocator);
+        }
         while (self.current_token.token_type != .rparen and self.current_token.token_type != .eof) {
             const arg = try self.parseExpression();
             try args.append(self.allocator, arg);
@@ -319,6 +325,10 @@ pub const Parser = struct {
     fn parseArrayLiteral(self: *Parser) ParseError!*ast.Node {
         self.advance();
         var elements: std.ArrayList(*ast.Node) = .empty;
+        errdefer {
+            for (elements.items) |el| el.deinit(self.allocator);
+            elements.deinit(self.allocator);
+        }
         if (self.current_token.token_type == .rbracket) {
             try self.match(.rbracket);
             const node = try self.allocator.create(ast.Node);

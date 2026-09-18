@@ -8,6 +8,7 @@ const Value = eval.Value;
 const vm_mod = @import("../../macros/vm.zig");
 const VM = vm_mod.VM;
 const chunk_mod = @import("chunk.zig");
+const cas_mod = @import("cas.zig");
 const manifest_mod = @import("manifest.zig");
 const WorkspaceManifest = manifest_mod.WorkspaceManifest;
 const WorkspaceEntry = manifest_mod.WorkspaceEntry;
@@ -164,8 +165,9 @@ pub fn nativeSysCatalogRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     if (!checkCallerAuthority(.storage_device, Rights.READ)) return Value{ .string = "" };
 
-    var scratch: [16384]u8 = undefined;
-    const n = global_catalog.readBlob(args[0].string, &scratch) catch return Value{ .string = "" };
+    const scratch = vm.allocator.alloc(u8, cas_mod.MAX_CHUNK_PAYLOAD_SIZE) catch return Value{ .string = "" };
+    defer vm.allocator.free(scratch);
+    const n = global_catalog.readBlob(args[0].string, scratch) catch return Value{ .string = "" };
     const duped = try vm.allocator.dupe(u8, scratch[0..n]);
     return Value{ .string = duped };
 }

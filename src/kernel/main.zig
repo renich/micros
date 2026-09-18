@@ -51,16 +51,13 @@ const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
 const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
-
 const COLOR_BG: u32 = 0x000000;
-
 const CAP_OBJ_FRAMEBUFFER: u32 = 1;
 const CAP_OBJ_IPC_RING: u32 = 2;
 const CAP_OBJ_BUNDLE: u32 = 3;
 const CAP_OBJ_NETWORK: u32 = 4;
 const CAP_OBJ_STORAGE: u32 = 5;
 const CAP_OBJ_ACTOR_CTRL: u32 = 6;
-
 const GENESIS_CSPACE_CAPACITY: usize = 64;
 const GENESIS_PAGE_TABLE_ROOT: u64 = 0;
 
@@ -482,9 +479,10 @@ fn spawnCasBridge(allocator: std.mem.Allocator, hex_hash: []const u8) anyerror!u
     const dev = if (global_block_device != null) &global_block_device.? else null;
     var raw_hash: [cas_chunk_mod.HASH_SIZE]u8 = undefined;
     try cas_chunk_mod.parseHexHash(hex_hash, &raw_hash);
-    var code_buf: [4096]u8 = undefined;
-    const len = try global_cas.?.getChunk(&raw_hash, &code_buf, dev);
-    return try spawnActorFromCode(allocator, "cas_restored", code_buf[0..len]);
+    const code_buf = try allocator.alloc(u8, cas_mod.MAX_CHUNK_PAYLOAD_SIZE);
+    defer allocator.free(code_buf);
+    const len = try global_cas.?.getChunk(&raw_hash, code_buf, dev);
+    return spawnActorFromCode(allocator, "cas_restored", code_buf[0..len]);
 }
 
 fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerror!bool {

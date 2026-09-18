@@ -602,18 +602,33 @@ pub const NetworkStack = struct {
         try self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, fin_buf[0..fin_len]);
     }
 
+    fn retransmitServerConn(self: *NetworkStack, conn: *tcp_mod.TcpServerConn, current_ticks: u64, my_ip: [4]u8) void {
+        if (conn.state != .established or conn.tx_sent == 0 or conn.unacked_seq == conn.local_seq) return;
+        if (current_ticks - conn.last_activity_ticks <= tcp_mod.TCP_RTO_TICKS) return;
+
+        conn.tx_sent = 0;
+        conn.local_seq = conn.unacked_seq;
+        conn.last_activity_ticks = current_ticks;
+        conn.retries +%= 1;
+        if (conn.retries > tcp_mod.TCP_MAX_RETRIES) {
+            conn.state = .closed;
+            return;
+        }
+
+        var pkt_buf: [1514]u8 = undefined;
+        while (conn.tx_sent < conn.tx_len) {
+            const pkt_len = conn.buildData(my_ip, &pkt_buf) catch break;
+            if (pkt_len == 0) break;
+            self.sendIpv4(conn.remote_ip, ipv4_mod.PROTO_TCP, pkt_buf[0..pkt_len]) catch break;
+        }
+    }
+
     pub fn pollTcpServer(self: *NetworkStack) void {
         _ = self.poll();
         const current_ticks = apic.total_ticks;
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
         for (&self.server_conns) |*conn| {
-            if (conn.state == .established and conn.tx_sent > 0 and conn.unacked_seq != conn.local_seq) {
-                if (current_ticks - conn.last_activity_ticks > tcp_mod.TCP_RTO_TICKS) {
-                    conn.tx_sent = 0;
-                    conn.last_activity_ticks = current_ticks;
-                    conn.retries +%= 1;
-                    if (conn.retries > tcp_mod.TCP_MAX_RETRIES) conn.state = .closed;
-                }
-            }
+            self.retransmitServerConn(conn, current_ticks, my_ip);
         }
     }
 
