@@ -39,6 +39,7 @@ pub const gopd = @import("userland/gopd/gopd.zig");
 pub const storaged = @import("userland/storaged/storaged.zig");
 pub const apic = @import("kernel/arch/x86_64/apic.zig");
 pub const smp = @import("kernel/sched/smp.zig");
+pub const p2pd = @import("userland/p2pd/p2p.zig");
 
 test "kernel module tests" {
     _ = @import("kernel/cap/capability.zig");
@@ -78,6 +79,7 @@ test "kernel module tests" {
     _ = @import("userland/gopd/hypertree.zig");
     _ = @import("userland/gopd/vector.zig");
     _ = @import("userland/storaged/storaged.zig");
+    _ = @import("userland/p2pd/p2p.zig");
     _ = @import("kernel/arch/x86_64/gdt.zig");
     _ = @import("kernel/arch/x86_64/syscall.zig");
     _ = @import("kernel/mem/vmm.zig");
