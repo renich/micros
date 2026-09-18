@@ -93,7 +93,7 @@ pub const Actor = struct {
 
     pub fn release(self: *Actor) void {
         if (self.ref_count.fetchSub(1, .release) == 1) {
-            asm volatile ("" ::: .{ .memory = true });
+            asm volatile ("lfence" ::: .{ .memory = true });
             if (self.source) |src| {
                 self.allocator.free(src);
                 self.source = null;

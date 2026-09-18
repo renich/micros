@@ -44,6 +44,12 @@ pub const DamageRect = extern struct {
         return self.min_x >= self.max_x or self.min_y >= self.max_y;
     }
 
+    pub fn intersects(self: DamageRect, other: DamageRect) bool {
+        if (self.isEmpty() or other.isEmpty()) return false;
+        return self.min_x < other.max_x and self.max_x > other.min_x and
+            self.min_y < other.max_y and self.max_y > other.min_y;
+    }
+
     pub fn width(self: DamageRect) u32 {
         if (self.isEmpty()) return 0;
         return self.max_x - self.min_x;
@@ -292,4 +298,18 @@ test "Canvas page-aligned allocation, drawing, and VRAM flush" {
     try std.testing.expectEqual(@as(u8, 0xAA), vram_raw[offset + 0]);
     try std.testing.expectEqual(@as(u8, 0xBB), vram_raw[offset + 1]);
     try std.testing.expectEqual(@as(u8, 0xCC), vram_raw[offset + 2]);
+}
+
+test "DamageRect.intersects overlapping and disjoint regions" {
+    const r1 = DamageRect{ .min_x = 10, .min_y = 10, .max_x = 50, .max_y = 50 };
+    const r2 = DamageRect{ .min_x = 40, .min_y = 40, .max_x = 80, .max_y = 80 };
+    const r3 = DamageRect{ .min_x = 60, .min_y = 60, .max_x = 90, .max_y = 90 };
+    const empty = DamageRect.empty();
+
+    try std.testing.expect(r1.intersects(r2));
+    try std.testing.expect(r2.intersects(r1));
+    try std.testing.expect(!r1.intersects(r3));
+    try std.testing.expect(!r3.intersects(r1));
+    try std.testing.expect(!r1.intersects(empty));
+    try std.testing.expect(!empty.intersects(r1));
 }

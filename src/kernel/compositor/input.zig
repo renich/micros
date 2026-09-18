@@ -108,6 +108,16 @@ pub const CursorBacking = struct {
                 self.restorePixel(canvas, c, r);
             }
         }
+        if (self.saved_x >= 0 and self.saved_y >= 0) {
+            canvas.damage.addRect(
+                @intCast(self.saved_x),
+                @intCast(self.saved_y),
+                CURSOR_WIDTH,
+                CURSOR_HEIGHT,
+                canvas.width,
+                canvas.height,
+            );
+        }
         self.is_saved = false;
     }
 
@@ -274,6 +284,11 @@ test "PointerState movement clamping and non-destructive cursor restoration" {
     try std.testing.expectEqual(@as(u32, 0x0012_3456), canvas.getPixel(50, 50));
     // New position drawn
     try std.testing.expectEqual(CURSOR_COLOR_FG, canvas.getPixel(60, 60));
+    // Damage rect encompasses restored old position and new position
+    try std.testing.expect(canvas.damage.min_x <= 50);
+    try std.testing.expect(canvas.damage.min_y <= 50);
+    try std.testing.expect(canvas.damage.max_x >= 60 + CURSOR_WIDTH);
+    try std.testing.expect(canvas.damage.max_y >= 60 + CURSOR_HEIGHT);
 }
 
 test "Focus arbitration and shell toggle hotkey" {

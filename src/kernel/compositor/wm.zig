@@ -219,14 +219,29 @@ pub const WindowManager = struct {
             self.needs_full_redraw = false;
         }
 
+        const active_damage = canvas.damage;
+        if (active_damage.isEmpty()) return;
+
         clearBackgroundDamage(canvas, self.desktop_w, self.desktop_h);
 
         var i: usize = 0;
         while (i < self.window_count) : (i += 1) {
             const win = self.windows[i].?;
             if (!win.visible) continue;
-            self.drawWindowFrame(canvas, win);
-            win.surface.blitToCanvas(canvas, null);
+
+            const wx: u32 = @intCast(@max(0, win.x));
+            const wy: u32 = @intCast(@max(0, win.y));
+            const win_rect = DamageRect{
+                .min_x = wx,
+                .min_y = wy,
+                .max_x = wx + win.w,
+                .max_y = wy + win.h,
+            };
+
+            if (win_rect.intersects(active_damage)) {
+                self.drawWindowFrame(canvas, win);
+                win.surface.blitToCanvas(canvas, active_damage);
+            }
         }
     }
 
