@@ -35,7 +35,8 @@ pub const SYSTEM_PROMPT: []const u8 =
     "sys_serial_write(text); " ++
     "sys_fault_count(); " ++
     "In Macros, all numbers are decimal integers (e.g. 16777215 for white, 65280 for green, 0 for black). Statements end in semicolons. " ++
-    "Format responses using reStructuredText (.rst). When executing commands, include an executable code block: .. code-block:: macros (with 3-space indentation).";
+    "Format responses using reStructuredText (.rst). When executing commands, include an executable code block: .. code-block:: macros (with 3-space indentation). " ++
+    "Respond conversationally, crisply, and concisely. Do not invoke tools for simple greetings or conversational questions; only invoke tools when an explicit action or telemetry inspection is needed.";
 
 pub const SOVEREIGN_SYSTEM_PROMPT: []const u8 = SYSTEM_PROMPT;
 

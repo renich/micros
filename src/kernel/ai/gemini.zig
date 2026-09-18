@@ -26,7 +26,7 @@ pub fn buildPath(buf: []u8, model: []const u8, api_key: []const u8) !usize {
 pub fn buildRequestBody(buf: []u8, system_prompt: []const u8, user_prompt: []const u8) !usize {
     const p1 = "{\"system_instruction\":{\"parts\":[{\"text\":\"";
     const p2 = "\"}]},\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"";
-    const p3 = "\"}]}],\"tools\":" ++ tools_mod.GEMINI_TOOLS_JSON ++ ",\"generationConfig\":{\"temperature\":1.0,\"topK\":40,\"maxOutputTokens\":8192,\"thinkingConfig\":{\"thinkingLevel\":\"high\"}}}";
+    const p3 = "\"}]}],\"tools\":" ++ tools_mod.GEMINI_TOOLS_JSON ++ ",\"generationConfig\":{\"temperature\":0.7,\"topK\":40,\"maxOutputTokens\":2048,\"thinkingConfig\":{\"thinkingLevel\":\"low\"}}}";
 
     var off: usize = 0;
     if (off + p1.len > buf.len) return error.BufferTooSmall;

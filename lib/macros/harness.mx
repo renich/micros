@@ -70,6 +70,37 @@ fn console_writeln(text, color) {
     console_newline();
 }
 
+fn console_print_wrapped(text, color) {
+    tlen = len(text);
+    i = 0;
+    line_start = 0;
+    while (i < tlen) {
+        ch = substr(text, i, i + 1);
+        if (ch == "\n") {
+            seg = substr(text, line_start, i);
+            if (len(seg) > 0) {
+                console_write(seg, color);
+            }
+            console_newline();
+            line_start = i + 1;
+        } else if (cur_x + 8 > 840) {
+            seg = substr(text, line_start, i);
+            if (len(seg) > 0) {
+                console_write(seg, color);
+            }
+            console_newline();
+            line_start = i;
+        }
+        i = i + 1;
+    }
+    if (line_start < tlen) {
+        seg = substr(text, line_start, tlen);
+        if (len(seg) > 0) {
+            console_writeln(seg, color);
+        }
+    }
+}
+
 fn render_inspector() {
     sys_fb_draw_rect(880, 58, 380, 730, CLR_BG);
     sys_fb_draw_string(880, 60, "Active Actors:  " + int_to_str(sys_actor_count()), CLR_TEXT, CLR_BG);
@@ -201,11 +232,14 @@ fn cmd_ai(prompt) {
         console_writeln("[ai] No response or auth failure (check API key / AI_PROVIDER).", CLR_WARN);
         return 0;
     }
-    console_writeln(resp, CLR_TEXT);
     tool_res = sys_ai_tool_call(resp);
     if (len(tool_res) > 0) {
         console_writeln("[ai:tool] Executed: " + tool_res, CLR_GREEN);
         render_inspector();
+        resp2 = sys_ai_prompt("Tool result: " + tool_res + ". Summarize for user.");
+        if (len(resp2) > 0) {
+            console_print_wrapped(resp2, CLR_TEXT);
+        }
         return 0;
     }
     code = extract_code(resp);
@@ -219,7 +253,7 @@ fn cmd_ai(prompt) {
             render_inspector();
         }
     } else {
-        console_writeln("[ai] No executable code block or tool call found.", CLR_WARN);
+        console_print_wrapped(resp, CLR_TEXT);
     }
     return 0;
 }

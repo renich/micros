@@ -1,6 +1,6 @@
 {
   "current_phase": 5,
   "journal_version": "0.2.0",
-  "objective": "Track D: Bit-for-Bit Self-Rebuilding Kernel Pipeline (Phase 4 Full Closure)",
+  "objective": "Fix Framebuffer Console in MicroShell & Stabilize Resident AI Tool Conversation Loop",
   "pjp_version": "0.10.1"
 }

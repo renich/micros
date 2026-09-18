@@ -241,6 +241,8 @@ fn initAiClient() void {
     }
 }
 
+var ai_unchunked_buf: [65536]u8 = undefined;
+
 fn readAiResponse(out_text: []u8) usize {
     const read_bytes = collectHttpStream(&ai_http_resp_buf);
     if (read_bytes == 0) return 0;
@@ -262,10 +264,20 @@ fn readAiResponse(out_text: []u8) usize {
     }
 
     if (resp.body_offset < read_bytes) {
-        if (global_ai_client.extractResponseText(ai_http_resp_buf[resp.body_offset..read_bytes], out_text)) |tlen| {
+        var body = ai_http_resp_buf[resp.body_offset..read_bytes];
+        if (resp.is_chunked) {
+            if (net_mod.http.decodeChunkedBody(body, &ai_unchunked_buf)) |dlen| {
+                body = ai_unchunked_buf[0..dlen];
+            } else |err| {
+                serial.writeString("[ai] Chunk decode warning: ");
+                serial.writeString(@errorName(err));
+                serial.writeString("\n");
+            }
+        }
+        if (global_ai_client.extractResponseText(body, out_text)) |tlen| {
             return tlen;
         }
-        logRawBody(read_bytes, resp.body_offset);
+        logRawBody(body);
     }
     return 0;
 }
@@ -289,14 +301,25 @@ fn collectHttpStream(dest: []u8) usize {
 
 fn checkHttpDone(data: []const u8) bool {
     const resp = net_mod.http.parseResponseHeaders(data, data.len) catch return false;
-    const clen = resp.content_length orelse return false;
-    return data.len >= resp.body_offset + clen;
+    if (resp.content_length) |clen| {
+        return data.len >= resp.body_offset + clen;
+    }
+    if (resp.is_chunked and data.len >= resp.body_offset + 5) {
+        const body = data[resp.body_offset..];
+        if (std.mem.endsWith(u8, body, "\r\n0\r\n\r\n") or
+            std.mem.endsWith(u8, body, "\n0\n\n") or
+            std.mem.eql(u8, body, "0\r\n\r\n"))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
-fn logRawBody(read_bytes: usize, body_offset: usize) void {
+fn logRawBody(body: []const u8) void {
     serial.writeString("[ai] Raw body preview:\n");
-    const print_len = @min(read_bytes - body_offset, 512);
-    serial.writeString(ai_http_resp_buf[body_offset .. body_offset + print_len]);
+    const print_len = @min(body.len, 512);
+    serial.writeString(body[0..print_len]);
     serial.writeString("\n");
 }
 

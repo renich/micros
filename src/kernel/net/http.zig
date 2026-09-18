@@ -142,6 +142,42 @@ fn parseHeaderLines(headers: []const u8, resp: *HttpResponse) !HttpResponse {
     return resp.*;
 }
 
+fn parseChunkSize(line: []const u8) !usize {
+    var s = line;
+    if (std.mem.indexOfScalar(u8, s, ';')) |ext| {
+        s = s[0..ext];
+    }
+    s = std.mem.trim(u8, s, " \t\r\n");
+    if (s.len == 0) return error.InvalidHeader;
+    return std.fmt.parseInt(usize, s, 16) catch error.InvalidHeader;
+}
+
+pub fn decodeChunkedBody(src: []const u8, dest: []u8) !usize {
+    var s_pos: usize = 0;
+    var d_pos: usize = 0;
+    while (s_pos < src.len) {
+        const delim = "\r\n";
+        const eol = std.mem.indexOfPos(u8, src, s_pos, delim) orelse return error.ResponseTruncated;
+        const chunk_size = try parseChunkSize(src[s_pos..eol]);
+        s_pos = eol + delim.len;
+        if (chunk_size == 0) return d_pos;
+
+        if (s_pos + chunk_size > src.len) return error.ResponseTruncated;
+        if (d_pos + chunk_size > dest.len) return error.BufferTooSmall;
+
+        @memcpy(dest[d_pos .. d_pos + chunk_size], src[s_pos .. s_pos + chunk_size]);
+        d_pos += chunk_size;
+        s_pos += chunk_size;
+
+        if (s_pos + 2 <= src.len and std.mem.eql(u8, src[s_pos .. s_pos + 2], "\r\n")) {
+            s_pos += 2;
+        } else if (s_pos < src.len and src[s_pos] == '\n') {
+            s_pos += 1;
+        }
+    }
+    return d_pos;
+}
+
 pub fn extractJsonCandidateText(json_payload: []const u8, out_buf: []u8) ?usize {
     const key_needle = "\"text\":";
     var search_pos: usize = 0;
@@ -219,8 +255,15 @@ test "http response header parsing" {
 }
 
 test "http response json candidate text extraction" {
-    const json = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\": \"Hello, Sovereign MicrOS!\\n\"}]}}]}";
+    const json = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\": \"Hello, MicrOS!\\n\"}]}}]}";
     var out: [128]u8 = undefined;
     const len = extractJsonCandidateText(json, &out).?;
-    try std.testing.expectEqualStrings("Hello, Sovereign MicrOS!\n", out[0..len]);
+    try std.testing.expectEqualStrings("Hello, MicrOS!\n", out[0..len]);
+}
+
+test "http chunked body decoding" {
+    const chunked = "6\r\nhello \r\n6\r\nworld!\r\n0\r\n\r\n";
+    var out: [64]u8 = undefined;
+    const len = try decodeChunkedBody(chunked, &out);
+    try std.testing.expectEqualStrings("hello world!", out[0..len]);
 }

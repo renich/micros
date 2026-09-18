@@ -78,3 +78,11 @@ Upon executing a tool call, the dispatcher produces a structured execution respo
 * **Gemini Response Format**:
   ``{"role":"user","parts":[{"functionResponse":{"name":"<tool>","response":{"status":"ok",...}}}]}``
 * **Turn Bound**: Multi-turn autonomous loops are capped at a maximum of 5 iterations with mandatory cooperative fiber yielding between network transactions.
+
+3.4 HTTP Chunked Decoding & Conversational Completion
+-----------------------------------------------------
+Upstream HTTPS endpoints (such as Google Gemini) frequently emit responses using HTTP/1.1 ``Transfer-Encoding: chunked``. The microkernel and userspace harness maintain the following invariants:
+
+* **In-Kernel Chunk Stripping**: ``decodeChunkedBody`` in ``src/kernel/net/http.zig`` validates hexadecimal chunk lengths, extracts chunk data sequentially into contiguous memory, and verifies terminal ``0\r\n\r\n`` indicators before JSON parsing.
+* **Zero Raw-JSON Leaks**: When an LLM response contains a ``functionCall``, the userspace harness never dumps raw protocol envelopes or cryptographic signatures to the display. It executes the tool, logs a clean status token (``[ai:tool] Executed: ...``), and feeds the tool result back into the cognitive loop.
+* **Bounded Framebuffer Text Wrapping**: ``console_print_wrapped`` in ``lib/macros/harness.mx`` parses embedded newlines and mathematically bounds text width (``x <= 840``), preventing multiline conversational text from overflowing across vertical UI partition borders.

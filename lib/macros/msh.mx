@@ -8,16 +8,56 @@ fn init_msh() {
     CLR_WARN = 15774780;
     CLR_CYAN = 3800806;
     CLR_BG = 0;
+    msh_cur_x = 20;
+    msh_cur_y = 36;
 }
 
 init_msh();
 
+fn msh_draw_header() {
+    sys_fb_draw_rect(0, 0, 1280, 24, 856343);
+    sys_fb_draw_string(20, 4, "uOS MicroShell (msh) - App 0", CLR_TEXT, 856343);
+    sys_fb_draw_string(1140, 4, "tty0/16550", CLR_MUTED, 856343);
+    sys_fb_draw_rect(0, 24, 1280, 1, 2238254);
+}
+
+fn msh_clear_screen() {
+    sys_fb_draw_rect(0, 25, 1280, 775, CLR_BG);
+    msh_cur_x = 20;
+    msh_cur_y = 36;
+}
+
+fn msh_newline() {
+    msh_cur_x = 20;
+    msh_cur_y = msh_cur_y + 16;
+    if (msh_cur_y > 770) {
+        msh_clear_screen();
+    }
+}
+
 fn console_write(str) {
     sys_serial_write(str);
+    slen = len(str);
+    i = 0;
+    while (i < slen) {
+        ch = substr(str, i, i + 1);
+        if (ch == "\r") {
+            msh_cur_x = 20;
+        } else if (ch == "\n") {
+            msh_newline();
+        } else {
+            if (msh_cur_x + 8 > 1260) {
+                msh_newline();
+            }
+            sys_fb_draw_string(msh_cur_x, msh_cur_y, ch, CLR_TEXT, CLR_BG);
+            msh_cur_x = msh_cur_x + 8;
+        }
+        i = i + 1;
+    }
 }
 
 fn console_writeln(str) {
-    sys_serial_write(str + "\r\n");
+    console_write(str + "\r\n");
 }
 
 fn is_prefix(str, pre) {
@@ -134,7 +174,8 @@ fn cmd_harness() {
         return 0;
     }
     sys_actor_wait(h_id);
-    console_writeln("");
+    msh_draw_header();
+    msh_clear_screen();
     console_writeln("Harness terminated. Returned to msh.");
     return 0;
 }
@@ -152,6 +193,8 @@ fn cmd_install() {
         return 0;
     }
     sys_actor_wait(inst_id);
+    msh_draw_header();
+    msh_clear_screen();
     console_writeln("Installer terminated. Returned to msh.");
     return 0;
 }
@@ -185,6 +228,7 @@ fn eval_command(cmd) {
     if (cmd == "actors") { return cmd_actors(); }
     if (cmd == "clear") {
         sys_serial_write(char_to_str(27) + "[2J" + char_to_str(27) + "[H");
+        msh_clear_screen();
         return 0;
     }
     if (cmd == "harness") { return cmd_harness(); }
@@ -214,10 +258,13 @@ fn poll_char() {
 
 fn draw_prompt() {
     sys_serial_write("msh> ");
+    sys_fb_draw_string(msh_cur_x, msh_cur_y, "msh> ", CLR_GREEN, CLR_BG);
+    msh_cur_x = msh_cur_x + 40;
 }
 
 fn handle_newline(buf) {
     sys_serial_write("\r\n");
+    msh_newline();
     if (len(buf) > 0) {
         if (buf == "exit") {
             console_writeln("Exiting MicroShell.");
@@ -235,6 +282,10 @@ fn handle_newline(buf) {
 fn handle_backspace(buf) {
     if (len(buf) > 0) {
         sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+        if (msh_cur_x >= 28) {
+            msh_cur_x = msh_cur_x - 8;
+            sys_fb_draw_rect(msh_cur_x, msh_cur_y, 8, 16, CLR_BG);
+        }
         return substr(buf, 0, len(buf) - 1);
     }
     return buf;
@@ -243,6 +294,11 @@ fn handle_backspace(buf) {
 fn handle_printable(buf, c) {
     ch_str = char_to_str(c);
     sys_serial_write(ch_str);
+    if (msh_cur_x + 8 > 1260) {
+        msh_newline();
+    }
+    sys_fb_draw_string(msh_cur_x, msh_cur_y, ch_str, CLR_TEXT, CLR_BG);
+    msh_cur_x = msh_cur_x + 8;
     return buf + ch_str;
 }
 
@@ -283,6 +339,8 @@ fn msh_loop() {
 }
 
 fn msh_main() {
+    msh_draw_header();
+    msh_clear_screen();
     console_writeln("MicroShell (msh) v0.1.0-dev");
     console_writeln("Type 'help' for commands, 'harness' for visual studio.");
     console_writeln("");
