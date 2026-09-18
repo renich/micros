@@ -31,14 +31,14 @@ Milestones & Deliverables
    - **Blocked By**: M23b.
    - **Unblocks**: M25, Phase 7 (UI Engine).
 
-* **Milestone 25: Pure Microkernel Storage Decoupling (storaged)** [ACTIVE]
+* **Milestone 25: Pure Microkernel Storage Decoupling (storaged)** [COMPLETED]
    - **Storage Service Actor (storaged)**: Migrate PCIe NVMe 1.4, VirtIO-Blk, GPT partition parsing, FAT32 ESP handling, and BLAKE3 CAS into ``src/userland/storaged/storaged.zig``.
    - **DMA Pinning & Memory Validation**: Implement ``sys_dma_pin`` capability syscall validating physical page frames and building hardware PRP lists safely without kernel compromise.
    - **Hardware Controller Reset & Recovery**: Implement automatic hardware controller re-initialization (``CC.EN = 0`` -> ``CSTS.RDY == 0``) and in-flight request replay upon driver fault restart.
    - **Blocked By**: M23b, M24.
    - **Unblocks**: M26, Phase 8 (P2P CAS).
 
-* **Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation** [SCHEDULED]
+* **Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation** [ACTIVE]
    - **Architectural Purity Verification**: Formally audit Ring 0 microkernel core; verify zero device drivers, zero network stacks, zero filesystems, and zero floating-point operations in Ring 0 (< 2,000 LOC safety ceiling).
    - **Physical Bare-Metal Silicon Validation**: Deploy and validate live boot, SMP execution, and driver stability on physical x86_64 server hardware and workstations.
    - **Blocked By**: M24, M25.

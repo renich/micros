@@ -61,6 +61,7 @@ pub const AbiContext = struct {
     net_stack: ?*NetworkStack = null,
     frame_info_fn: ?*const fn (frame_idx: usize) ?u64 = null,
     irq_ack_fn: ?*const fn (irq: u8) void = null,
+    dma_pin_fn: ?*const fn (virt_addr: usize, len_bytes: usize) ?u64 = null,
 };
 
 pub const HarnessContext = AbiContext;
@@ -89,7 +90,7 @@ pub fn setContext(ctx: *AbiContext) void {
     net_abi.setNetworkContext(ctx.net_stack, checkCallerAuthority, getCallerActorId);
     git_abi.setCasContext(ctx.cas_put_fn, ctx.cas_get_fn);
     git_abi.setCallerAuth(checkCallerAuthority);
-    cap_abi.setCapAbiContext(checkCallerAuthority, ctx.frame_info_fn, ctx.irq_ack_fn);
+    cap_abi.setCapAbiContext(checkCallerAuthority, ctx.frame_info_fn, ctx.irq_ack_fn, ctx.dma_pin_fn);
 }
 
 pub fn clearContext() void {

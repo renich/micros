@@ -9,6 +9,13 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 25 (Pure Microkernel Storage Decoupling & DMA Pinning - SPEC-TECH-STORAGE-002)**:
+  - **Isolated Userland Storage Service Actor (storaged)**: Implemented freestanding ``StorageDaemon`` in ``src/userland/storaged/storaged.zig`` encapsulating block cache management, BLAKE3 Content-Addressed Storage, and block device access in userland.
+  - **Kernel DMA Buffer Pinning (sys_dma_pin)**: Implemented capability syscall in ``src/kernel/cap/cap_abi.zig`` validating caller-supplied virtual memory spans, verifying lower-half userland isolation, enforcing 4096-byte page and 512-byte sector alignment, and preventing hardware DMA over kernel page tables or code.
+  - **Fault Recovery & Hardware Reset Protocol**: Engineered controller reset sequence and state recovery transitions (``probing`` -> ``ready`` -> ``busy`` -> ``recovering``) ensuring safe in-flight transaction cleanup upon driver stalls.
+  - **Storage IPC Protocol & Ring Buffer Dispatch**: Implemented strongly typed command envelopes (``read_sector``, ``write_sector``, ``flush``, ``cas_store``, ``cas_load``, ``reset``) over lock-free SPSC IPC rings.
+  - **Live Bare-Metal & QEMU UEFI Boot Verification**: Verified ``[  ok  ] strd: Userland storage daemon active (CAS + VirtIO/NVMe)`` and interactive prompt under QEMU UEFI boot with 333/333 unit tests passing green and 100% specification traceability.
+
 - **Milestone 24 (Pure Microkernel Compositor & Input Decoupling - SPEC-TECH-COMPOSITOR-002)**:
   - **Isolated Userland Display Server Actor (gopd)**: Implemented freestanding ``GopDaemon`` in ``src/userland/gopd/gopd.zig`` managing direct UEFI GOP framebuffer surfaces, double buffering, presentation, and window manager coordination in userland.
   - **CSpace Capability-Gated Framebuffer Access**: Enforced ``CapType.framebuffer`` capability tokens with ``READ|WRITE`` permissions for mapped framebuffer spans, eliminating raw physical memory access from userland actors.

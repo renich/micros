@@ -42,6 +42,7 @@ Technical Sub-Specifications
    specs/hardware-ring3-syscall
    specs/smp-apic-preemption
    specs/pure-microkernel-compositor
+   specs/pure-microkernel-storage
 
 Engineering & Coding Guides
 ===========================

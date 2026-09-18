@@ -22,21 +22,25 @@ pub const PhysFrameInfo = extern struct {
 pub var caller_auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool = null;
 pub var frame_info_fn: ?*const fn (frame_idx: usize) ?u64 = null;
 pub var irq_ack_fn: ?*const fn (irq: u8) void = null;
+pub var dma_pin_fn: ?*const fn (virt_addr: usize, len_bytes: usize) ?u64 = null;
 
 pub fn setCapAbiContext(
     auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool,
     info_fn: ?*const fn (frame_idx: usize) ?u64,
     ack_fn: ?*const fn (irq: u8) void,
+    pin_fn: ?*const fn (virt_addr: usize, len_bytes: usize) ?u64,
 ) void {
     caller_auth_fn = auth_fn;
     frame_info_fn = info_fn;
     irq_ack_fn = ack_fn;
+    dma_pin_fn = pin_fn;
 }
 
 pub fn clearCapAbiContext() void {
     caller_auth_fn = null;
     frame_info_fn = null;
     irq_ack_fn = null;
+    dma_pin_fn = null;
 }
 
 fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
@@ -81,19 +85,51 @@ pub fn nativeSysIrqAck(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = true };
 }
 
+pub fn nativeSysDmaPin(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len != 2 or args[0] != .integer or args[1] != .integer) return error.InvalidArgs;
+
+    const has_storage = checkCallerAuthority(.storage_device, Rights.WRITE);
+    const has_net = checkCallerAuthority(.network_device, Rights.WRITE);
+    if (!has_storage and !has_net) return Value{ .integer = -1 };
+
+    const virt_val = args[0].integer;
+    const len_val = args[1].integer;
+    if (virt_val < 0 or len_val <= 0) return Value{ .integer = -1 };
+
+    const virt_addr: usize = @intCast(virt_val);
+    const len_bytes: usize = @intCast(len_val);
+    const USERLAND_MAX: usize = 0x0000_7FFF_FFFF_FFFF;
+    if (virt_addr >= USERLAND_MAX or len_bytes > USERLAND_MAX - virt_addr) {
+        return Value{ .integer = -1 };
+    }
+    if (virt_addr % 4096 != 0 or len_bytes % 512 != 0) {
+        return Value{ .integer = -1 };
+    }
+
+    if (dma_pin_fn) |pin_fn| {
+        const addr = pin_fn(virt_addr, len_bytes) orelse return Value{ .integer = -1 };
+        return Value{ .integer = @as(i64, @bitCast(addr)) };
+    }
+
+    const default_paddr = @as(u64, @intCast(virt_addr));
+    return Value{ .integer = @as(i64, @bitCast(default_paddr)) };
+}
+
 pub fn registerCapSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_frame_info", Value{ .native = nativeSysFrameInfo });
     try vm.globals.put("sys_irq_ack", Value{ .native = nativeSysIrqAck });
+    try vm.globals.put("sys_dma_pin", Value{ .native = nativeSysDmaPin });
 }
 
-test "cap_abi: unauthorized caller rejected for frame_info and irq_ack" {
+test "cap_abi: unauthorized caller rejected for frame_info, irq_ack, and dma_pin" {
     const authReject = struct {
         fn check(_: CapType, _: u16) bool {
             return false;
         }
     }.check;
 
-    setCapAbiContext(authReject, null, null);
+    setCapAbiContext(authReject, null, null, null);
     defer clearCapAbiContext();
 
     var args = [_]Value{Value{ .integer = 5 }};
@@ -102,9 +138,13 @@ test "cap_abi: unauthorized caller rejected for frame_info and irq_ack" {
 
     const irq_val = try nativeSysIrqAck(@ptrFromInt(0x1000), &args);
     try std.testing.expect(!irq_val.boolean);
+
+    var pin_args = [_]Value{ Value{ .integer = 0x1000 }, Value{ .integer = 512 } };
+    const pin_val = try nativeSysDmaPin(@ptrFromInt(0x1000), &pin_args);
+    try std.testing.expectEqual(@as(i64, -1), pin_val.integer);
 }
 
-test "cap_abi: authorized caller resolves physical address and acks irq" {
+test "cap_abi: authorized caller resolves physical address, acks irq, and pins dma" {
     const authAllow = struct {
         fn check(_: CapType, _: u16) bool {
             return true;
@@ -126,7 +166,14 @@ test "cap_abi: authorized caller resolves physical address and acks irq" {
     };
     mockAck.target = &acked_irq;
 
-    setCapAbiContext(authAllow, mockFrame, mockAck.ack);
+    const mockPin = struct {
+        fn pin(vaddr: usize, len: usize) ?u64 {
+            _ = len;
+            return @as(u64, @intCast(vaddr)) + 0x200000;
+        }
+    }.pin;
+
+    setCapAbiContext(authAllow, mockFrame, mockAck.ack, mockPin);
     defer clearCapAbiContext();
 
     var frame_args = [_]Value{Value{ .integer = 10 }};
@@ -137,4 +184,13 @@ test "cap_abi: authorized caller resolves physical address and acks irq" {
     const irq_val = try nativeSysIrqAck(@ptrFromInt(0x1000), &irq_args);
     try std.testing.expect(irq_val.boolean);
     try std.testing.expectEqual(@as(?u8, 11), acked_irq);
+
+    var pin_args = [_]Value{ Value{ .integer = 0x4000 }, Value{ .integer = 1024 } };
+    const pin_val = try nativeSysDmaPin(@ptrFromInt(0x1000), &pin_args);
+    try std.testing.expectEqual(@as(i64, 0x4000 + 0x200000), pin_val.integer);
+
+    // Unaligned or kernel-boundary addresses rejected
+    var bad_align = [_]Value{ Value{ .integer = 0x4001 }, Value{ .integer = 1024 } };
+    const bad_val = try nativeSysDmaPin(@ptrFromInt(0x1000), &bad_align);
+    try std.testing.expectEqual(@as(i64, -1), bad_val.integer);
 }

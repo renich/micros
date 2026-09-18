@@ -36,6 +36,7 @@ pub const compositor = @import("kernel/compositor.zig");
 pub const netd = @import("userland/netd/netd.zig");
 pub const aid = @import("userland/aid/aid.zig");
 pub const gopd = @import("userland/gopd/gopd.zig");
+pub const storaged = @import("userland/storaged/storaged.zig");
 pub const apic = @import("kernel/arch/x86_64/apic.zig");
 pub const smp = @import("kernel/sched/smp.zig");
 
@@ -74,6 +75,7 @@ test "kernel module tests" {
     _ = @import("userland/netd/netd.zig");
     _ = @import("userland/aid/aid.zig");
     _ = @import("userland/gopd/gopd.zig");
+    _ = @import("userland/storaged/storaged.zig");
     _ = @import("kernel/arch/x86_64/gdt.zig");
     _ = @import("kernel/arch/x86_64/syscall.zig");
     _ = @import("kernel/mem/vmm.zig");

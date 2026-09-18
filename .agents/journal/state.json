@@ -1,6 +1,6 @@
 {
   "current_phase": 5,
   "journal_version": "0.2.0",
-  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 25: Pure Microkernel Storage Decoupling (storaged)",
+  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation",
   "pjp_version": "0.10.1"
 }

@@ -76,6 +76,13 @@
       "passes": true,
       "spec_ref": "docs/technical/specs/sovereign-cord-cutting.rst",
       "verification_cmd": "make check"
+    },
+    "SPEC-TECH-STORAGE-002": {
+      "last_checked": "2026-09-18T08:28:19.160Z",
+      "name": "Pure Microkernel Storage Decoupling & DMA Pinning (storaged)",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/pure-microkernel-storage.rst",
+      "verification_cmd": "make check"
     }
   },
   "version": "0.3.0"

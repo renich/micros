@@ -2,7 +2,7 @@ Milestone 25: Pure Microkernel Storage Decoupling (storaged)
 =============================================================
 
 :Objective: Migrate PCIe NVMe 1.4 controller drivers, VirtIO-Blk split-virtqueues, GPT partition parsers, FAT32 ESP filesystem handlers, and the BLAKE3 CAS engine out of Ring 0 microkernel memory into an isolated userland storage daemon (``storaged``), enforcing secure DMA buffer pinning and fault recovery.
-:Status: Scheduled
+:Status: Completed
 :Specification: SPEC-TECH-STORAGE-002
 :Traced Stories: [US-REN-004], [US-REN-006], [US-REN-008], [US-GEM-001], [US-GEM-004], [US-GEM-010]
 

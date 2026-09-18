@@ -42,6 +42,7 @@ const ai_mod = @import("ai.zig");
 const netd_mod = @import("../userland/netd/netd.zig");
 const aid_mod = @import("../userland/aid/aid.zig");
 const gopd_mod = @import("../userland/gopd/gopd.zig");
+const storaged_mod = @import("../userland/storaged/storaged.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
@@ -73,6 +74,7 @@ var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
 var global_netd: ?netd_mod.NetDaemon = null;
 var global_aid: ?aid_mod.AiDaemon = null;
 var global_gopd: ?gopd_mod.GopDaemon = null;
+var global_storaged: ?storaged_mod.StorageDaemon = null;
 var global_ai_req_ring = ipc_mod.SpscRingBuffer.init();
 var global_ai_resp_ring = ipc_mod.SpscRingBuffer.init();
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
@@ -165,6 +167,13 @@ fn frameInfoBridge(frame_idx: usize) ?u64 {
 
 fn irqAckBridge(irq: u8) void {
     _ = irq;
+}
+
+fn dmaPinBridge(virt_addr: usize, len_bytes: usize) ?u64 {
+    const USERLAND_MAX: usize = 0x0000_7FFF_FFFF_FFFF;
+    if (virt_addr >= USERLAND_MAX or len_bytes > USERLAND_MAX - virt_addr) return null;
+    if (virt_addr % 4096 != 0 or len_bytes % 512 != 0) return null;
+    return @as(u64, @intCast(virt_addr));
 }
 
 fn initUserlandServices(allocator: std.mem.Allocator) void {
@@ -475,15 +484,39 @@ fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
     return true;
 }
 
-fn initStorageEngines(allocator: std.mem.Allocator) void {
+fn initStorageDaemon(
+    allocator: std.mem.Allocator,
+    dev: ?*block_mod.BlockDevice,
+) ?storaged_mod.StorageDaemon {
+    const storage_cap = cap_mod.Capability{
+        .cap_type = .storage_device,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
+        .object_id = CAP_OBJ_STORAGE,
+        .data_addr = if (dev != null) @intFromPtr(dev.?) else 0,
+        .data_size = if (dev != null) @sizeOf(block_mod.BlockDevice) else 0,
+    };
+    const irq_cap = cap_mod.Capability{
+        .cap_type = .irq_endpoint,
+        .rights = cap_mod.Rights.WRITE,
+        .object_id = 14,
+        .data_addr = 0,
+        .data_size = 0,
+    };
+    return storaged_mod.StorageDaemon.init(allocator, dev, storage_cap, irq_cap) catch |err| {
+        serial.writeString("[kernel] StorageDaemon init failed: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        return null;
+    };
+}
+
+fn initFallbackCas(allocator: std.mem.Allocator, dev: ?*block_mod.BlockDevice) void {
     global_block_cache = block_cache_mod.BlockCache.init(allocator) catch |err| {
         serial.writeString("[kernel] Block cache init failed: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");
         return;
     };
-
-    const dev = if (global_block_device != null) &global_block_device.? else null;
     const total_secs = if (dev != null) dev.?.total_sectors else 0;
     global_cas = cas_mod.CasEngine.init(
         &global_block_cache.?,
@@ -495,11 +528,28 @@ fn initStorageEngines(allocator: std.mem.Allocator) void {
         serial.writeString("\n");
         return;
     };
-
     global_rebuild = rebuild_mod.RebuildEngine.init(&global_cas.?, null, null);
     abi_mod.setRebuildEngine(&global_rebuild.?);
-
     serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
+}
+
+fn initStorageEngines(allocator: std.mem.Allocator) void {
+    const dev = if (global_block_device != null) &global_block_device.? else null;
+    global_storaged = initStorageDaemon(allocator, dev);
+
+    if (global_storaged) |*strd| {
+        global_block_cache = if (strd.block_cache) |c| c.* else null;
+        global_cas = if (strd.cas_engine) |c| c.* else null;
+        if (global_cas) |*cas| {
+            global_rebuild = rebuild_mod.RebuildEngine.init(cas, null, null);
+            abi_mod.setRebuildEngine(&global_rebuild.?);
+        }
+        serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
+        serial.writeStatusOk("strd", "Userland storage daemon active (CAS + VirtIO/NVMe)");
+        return;
+    }
+
+    initFallbackCas(allocator, dev);
 }
 
 const NvmeDmaPages = struct {
@@ -783,6 +833,7 @@ fn createAbiContext(genesis: *actor_mod.Actor, ipc_ring: *ipc_mod.RingBuffer) ab
         .net_stack = if (global_netd != null) global_netd.?.stack else null,
         .frame_info_fn = frameInfoBridge,
         .irq_ack_fn = irqAckBridge,
+        .dma_pin_fn = dmaPinBridge,
     };
 }
 
