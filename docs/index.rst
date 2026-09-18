@@ -12,11 +12,17 @@ Welcome to the sovereign documentation repository for MicrOS (µOS) and the Macr
    technical/spec
    micros-story
    micros_genesis_plan
+   project/roadmap
    project/roadmaps/phase-0-userspace-sandbox
    project/roadmaps/phase-1-bare-metal-substrate
    project/roadmaps/phase-2-language-factory
    project/roadmaps/phase-3-subsystems-compositor
    project/roadmaps/phase-4-sovereign-cord-cutting
+   project/roadmaps/phase-5-ecosystem-decoupling
+   project/roadmaps/phase-6-microkernel-preemption-smp
+   project/roadmaps/phase-7-declarative-hypermedia-ui
+   project/roadmaps/phase-8-p2p-federation-cas
+   project/roadmaps/phase-9-self-hosting-silicon
    project/roadmaps/milestone-8-sovereign-substrate
    project/roadmaps/milestone-9-sovereign-harness
    project/roadmaps/milestone-10-gemini-orchestrator
@@ -29,6 +35,16 @@ Welcome to the sovereign documentation repository for MicrOS (µOS) and the Macr
    project/roadmaps/milestone-16-reactive-compositor
    project/roadmaps/milestone-17-language-self-hosting
    project/roadmaps/milestone-18-sovereign-cord-cutting
+   project/roadmaps/milestone-18b-fast-path-tcp-server
+   project/roadmaps/milestone-19-git-smart-http
+   project/roadmaps/milestone-20-sovereign-workspace-catalog
+   project/roadmaps/milestone-21-content-addressed-modules
+   project/roadmaps/milestone-22-microkernel-network-decoupling
+   project/roadmaps/milestone-23a-hardware-ring3-syscall
+   project/roadmaps/milestone-23b-apic-timer-preemption-smp
+   project/roadmaps/milestone-24-compositor-input-decoupling
+   project/roadmaps/milestone-25-storage-decoupling
+   project/roadmaps/milestone-26-microkernel-minimality-audit
    project/audits/2026-09-17-full-documentation-audit
 
 Support & Donations

@@ -10,6 +10,21 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 22 (Pure Microkernel Network & AI Decoupling - SPEC-TECH-NET-004)**:
+  - **Lock-Free Page-Aligned SPSC Ring Buffer IPC**: Implemented ``SpscRingBuffer`` in ``src/kernel/ipc/ring.zig`` with 4096-byte page alignment (``align(4096)``), 64-byte cacheline separation, and acquire/release memory fences for high-throughput zero-copy streaming between kernel and userland service actors.
+  - **Hardware Capability Primitives & W^X Enforcement**: Added ``sys_frame_info`` in ``src/kernel/cap/cap_abi.zig`` providing physical DMA frame mapping under strict capability validation, and ``sys_irq_ack`` for safe interrupt line acknowledgment without ambient authority.
+  - **Isolated Userland Network Daemon (netd)**: Implemented ``NetDaemon`` in ``src/userland/netd/netd.zig``, managing VirtIO-Net 1.0 device rings, ARP cache, IPv4 addressing, DHCP negotiation, and TCP connection state machines in Ring 3.
+  - **Isolated Userland AI Daemon (aid)**: Implemented ``AiDaemon`` in ``src/userland/aid/aid.zig``, encapsulating freestanding TLS 1.3 key exchange, symmetric ciphersuites, HTTP/1.1 REST client framing, and LLM prompt serialization in userspace.
+  - **Ring 0 Kernel De-bloat**: Excised all monolithic in-kernel networking, DHCP, DNS, TCP, TLS, and HTTP code from ``src/kernel/main.zig``, reducing kernel line count from 997 to 840 lines (strictly complying with the 1,000-line Sovereign Commandment ceiling).
+  - **Live Bare-Metal Verification**: Added colocated unit tests across ``src/userland/netd/``, ``src/userland/aid/``, and ``src/kernel/cap/`` with 308/308 passing tests, and verified live bare-metal UEFI boot in QEMU with flawless device discovery.
+
+- **Milestone 21 (Native Content-Addressed & Workspace Module System - SPEC-TECH-LANG-003)**:
+  - **Module Syntax & Bytecode Opcodes**: Implemented ``import`` statements, ``import`` expressions, and ``export`` declarations across AST, lexer, and parser in ``src/macros/compiler.zig`` and ``lib/macros/``, introducing ``op_import`` and ``op_export`` bytecode opcodes in ``src/macros/chunk.zig``.
+  - **Dual-Mode Module Resolver**: Implemented ``ModuleResolver`` in ``src/macros/module.zig`` supporting direct Content-Addressed Storage hashes (``import "b3/<hash>"``) and semantic Workspace Catalog paths (``import "math.mx"``) with Genesis Bundle fallback.
+  - **Deterministic Scope Encapsulation**: Packaged module exports into sealed, immutable dictionary objects, eliminating global namespace pollution and supporting property access (``m.property``) and dynamic function invocation (``m.calculate()``).
+  - **Bounded Cycle Containment & Deduplication**: Engineered module lifecycle state machine (``compiling``, ``ready``) to detect and halt circular dependency recursion deterministically, with an instance deduplication cache by BLAKE3 hash.
+  - **Genesis Bundle & Stage 1 Synchronization**: Updated pure Macros self-hosting compiler in ``lib/macros/`` and updated ``src/kernel/genesis.mcb`` with 301/301 unit tests passing green.
+
 - **Milestone 20 (Sovereign Catalog Broker & Semantic Workspace Substrate - SPEC-TECH-FS-001)**:
   - **Zero-POSIX Merkle Workspace Manifests**: Implemented ``src/kernel/storage/manifest.zig`` with 128-byte fixed-size ``WorkspaceEntry`` records, single-pass path sanitization (rejecting ``..``, ``\``, ``//``, and control chars), strict lexicographical sorting, $O(\log N)$ binary search, and alignment-safe serialization into ``ChunkType.workspace_manifest`` (type 6) chunks.
   - **Sovereign Catalog Broker & OCC Commit Protocol**: Implemented ``src/kernel/storage/catalog_abi.zig`` managing workspace staging states, persisting file content as raw BLAKE3 chunks in CAS, advancing manifest roots monotonically via Optimistic Concurrency Control, and preventing multi-actor split-brain corruption without blocking filesystem locks.

@@ -1,0 +1,110 @@
+direction: down
+
+classes: {
+  complete: {
+    style: {
+      fill: "#e6f4ea"
+      stroke: "#137333"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  active: {
+    style: {
+      fill: "#e8f0fe"
+      stroke: "#1a73e8"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  future: {
+    style: {
+      fill: "#f8f9fa"
+      stroke: "#5f6368"
+      stroke-width: 1
+      stroke-dash: 3
+      border-radius: 6
+    }
+  }
+}
+
+p_foundations: "Phases 0-5: Proven Foundations (Complete)" {
+  style: {
+    fill: "#f1f3f4"
+    stroke: "#80868b"
+    stroke-width: 2
+  }
+
+  p0: "Phase 0: Direct-Syscall Sandbox\n(micros-init, msh, UKI)" { class: complete }
+  p1: "Phase 1: Bare-Metal Substrate\n(UEFI boot.efi, PMM, VMM, IDT)" { class: complete }
+  p2: "Phase 2: Language & Runtime\n(Macros, Immix GC, Stage 1)" { class: complete }
+  p3: "Phase 3: Subsystems & Windowing\n(VirtIO, Compositor, Hierarchy)" { class: complete }
+  p4: "Phase 4: Sovereign Cord-Cutting\n(PE Synthesizer, Dual-Slot A/B)" { class: complete }
+  p5: "Phase 5: Decoupling & Ecosystem\n(Fast TCP, Git HTTP, netd, aid)" { class: complete }
+
+  p0 -> p1 -> p2 -> p3 -> p4 -> p5
+}
+
+p6: "Phase 6: Pure Microkernel & Preemptive Multiprocessing (Active Target)" {
+  style: {
+    fill: "#e8f0fe"
+    stroke: "#1a73e8"
+    stroke-width: 2
+  }
+
+  m23a: "M23a: Hardware Ring 3 & Syscall Substrate\n(TSS, RSP0, LSTAR, CR3 Isolation)" { class: active }
+  m23b: "M23b: APIC Timer Preemption & SMP\n(1000Hz Tick, SIPI Multicore, MPSC Rings)" { class: active }
+  m24: "M24: Compositor & Input Decoupling\n(gopd, PS/2 Mouse, xHCI HID Pointer)" { class: active }
+  m25: "M25: Microkernel Storage Decoupling\n(storaged: NVMe/VirtIO, sys_dma_pin, CAS)" { class: active }
+  m26: "M26: Minimality Audit & Silicon Validation\n(<2000 LOC Ring 0, Hardware Test)" { class: active }
+
+  m23a -> m23b -> m24 -> m25 -> m26
+}
+
+p7: "Phase 7: Declarative Hypermedia UI & Vector Graphics" {
+  style: {
+    fill: "#fef7e0"
+    stroke: "#b06000"
+    stroke-width: 1
+  }
+
+  m27: "M27: Binary Hypermedia Streaming\n(uHTML, HyperTree IPC, Signals)" { class: future }
+  m28: "M28: Cached SDF Vector Rasterizer\n(Glyph Atlas, Bezier Curves, AABB)" { class: future }
+  m29: "M29: Sovereign Desktop Environment\n(desk.mx Multi-Window Glass Desktop)" { class: future }
+
+  m27 -> m28 -> m29
+}
+
+p8: "Phase 8: Autonomous P2P Federation & Distributed CAS" {
+  style: {
+    fill: "#f3e8fd"
+    stroke: "#7627bb"
+    stroke-width: 1
+  }
+
+  m30: "M30: Sovereign P2P Wire Protocol\n(mTLS 1.3 / Noise Handshake)" { class: future }
+  m31: "M31: Distributed CAS & Merkle Sync\n(P2P BLAKE3 Chunks, CRDT/OCC Sync)" { class: future }
+  m32: "M32: Cryptographic Capability Delegation\n(Remote Actor Compute, Attenuation)" { class: future }
+
+  m30 -> m31 -> m32
+}
+
+p9: "Phase 9: In-System Self-Hosting & Silicon Independence" {
+  style: {
+    fill: "#e6f4ea"
+    stroke: "#137333"
+    stroke-width: 1
+  }
+
+  m33: "M33: Pure In-System Native Compiler\n(Direct x86_64 Codegen, W^X)" { class: future }
+  m34: "M34: Sovereign Package Federation\n(Ed25519 Signatures, CAS Registry)" { class: future }
+  m35: "M35: Enterprise Bare-Metal Expansion\n(e1000/Realtek, Heterogeneous Silicon)" { class: future }
+
+  m33 -> m34 -> m35
+}
+
+p_foundations.p5 -> p6.m23a
+p6.m26 -> p7.m27: "Unblocks UI Engine"
+p6.m26 -> p8.m30: "Unblocks P2P Networking"
+p8.m31 -> p9.m33: "Unblocks Distributed Compiler"
+p8.m32 -> p9.m34: "Unblocks Capability Distribution"

@@ -1,6 +1,6 @@
 {
   "current_phase": 5,
   "journal_version": "0.2.0",
-  "objective": "Milestone 21: Native Content-Addressed Module System (SPEC-TECH-LANG-003) & Milestone 22: Pure Microkernel Network Decoupling (SPEC-TECH-NET-004)",
+  "objective": "Phase 6: Pure Microkernel Hardware Excision & Preemptive Multiprocessing (SMP) - Milestone 23a: Hardware Ring 3 & Syscall Substrate",
   "pjp_version": "0.10.1"
 }
