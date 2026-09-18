@@ -81,10 +81,13 @@ pub fn checkCallerAuthority(cap_type: @import("cap/capability.zig").CapType, rig
     return actor.hasCap(cap_type, rights);
 }
 
+pub fn getCallerActor() ?*Actor {
+    const ctx = active_ctx orelse return null;
+    return if (ctx.current_actor_fn) |get_act| (get_act() orelse ctx.supervisor) else ctx.supervisor;
+}
+
 pub fn getCallerActorId() u32 {
-    const ctx = active_ctx orelse return 0;
-    const get_actor = ctx.current_actor_fn orelse return ctx.supervisor.id;
-    const actor = get_actor() orelse return ctx.supervisor.id;
+    const actor = getCallerActor() orelse return 0;
     return actor.id;
 }
 
@@ -228,9 +231,21 @@ fn nativeSysFbDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysIpcRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
-    _ = args;
-    const ctx = active_ctx orelse return Value{ .integer = -1 };
-    const ring = ctx.ipc_ring orelse return Value{ .integer = -1 };
+    const caller_id = getCallerActorId();
+    const actor = getCallerActor() orelse return error.NoContext;
+    var ring: *RingBuffer = undefined;
+    if (args.len >= 1 and args[0] == .integer) {
+        const handle = castToU32(args[0].integer) orelse return error.InvalidArgs;
+        const cap = actor.getCap(handle) orelse return error.InvalidCapability;
+        if (cap.cap_type != .ipc_ring or (cap.rights & cap_mod.Rights.READ) == 0) return error.PermissionDenied;
+        if (cap.data_addr == 0) return error.InvalidCapability;
+        ring = @ptrFromInt(cap.data_addr);
+    } else if (caller_id == 0) {
+        const ctx = active_ctx orelse return Value{ .integer = -1 };
+        ring = ctx.ipc_ring orelse return Value{ .integer = -1 };
+    } else {
+        return error.PermissionDenied;
+    }
     const frame = ring.pop() orelse return Value{ .integer = -1 };
 
     if (events_mod.fromMessageFrame(&frame)) |event| {
@@ -363,11 +378,6 @@ fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn nativeSysYield(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    if (active_ctx) |ctx| {
-        if (ctx.net_stack) |stack| {
-            stack.pollTcpServer();
-        }
-    }
     fiber_mod.yield();
     return Value{ .integer = 0 };
 }
@@ -472,9 +482,6 @@ fn nativeSysActorWait(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
             break;
         }
         actor.?.release();
-        if (ctx.net_stack) |stack| {
-            stack.pollTcpServer();
-        }
         fiber_mod.yield();
     }
     return Value{ .boolean = true };
@@ -892,4 +899,41 @@ test "decodeAnsiParam maps escape sequence characters to keycodes" {
     try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.HOME), decodeAnsiParam('H'));
     try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.END), decodeAnsiParam('F'));
     try std.testing.expectEqual(@as(?i64, null), decodeAnsiParam('Z'));
+}
+
+test "sys_ipc_recv rejects unauthorized non-genesis actors without capability" {
+    const allocator = std.testing.allocator;
+    var registry = actor_mod.ActorRegistry.init();
+    var genesis = try actor_mod.Actor.init(allocator, 0, "genesis", 16, 0);
+    defer genesis.deinit(allocator);
+    var child = try actor_mod.Actor.init(allocator, 1, "untrusted", 16, 0);
+    defer child.deinit(allocator);
+
+    var ring = try RingBuffer.init(allocator, 8);
+    defer ring.deinit(allocator);
+
+    var ctx = AbiContext{
+        .registry = &registry,
+        .supervisor = genesis,
+        .ipc_ring = ring,
+    };
+    setContext(&ctx);
+    defer clearContext();
+
+    var chunk = @import("../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    const CurrentActorHelper = struct {
+        var act: ?*Actor = null;
+        fn get() ?*Actor {
+            return act;
+        }
+    };
+    CurrentActorHelper.act = child;
+    ctx.current_actor_fn = CurrentActorHelper.get;
+
+    var no_args = [_]Value{};
+    try std.testing.expectError(error.PermissionDenied, nativeSysIpcRecv(&vm, &no_args));
 }

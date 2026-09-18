@@ -122,7 +122,7 @@ pub const Fiber = struct {
 };
 
 fn fiberTrampoline() callconv(.c) void {
-    if (current_scheduler) |sched| {
+    if (getCurrentScheduler()) |sched| {
         if (sched.current) |fib| {
             if (fib.entry) |entry_fn| {
                 entry_fn(fib.user_data);
@@ -135,7 +135,7 @@ fn fiberTrampoline() callconv(.c) void {
 }
 
 pub fn terminateCurrent() noreturn {
-    if (current_scheduler) |sched| {
+    if (getCurrentScheduler()) |sched| {
         if (sched.current) |fib| {
             fib.state = .terminated;
             switchContext(&fib.rsp, sched.main_rsp);
@@ -157,7 +157,28 @@ pub fn switchContext(from_rsp: *usize, to_rsp: usize) void {
     }
 }
 
-var current_scheduler: ?*Scheduler = null;
+pub const MAX_SMP_CORES: usize = 16;
+var smp_schedulers: [MAX_SMP_CORES]?*Scheduler = [_]?*Scheduler{null} ** MAX_SMP_CORES;
+pub var get_core_id_fn: ?*const fn () u32 = null;
+
+pub fn getCurrentScheduler() ?*Scheduler {
+    if (get_core_id_fn) |get_id| {
+        const id = get_id();
+        if (id < MAX_SMP_CORES) return smp_schedulers[id];
+    }
+    return smp_schedulers[0];
+}
+
+pub fn setCurrentScheduler(sched: ?*Scheduler) void {
+    if (get_core_id_fn) |get_id| {
+        const id = get_id();
+        if (id < MAX_SMP_CORES) {
+            smp_schedulers[id] = sched;
+            return;
+        }
+    }
+    smp_schedulers[0] = sched;
+}
 
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
@@ -262,8 +283,8 @@ pub const Scheduler = struct {
     }
 
     pub fn run(self: *Scheduler) void {
-        current_scheduler = self;
-        defer current_scheduler = null;
+        setCurrentScheduler(self);
+        defer setCurrentScheduler(null);
 
         while (true) {
             const states = self.checkFiberStates();
@@ -297,7 +318,7 @@ pub const Scheduler = struct {
 };
 
 pub fn unpark(id: usize) void {
-    if (current_scheduler) |sched| {
+    if (getCurrentScheduler()) |sched| {
         var cur = sched.head;
         while (cur) |fib| {
             if (fib.id == id and fib.state == .suspended) {
@@ -309,7 +330,7 @@ pub fn unpark(id: usize) void {
 }
 
 pub fn yield() void {
-    if (current_scheduler) |sched| {
+    if (getCurrentScheduler()) |sched| {
         sched.yield();
     }
 }
@@ -321,7 +342,7 @@ var test_counter: usize = 0;
 fn fiberTestTask(ctx: ?*anyopaque) void {
     _ = ctx;
     test_counter += 10;
-    if (current_scheduler) |s| {
+    if (getCurrentScheduler()) |s| {
         s.yield();
     }
     test_counter += 5;
@@ -337,4 +358,33 @@ test "Fiber scheduler cooperative execution" {
 
     sched.run();
     try testing.expectEqual(@as(usize, 30), test_counter);
+}
+
+test "Fiber scheduler per-core SMP routing" {
+    var sched0 = Scheduler.init(testing.allocator);
+    defer sched0.deinit();
+    var sched1 = Scheduler.init(testing.allocator);
+    defer sched1.deinit();
+
+    const CoreRouter = struct {
+        var active_core: u32 = 0;
+        fn get() u32 {
+            return active_core;
+        }
+    };
+    get_core_id_fn = CoreRouter.get;
+    defer get_core_id_fn = null;
+
+    CoreRouter.active_core = 0;
+    setCurrentScheduler(&sched0);
+    CoreRouter.active_core = 1;
+    setCurrentScheduler(&sched1);
+
+    CoreRouter.active_core = 0;
+    try testing.expectEqual(&sched0, getCurrentScheduler().?);
+    CoreRouter.active_core = 1;
+    try testing.expectEqual(&sched1, getCurrentScheduler().?);
+
+    setCurrentScheduler(null);
+    try testing.expect(getCurrentScheduler() == null);
 }

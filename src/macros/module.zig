@@ -188,26 +188,7 @@ pub const ModuleResolver = struct {
         try ch.writeChunk(self.allocator, @intFromEnum(chunk_mod.OpCode.return_op));
     }
 
-    fn compileAndExecute(self: *ModuleResolver, vm: *vm_mod.VM, hash: [HASH_SIZE]u8, source: []const u8) anyerror!Value {
-        const dict = try self.allocator.create(eval.Dict);
-        dict.* = eval.Dict{ .entries = &[_]eval.Dict.Entry{} };
-        try self.allocated_dicts.append(self.allocator, dict);
-
-        const ch = try self.allocator.create(Chunk);
-        ch.* = Chunk.init();
-        try self.dynamic_chunks.append(self.allocator, ch);
-
-        try self.entries.put(self.allocator, hash, .{
-            .state = .compiling,
-            .dict = dict,
-            .chunk = ch,
-        });
-
-        self.compileStatements(source, ch) catch |err| {
-            _ = self.entries.remove(hash);
-            return err;
-        };
-
+    fn executeModuleChunk(self: *ModuleResolver, vm: *vm_mod.VM, ch: *Chunk, dict: *eval.Dict, hash: [HASH_SIZE]u8) anyerror!Value {
         var exports_list: std.ArrayList(eval.Dict.Entry) = .empty;
         defer exports_list.deinit(self.allocator);
 
@@ -215,10 +196,7 @@ pub const ModuleResolver = struct {
         vm.current_exports = &exports_list;
         defer vm.current_exports = prev_exports;
 
-        vm.executeChunk(ch) catch |err| {
-            _ = self.entries.remove(hash);
-            return err;
-        };
+        try vm.executeChunk(ch);
 
         dict.entries = try exports_list.toOwnedSlice(self.allocator);
         try self.entries.put(self.allocator, hash, .{
@@ -228,6 +206,35 @@ pub const ModuleResolver = struct {
         });
 
         return Value{ .dict = dict };
+    }
+
+    fn compileAndExecute(self: *ModuleResolver, vm: *vm_mod.VM, hash: [HASH_SIZE]u8, source: []const u8) anyerror!Value {
+        const dict = try self.allocator.create(eval.Dict);
+        dict.* = eval.Dict{ .entries = &[_]eval.Dict.Entry{} };
+        try self.allocated_dicts.append(self.allocator, dict);
+        errdefer {
+            _ = self.allocated_dicts.pop();
+            self.allocator.destroy(dict);
+        }
+
+        const ch = try self.allocator.create(Chunk);
+        ch.* = Chunk.init();
+        try self.dynamic_chunks.append(self.allocator, ch);
+        errdefer {
+            _ = self.dynamic_chunks.pop();
+            ch.deinit(self.allocator);
+            self.allocator.destroy(ch);
+        }
+
+        try self.entries.put(self.allocator, hash, .{
+            .state = .compiling,
+            .dict = dict,
+            .chunk = ch,
+        });
+        errdefer _ = self.entries.remove(hash);
+
+        try self.compileStatements(source, ch);
+        return self.executeModuleChunk(vm, ch, dict, hash);
     }
 };
 
@@ -384,8 +391,10 @@ test "ModuleResolver failed compile does not poison cache" {
     const failed = if (resolver.importModule(&vm, "bad.mx")) |_| false else |_| true;
     try testing.expect(failed);
 
-    // Cache must NOT contain "bad.mx" with .compiling state
+    // Cache must NOT contain "bad.mx" with .compiling state and zero dicts/chunks leaked
     var hash: [HASH_SIZE]u8 = undefined;
     std.crypto.hash.Blake3.hash("bad.mx", &hash, .{});
     try testing.expect(!resolver.entries.contains(hash));
+    try testing.expectEqual(@as(usize, 0), resolver.allocated_dicts.items.len);
+    try testing.expectEqual(@as(usize, 0), resolver.dynamic_chunks.items.len);
 }

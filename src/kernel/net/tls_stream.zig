@@ -6,6 +6,7 @@ const std = @import("std");
 const stack_mod = @import("stack.zig");
 const serial = @import("../serial.zig");
 const io = @import("../arch/x86_64/io.zig");
+const fiber_mod = @import("../../macros/fiber.zig");
 
 const builtin = @import("builtin");
 const is_uefi = builtin.os.tag == .uefi;
@@ -154,6 +155,7 @@ fn waitForRx(adapter: *TcpStreamAdapter) std.Io.Reader.StreamError!void {
     while (adapter.stack.tcp_rx_len == 0 and iters < DRAIN_TIMEOUT_ITERS) : (iters += 1) {
         _ = adapter.stack.poll();
         io.ioWait();
+        if ((iters & 0x3F) == 0) fiber_mod.yield();
         if (isTcpEof(adapter)) break;
     }
     if (adapter.stack.tcp_rx_len == 0) {

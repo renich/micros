@@ -58,6 +58,7 @@ pub const VM = struct {
     module_resolver: ?*module_mod.ModuleResolver = null,
     current_exports: ?*std.ArrayList(eval.Dict.Entry) = null,
     gc_heap: ?*gc.Heap = null,
+    user_data: ?*anyopaque = null,
 
     pub fn initInPlace(self: *VM, allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !void {
         self.allocator = allocator;
@@ -75,6 +76,7 @@ pub const VM = struct {
         self.module_resolver = null;
         self.current_exports = null;
         self.gc_heap = null;
+        self.user_data = null;
         try builtins.registerBuiltins(self);
     }
 
@@ -967,21 +969,18 @@ test "vm bitwise and unary operators: and, or, xor, shl, shr, neg, not" {
     try chunk.writeChunk(std.testing.allocator, @intCast((c4 >> 8) & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intCast(c4 & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.shift_left));
-
     // 16 | 7 = 23
     const c7 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 7 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
     try chunk.writeChunk(std.testing.allocator, @intCast((c7 >> 8) & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intCast(c7 & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.bitwise_or));
-
     // 23 & 15 = 7
     const c15 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 15 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
     try chunk.writeChunk(std.testing.allocator, @intCast((c15 >> 8) & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intCast(c15 & 0xFF));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.bitwise_and));
-
     // negate: -7
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.negate));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));

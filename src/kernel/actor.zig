@@ -94,6 +94,12 @@ pub const Actor = struct {
     pub fn release(self: *Actor) void {
         if (self.ref_count.fetchSub(1, .release) == 1) {
             asm volatile ("lfence" ::: .{ .memory = true });
+            if (self.page_table_base != 0) {
+                if (ActorRegistry.page_table_destructor) |destroy_fn| {
+                    destroy_fn(self.page_table_base);
+                }
+                self.page_table_base = 0;
+            }
             if (self.source) |src| {
                 self.allocator.free(src);
                 self.source = null;
@@ -255,12 +261,6 @@ pub const ActorRegistry = struct {
         self.releaseLock(flags);
 
         actor.state = .terminated;
-        if (actor.page_table_base != 0) {
-            if (page_table_destructor) |destroy_fn| {
-                destroy_fn(actor.page_table_base);
-            }
-            actor.page_table_base = 0;
-        }
         if (actor_destructor) |destruct_fn| {
             destruct_fn(allocator, actor);
         }
@@ -417,4 +417,26 @@ test "Actor physical memory extent capability authorization" {
     try std.testing.expect(!actor.authorizesPhysicalExtent(0x21000, 8192, Rights.WRITE));
     // Integer overflow attempts: unauthorized
     try std.testing.expect(!actor.authorizesPhysicalExtent(std.math.maxInt(u64) - 100, 200, Rights.WRITE));
+}
+
+test "Actor release destroys page tables only on final refcount drop" {
+    const allocator = std.testing.allocator;
+    var destroyed_pt: u64 = 0;
+    const Destructor = struct {
+        var pt_ref: *u64 = undefined;
+        fn destroy(pt: u64) void {
+            pt_ref.* = pt;
+        }
+    };
+    Destructor.pt_ref = &destroyed_pt;
+    ActorRegistry.page_table_destructor = Destructor.destroy;
+    defer ActorRegistry.page_table_destructor = null;
+
+    var actor = try Actor.init(allocator, 10, "test_ref", 16, 0x5000);
+    _ = actor.ref_count.fetchAdd(1, .acquire);
+    actor.release();
+    try std.testing.expectEqual(@as(u64, 0), destroyed_pt);
+
+    actor.release();
+    try std.testing.expectEqual(@as(u64, 0x5000), destroyed_pt);
 }

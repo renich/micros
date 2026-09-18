@@ -3,6 +3,7 @@
 // Eradicates legacy POSIX PIDs, ambient authority, and untyped ASCII pipes.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const boot_info_mod = @import("boot_info.zig");
 const BootInfo = boot_info_mod.BootInfo;
 const serial = @import("serial.zig");
@@ -283,15 +284,31 @@ const ActorThreadContext = struct {
 
 fn onFiberContextSwitch(maybe_fib: ?*fiber_mod.Fiber) void {
     var act_id: u32 = 0;
+    var pt_base: u64 = 0;
     if (maybe_fib) |fib| {
         if (fib.entry == actorThread and fib.user_data != null) {
             const act_ctx: *ActorThreadContext = @ptrCast(@alignCast(fib.user_data.?));
             act_id = act_ctx.actor.id;
+            pt_base = act_ctx.actor.page_table_base;
         }
     }
     smp.global_topology.getCurrentCore().current_actor_id = act_id;
     idt.current_actor_id = act_id;
     syscall.setActorId(act_id);
+    if (!builtin.is_test) {
+        if (pt_base != 0) {
+            vmm.switchAddressSpace(pt_base);
+        } else if (vmm.kernel_pml4_phys != 0) {
+            vmm.switchAddressSpace(vmm.kernel_pml4_phys);
+        }
+    }
+}
+
+fn actorYieldCheck(vm: *vm_mod.VM) anyerror!void {
+    if (vm.user_data) |ud| {
+        const actor: *actor_mod.Actor = @ptrCast(@alignCast(ud));
+        if (actor.state == .terminated) return error.ActorTerminated;
+    }
 }
 
 fn actorThread(ctx: ?*anyopaque) void {
@@ -307,10 +324,11 @@ fn actorThread(ctx: ?*anyopaque) void {
         vm.deinit();
         act_ctx.allocator.destroy(vm);
         act_ctx.allocator.destroy(act_ctx);
+        actor.release();
     }
     actor.state = .running;
     vm.run(0) catch |err| {
-        actor.state = .faulted;
+        if (actor.state != .terminated) actor.state = .faulted;
         serial.writeString("[kernel] Spawned Actor crashed: ");
         serial.writeString(@errorName(err));
         if (err == vm_mod.InterpretError.RuntimeError and vm.last_missing_symbol != null) {
@@ -380,6 +398,8 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
     child_vm.gc_heap = heap;
 
     try abi_mod.registerSyscalls(child_vm);
+    child_vm.user_data = child;
+    child_vm.yield_hook = actorYieldCheck;
     const act_ctx = try allocator.create(ActorThreadContext);
     act_ctx.* = .{
         .allocator = allocator,
@@ -388,6 +408,7 @@ fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *
     };
     errdefer allocator.destroy(act_ctx);
     if (global_sched) |sched| {
+        _ = child.ref_count.fetchAdd(1, .acquire);
         const fib = try sched.spawn(actorThread, act_ctx);
         child.fiber_ctx = @ptrCast(fib);
     }
@@ -404,6 +425,7 @@ fn isVerifiedSystemScript(name: []const u8, source: []const u8) bool {
 }
 
 fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []const u8) !void {
+    if (!isVerifiedSystemScript(name, source)) return;
     if (global_fb) |*fb| {
         _ = try child.insertCap(.{
             .cap_type = .framebuffer,
@@ -413,7 +435,6 @@ fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []cons
             .data_size = @sizeOf(fb_mod.Framebuffer),
         });
     }
-    if (!isVerifiedSystemScript(name, source)) return;
     _ = try child.insertCap(.{ .cap_type = .actor_control, .rights = cap_mod.Rights.ALL, .object_id = CAP_OBJ_ACTOR_CTRL, .data_addr = 0, .data_size = 0 });
     _ = try child.insertCap(.{ .cap_type = .storage_device, .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE, .object_id = CAP_OBJ_STORAGE, .data_addr = 0, .data_size = 0 });
     _ = try child.insertCap(.{ .cap_type = .network_device, .rights = cap_mod.Rights.ALL, .object_id = CAP_OBJ_NETWORK, .data_addr = 0, .data_size = 0 });
@@ -532,10 +553,7 @@ fn initBlkDevice(blk_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool {
     return true;
 }
 
-fn initStorageDaemon(
-    allocator: std.mem.Allocator,
-    dev: ?*block_mod.BlockDevice,
-) ?storaged_mod.StorageDaemon {
+fn initStorageDaemon(allocator: std.mem.Allocator, dev: ?*block_mod.BlockDevice) ?storaged_mod.StorageDaemon {
     const storage_cap = cap_mod.Capability{
         .cap_type = .storage_device,
         .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
@@ -641,9 +659,7 @@ fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool 
     };
     global_nvme_blk_dev = global_nvme.?.blockDevice();
     global_nvme_blk_dev.?.is_boot_media = (global_block_device == null);
-    if (global_block_device == null) {
-        global_block_device = global_nvme_blk_dev.?;
-    }
+    if (global_block_device == null) global_block_device = global_nvme_blk_dev.?;
     abi_mod.registerBlockDevice(&global_nvme_blk_dev.?);
 
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mnvme\x1b[90m: \x1b[97mPCIe NVMe 1.4 persistent drive (capacity: \x1b[0m");
@@ -653,15 +669,9 @@ fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool 
 }
 
 fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
-    if (pci_mod.findVirtioBlkDevice()) |blk_dev| {
-        _ = initBlkDevice(blk_dev, boot_info);
-    }
-    if (pci_mod.findNvmeDevice()) |nvme_dev| {
-        _ = initNvmeDevice(nvme_dev, boot_info);
-    }
-    if (global_block_device != null) {
-        initStorageEngines(allocator);
-    }
+    if (pci_mod.findVirtioBlkDevice()) |blk_dev| _ = initBlkDevice(blk_dev, boot_info);
+    if (pci_mod.findNvmeDevice()) |nvme_dev| _ = initNvmeDevice(nvme_dev, boot_info);
+    if (global_block_device != null) initStorageEngines(allocator);
 }
 
 fn initNetwork(boot_info: *const BootInfo) void {
@@ -708,11 +718,7 @@ fn registerGenesisHardwareCaps(genesis: *actor_mod.Actor) !void {
     });
 }
 
-fn registerGenesisCapabilities(
-    genesis: *actor_mod.Actor,
-    boot_info: *const BootInfo,
-    ring: *ipc_mod.RingBuffer,
-) !void {
+fn registerGenesisCapabilities(genesis: *actor_mod.Actor, boot_info: *const BootInfo, ring: *ipc_mod.RingBuffer) !void {
     if (boot_info.framebuffer.base_addr != 0) {
         _ = try genesis.insertCap(.{
             .cap_type = .framebuffer,
@@ -748,9 +754,7 @@ fn buildFallbackGenesisChunk(allocator: std.mem.Allocator) !*chunk_mod.Chunk {
         chunk.deinit(allocator);
         allocator.destroy(chunk);
     }
-    const msg = eval_mod.Value{ .string = "Actor 0 initialized." };
-    const c_idx = try chunk.addConstant(allocator, msg);
-
+    const c_idx = try chunk.addConstant(allocator, eval_mod.Value{ .string = "Actor 0 initialized." });
     try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.constant));
     try chunk.writeChunk(allocator, @intCast((c_idx >> 8) & 0xFF));
     try chunk.writeChunk(allocator, @intCast(c_idx & 0xFF));
@@ -785,15 +789,10 @@ fn bundleListBridge(prefix: []const u8, out_buf: []u8) usize {
 }
 
 fn getCurrentActorBridge() ?*actor_mod.Actor {
-    if (global_sched) |sched| {
-        if (sched.current) |fib| {
-            if (fib.user_data) |ud| {
-                const act_ctx = @as(*ActorThreadContext, @ptrCast(@alignCast(ud)));
-                return act_ctx.actor;
-            }
-        }
-    }
-    return null;
+    const sched = global_sched orelse return null;
+    const fib = sched.current orelse return null;
+    const ud = fib.user_data orelse return null;
+    return @as(*ActorThreadContext, @ptrCast(@alignCast(ud))).actor;
 }
 
 fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo, genesis: *actor_mod.Actor) !*chunk_mod.Chunk {
@@ -924,6 +923,10 @@ fn initGenesisVm(
     return genesis_vm;
 }
 
+fn getCoreIdBridge() u32 {
+    return smp.global_topology.getCurrentCore().core_id;
+}
+
 pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     initHardware(boot_info);
 
@@ -945,6 +948,7 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
 
     serial.writeStatusOk("act ", "Genesis Actor 0 online (cooperative fiber scheduler)");
 
+    fiber_mod.get_core_id_fn = getCoreIdBridge;
     var sched = fiber_mod.Scheduler.init(allocator);
     sched.on_context_switch = onFiberContextSwitch;
     global_sched = &sched;
