@@ -31,6 +31,8 @@ pub const setRebuildEngine = storage_abi.setRebuildEngine;
 pub const catalog_abi = @import("storage/catalog_abi.zig");
 pub const net_abi = @import("net/net_abi.zig");
 pub const git_abi = @import("net/git_abi.zig");
+pub const cap_abi = @import("cap/cap_abi.zig");
+pub const PhysFrameInfo = cap_abi.PhysFrameInfo;
 const cap_mod = @import("cap/capability.zig");
 const net_stack_mod = @import("net/stack.zig");
 const NetworkStack = net_stack_mod.NetworkStack;
@@ -57,6 +59,8 @@ pub const AbiContext = struct {
     bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
     current_actor_fn: ?*const fn () ?*Actor = null,
     net_stack: ?*NetworkStack = null,
+    frame_info_fn: ?*const fn (frame_idx: usize) ?u64 = null,
+    irq_ack_fn: ?*const fn (irq: u8) void = null,
 };
 
 pub const HarnessContext = AbiContext;
@@ -85,6 +89,7 @@ pub fn setContext(ctx: *AbiContext) void {
     net_abi.setNetworkContext(ctx.net_stack, checkCallerAuthority, getCallerActorId);
     git_abi.setCasContext(ctx.cas_put_fn, ctx.cas_get_fn);
     git_abi.setCallerAuth(checkCallerAuthority);
+    cap_abi.setCapAbiContext(checkCallerAuthority, ctx.frame_info_fn, ctx.irq_ack_fn);
 }
 
 pub fn clearContext() void {
@@ -93,6 +98,7 @@ pub fn clearContext() void {
     catalog_abi.clearCatalogContext();
     net_abi.clearNetworkContext();
     git_abi.clearGitContext();
+    cap_abi.clearCapAbiContext();
 }
 
 fn castToU32(val: i64) ?u32 {
@@ -585,6 +591,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try catalog_abi.registerCatalogSyscalls(vm);
     try net_abi.registerNetworkSyscalls(vm);
     try git_abi.registerGitSyscalls(vm);
+    try cap_abi.registerCapSyscalls(vm);
 }
 
 pub const registerBindings = registerSyscalls;

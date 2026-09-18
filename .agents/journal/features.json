@@ -57,9 +57,9 @@
       "verification_cmd": "make check"
     },
     "SPEC-TECH-NET-004": {
-      "last_checked": "2026-09-18T05:58:00.851Z",
+      "last_checked": "2026-09-18T06:28:45.930Z",
       "name": "Pure Microkernel Network & AI Decoupling Substrate",
-      "passes": false,
+      "passes": true,
       "spec_ref": "docs/technical/specs/microkernel-network-decoupling.rst",
       "verification_cmd": "zig build test"
     },

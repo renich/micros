@@ -2,6 +2,7 @@
 pub const kmain = @import("kernel/main.zig").kmain;
 pub const cap = @import("kernel/cap/capability.zig");
 pub const cspace = @import("kernel/cap/cspace.zig");
+pub const cap_abi = @import("kernel/cap/cap_abi.zig");
 pub const actor = @import("kernel/actor.zig");
 pub const ipc = @import("kernel/ipc/ring.zig");
 pub const bundle = @import("kernel/bundle.zig");
@@ -29,10 +30,13 @@ pub const pe_emitter = @import("boot/pe_emitter.zig");
 pub const net = @import("kernel/net.zig");
 pub const ai = @import("kernel/ai.zig");
 pub const compositor = @import("kernel/compositor.zig");
+pub const netd = @import("userland/netd/netd.zig");
+pub const aid = @import("userland/aid/aid.zig");
 
 test "kernel module tests" {
     _ = @import("kernel/cap/capability.zig");
     _ = @import("kernel/cap/cspace.zig");
+    _ = @import("kernel/cap/cap_abi.zig");
     _ = @import("kernel/actor.zig");
     _ = @import("kernel/ipc/ring.zig");
     _ = @import("kernel/ipc/events.zig");
@@ -61,6 +65,8 @@ test "kernel module tests" {
     _ = @import("kernel/net.zig");
     _ = @import("kernel/ai.zig");
     _ = @import("kernel/compositor.zig");
+    _ = @import("userland/netd/netd.zig");
+    _ = @import("userland/aid/aid.zig");
 }
 
 test "Genesis Bundle contains and compiles init.mx" {

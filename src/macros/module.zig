@@ -83,7 +83,7 @@ pub const ModuleResolver = struct {
         try self.virtual_sources.put(self.allocator, path, source);
     }
 
-    pub fn parseCasHex(hex_str: []const u8) ! [HASH_SIZE]u8 {
+    pub fn parseCasHex(hex_str: []const u8) ![HASH_SIZE]u8 {
         if (hex_str.len != HEX_HASH_SIZE) return ModuleError.InvalidHexHash;
         var out: [HASH_SIZE]u8 = undefined;
         _ = std.fmt.hexToBytes(&out, hex_str) catch return ModuleError.InvalidHexHash;

@@ -36,6 +36,8 @@ const cas_chunk_mod = @import("storage/chunk.zig");
 const rebuild_mod = @import("storage/rebuild.zig");
 const net_mod = @import("net.zig");
 const ai_mod = @import("ai.zig");
+const netd_mod = @import("../userland/netd/netd.zig");
+const aid_mod = @import("../userland/aid/aid.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
@@ -64,7 +66,10 @@ var global_pointer: ?compositor_mod.PointerState = null;
 var global_supervisor: ?supervisor_mod.Supervisor = null;
 var global_abi_ctx: ?abi_mod.AbiContext = null;
 var global_virtio_net: ?virtio_net_mod.VirtioNetDevice = null;
-var global_net_stack: ?net_mod.stack.NetworkStack = null;
+var global_netd: ?netd_mod.NetDaemon = null;
+var global_aid: ?aid_mod.AiDaemon = null;
+var global_ai_req_ring = ipc_mod.SpscRingBuffer.init();
+var global_ai_resp_ring = ipc_mod.SpscRingBuffer.init();
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
 var global_sched: ?*fiber_mod.Scheduler = null;
 var global_virtio_blk: ?virtio_blk_mod.VirtioBlkDevice = null;
@@ -140,88 +145,34 @@ fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo) void {
     serial.writeString("\x1b[97m)\x1b[0m\n");
 }
 
-fn runDhcpHandshake() void {
-    if (global_virtio_net == null) return;
-    global_net_stack = net_mod.stack.NetworkStack.init(&global_virtio_net.?);
-
-    var attempt: usize = 0;
-    while (!global_net_stack.?.dhcp_config.bound and attempt < 5) : (attempt += 1) {
-        global_net_stack.?.startDhcp() catch continue;
-        var iter: usize = 0;
-        while (!global_net_stack.?.dhcp_config.bound and iter < 100_000) : (iter += 1) {
-            global_net_stack.?.poll();
-        }
-    }
-
-    if (!global_net_stack.?.dhcp_config.bound) {
-        serial.writeStatusWarn("dhcp", "Network auto-configuration timed out");
-    }
+fn frameInfoBridge(frame_idx: usize) ?u64 {
+    return @as(u64, @intCast(frame_idx)) * 4096;
 }
 
-var global_ai_ip: ?[4]u8 = null;
+fn irqAckBridge(irq: u8) void {
+    _ = irq;
+}
 
-fn runDnsResolution() ?[4]u8 {
-    if (global_ai_ip) |ip| return ip;
-    if (global_net_stack == null or !global_net_stack.?.dhcp_config.bound) return null;
-    serial.writeString("[kernel] Resolving DNS for Resident AI endpoint (");
-    serial.writeString(config.ai_endpoint);
-    serial.writeString(")...\n");
-    const ip = global_net_stack.?.resolveDns(config.ai_endpoint) catch |err| {
-        serial.writeString("[kernel] DNS resolution failed: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return null;
+fn initUserlandServices(allocator: std.mem.Allocator) void {
+    const net_cap = cap_mod.Capability{
+        .cap_type = .network_device,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = CAP_OBJ_NETWORK,
+        .data_addr = if (global_virtio_net != null) @intFromPtr(&global_virtio_net.?) else 0,
+        .data_size = if (global_virtio_net != null) @sizeOf(virtio_net_mod.VirtioNetDevice) else 0,
     };
-    global_ai_ip = ip;
-    serial.writeString("[net] DNS Resolved! ");
-    serial.writeString(config.ai_endpoint);
-    serial.writeString(" -> ");
-    global_net_stack.?.printIp(ip);
-    serial.writeString("\n");
-    return ip;
-}
-
-fn runTcpConnection(ip: [4]u8) bool {
-    if (global_net_stack == null) return false;
-    global_net_stack.?.connectTcp(ip, config.ai_port) catch |err| {
-        serial.writeString("[kernel] TCP connection failed: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return false;
+    const irq_cap = cap_mod.Capability{
+        .cap_type = .irq_endpoint,
+        .rights = cap_mod.Rights.WRITE,
+        .object_id = 11,
+        .data_addr = 0,
+        .data_size = 0,
     };
-    return true;
-}
+    const virt_ptr = if (global_virtio_net != null) &global_virtio_net.? else null;
+    global_netd = netd_mod.NetDaemon.init(allocator, virt_ptr, net_cap, irq_cap);
 
-var global_tls_adapter: net_mod.tls_stream.TcpStreamAdapter = undefined;
-var global_tls_ready: bool = false;
-
-fn runTlsHandshake() void {
-    if (global_net_stack == null) return;
-    if (!config.ai_use_tls) {
-        global_tls_ready = true;
-        return;
-    }
-    global_tls_adapter.init(&global_net_stack.?);
-    global_tls_adapter.handshake(config.ai_endpoint) catch |err| {
-        serial.writeString("[kernel] TLS 1.3 handshake failed: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        global_tls_ready = false;
-        return;
-    };
-    global_tls_ready = true;
-}
-
-var global_ai_client: ai_mod.client.AiClient = undefined;
-var ai_http_req_buf: [8192]u8 = undefined;
-var ai_http_body_buf: [8192]u8 = undefined;
-var ai_http_resp_buf: [65536]u8 = undefined;
-var ai_text_buf: [32768]u8 = undefined;
-var ai_code_buf: [8192]u8 = undefined;
-
-fn initAiClient() void {
     const ptype = ai_mod.provider.parseProviderType(config.ai_provider);
-    const cfg = ai_mod.provider.ProviderConfig{
+    const ai_cfg = ai_mod.provider.ProviderConfig{
         .provider_type = ptype,
         .endpoint = config.ai_endpoint,
         .port = config.ai_port,
@@ -229,134 +180,23 @@ fn initAiClient() void {
         .model = config.ai_model,
         .api_key = config.ai_api_key,
     };
-    global_ai_client = ai_mod.client.AiClient.init(cfg);
-    if (ptype != .mock and ptype != .local_http and config.ai_api_key.len == 0) {
-        serial.writeStatusWarn("ai  ", "No API key configured for resident AI");
-    }
-}
-
-var ai_unchunked_buf: [65536]u8 = undefined;
-
-fn readAiResponse(out_text: []u8) usize {
-    const read_bytes = collectHttpStream(&ai_http_resp_buf);
-    if (read_bytes == 0) return 0;
-    serial.writeString("[ai] Response received (");
-    serial.writeDec(read_bytes);
-    serial.writeString(" bytes)\n");
-
-    const resp = net_mod.http.parseResponseHeaders(&ai_http_resp_buf, read_bytes) catch |err| {
-        serial.writeString("[ai] HTTP parse error: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return 0;
+    const ipc_cap = cap_mod.Capability{
+        .cap_type = .ipc_ring,
+        .rights = cap_mod.Rights.ALL,
+        .object_id = 1,
+        .data_addr = @intFromPtr(&global_ai_req_ring),
+        .data_size = @sizeOf(ipc_mod.SpscRingBuffer),
     };
-
-    if (resp.status_code != net_mod.http.HTTP_OK) {
-        serial.writeString("[ai] HTTP status: ");
-        serial.writeDec(resp.status_code);
-        serial.writeString("\n");
-    }
-
-    if (resp.body_offset < read_bytes) {
-        var body = ai_http_resp_buf[resp.body_offset..read_bytes];
-        if (resp.is_chunked) {
-            if (net_mod.http.decodeChunkedBody(body, &ai_unchunked_buf)) |dlen| {
-                body = ai_unchunked_buf[0..dlen];
-            } else |err| {
-                serial.writeString("[ai] Chunk decode warning: ");
-                serial.writeString(@errorName(err));
-                serial.writeString("\n");
-            }
-        }
-        if (global_ai_client.extractResponseText(body, out_text)) |tlen| {
-            return tlen;
-        }
-        serial.writeString("[ai] Raw body preview:\n");
-        serial.writeString(body[0..@min(body.len, 512)]);
-        serial.writeString("\n");
-    }
-    return 0;
-}
-
-fn collectHttpStream(dest: []u8) usize {
-    var total_read: usize = 0;
-    while (total_read < dest.len) {
-        const n = global_tls_adapter.readSlice(dest[total_read..]) catch |err| {
-            if (total_read > 0) break;
-            serial.writeString("[ai] Read failed: ");
-            serial.writeString(@errorName(err));
-            serial.writeString("\n");
-            return 0;
-        };
-        if (n == 0) break;
-        total_read += n;
-        if (checkHttpDone(dest[0..total_read])) break;
-    }
-    return total_read;
-}
-
-fn checkHttpDone(data: []const u8) bool {
-    const resp = net_mod.http.parseResponseHeaders(data, data.len) catch return false;
-    if (resp.content_length) |clen| {
-        return data.len >= resp.body_offset + clen;
-    }
-    if (resp.is_chunked and data.len >= resp.body_offset + 5) {
-        const body = data[resp.body_offset..];
-        if (std.mem.endsWith(u8, body, "\r\n0\r\n\r\n") or
-            std.mem.endsWith(u8, body, "\n0\n\n") or
-            std.mem.eql(u8, body, "0\r\n\r\n"))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-fn executeAiInference(prompt: []const u8, out_text: []u8) usize {
-    if (global_ai_client.config.provider_type == .mock) {
-        return ai_mod.mock.generateResponse(prompt, out_text) catch 0;
-    }
-    if (!global_tls_ready) return 0;
-    serial.writeString("[ai] Dispatching prompt to Resident AI (");
-    serial.writeString(global_ai_client.config.model);
-    serial.writeString(")...\n");
-    const req_len = global_ai_client.formatPromptRequest(&ai_http_req_buf, &ai_http_body_buf, prompt) catch |err| {
-        serial.writeString("[ai] Request format error: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return 0;
-    };
-    global_tls_adapter.writeAll(ai_http_req_buf[0..req_len]) catch |err| {
-        serial.writeString("[ai] Send error: ");
-        serial.writeString(@errorName(err));
-        serial.writeString("\n");
-        return 0;
-    };
-    serial.writeString("[ai] Prompt sent! Awaiting cognitive response...\n");
-    return readAiResponse(out_text);
-}
-
-fn ensureTlsConnection() bool {
-    const is_connected = global_tls_ready and global_tls_adapter.connected;
-    if (is_connected and global_net_stack != null and global_net_stack.?.tcp_client != null) {
-        if (global_net_stack.?.tcp_client.?.state == .established) return true;
-    }
-    serial.writeString("[kernel] Re-establishing TLS connection...\n");
-    global_tls_ready = false;
-    global_tls_adapter.close();
-    return attemptEstablishSession();
-}
-
-fn attemptEstablishSession() bool {
-    const ip = runDnsResolution() orelse return false;
-    if (!runTcpConnection(ip)) return false;
-    runTlsHandshake();
-    return global_tls_ready;
+    const net_ptr = if (global_netd != null) &global_netd.? else null;
+    global_aid = aid_mod.AiDaemon.init(allocator, ai_cfg, net_ptr, ipc_cap);
+    global_aid.?.setRings(&global_ai_req_ring, &global_ai_resp_ring);
 }
 
 fn aiInferenceBridge(prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize {
-    if (global_ai_client.config.provider_type != .mock and !ensureTlsConnection()) return 0;
-    return executeAiInference(prompt_ptr[0..prompt_len], out_ptr[0..out_len]);
+    if (global_aid) |*aid_inst| {
+        return aid_inst.dispatchPrompt(prompt_ptr[0..prompt_len], out_ptr[0..out_len]);
+    }
+    return ai_mod.mock.generateResponse(prompt_ptr[0..prompt_len], out_ptr[0..out_len]) catch 0;
 }
 
 const ActorThreadContext = struct {
@@ -713,7 +553,6 @@ fn initNetwork(boot_info: *const BootInfo) void {
     if (maybe_net) |net_dev| {
         if (net_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
             initVirtioNet(net_dev, boot_info);
-            runDhcpHandshake();
         }
     }
 }
@@ -890,21 +729,8 @@ fn initCompositor(allocator: std.mem.Allocator, fb_info: boot_info_mod.Framebuff
     }
 }
 
-fn setupAbiEnvironment(
-    genesis: *actor_mod.Actor,
-    boot_info: *const BootInfo,
-    ipc_ring: *ipc_mod.RingBuffer,
-    vm: *vm_mod.VM,
-    allocator: std.mem.Allocator,
-) void {
-    initAiClient();
-    idt.setInputRing(ipc_ring);
-    global_registry.register(genesis) catch kernelPanic("register_genesis");
-    global_supervisor = supervisor_mod.Supervisor.init(&global_registry, .restart_immediate);
-
-    initCompositor(allocator, boot_info.framebuffer);
-
-    global_abi_ctx = abi_mod.AbiContext{
+fn createAbiContext(genesis: *actor_mod.Actor, ipc_ring: *ipc_mod.RingBuffer) abi_mod.AbiContext {
+    return abi_mod.AbiContext{
         .registry = &global_registry,
         .supervisor = genesis,
         .framebuffer = if (global_fb != null) &global_fb.? else null,
@@ -925,8 +751,26 @@ fn setupAbiEnvironment(
         .telemetry_fn = telemetryBridge,
         .bundle_read_fn = bundleReadBridge,
         .current_actor_fn = getCurrentActorBridge,
-        .net_stack = if (global_net_stack != null) &global_net_stack.? else null,
+        .net_stack = if (global_netd != null and global_netd.?.stack != null) &global_netd.?.stack.? else null,
+        .frame_info_fn = frameInfoBridge,
+        .irq_ack_fn = irqAckBridge,
     };
+}
+
+fn setupAbiEnvironment(
+    genesis: *actor_mod.Actor,
+    boot_info: *const BootInfo,
+    ipc_ring: *ipc_mod.RingBuffer,
+    vm: *vm_mod.VM,
+    allocator: std.mem.Allocator,
+) void {
+    initUserlandServices(allocator);
+    idt.setInputRing(ipc_ring);
+    global_registry.register(genesis) catch kernelPanic("register_genesis");
+    global_supervisor = supervisor_mod.Supervisor.init(&global_registry, .restart_immediate);
+    initCompositor(allocator, boot_info.framebuffer);
+
+    global_abi_ctx = createAbiContext(genesis, ipc_ring);
     abi_mod.setContext(&global_abi_ctx.?);
     abi_mod.registerSyscalls(vm) catch kernelPanic("abi_syscalls");
 }
