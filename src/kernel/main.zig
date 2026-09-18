@@ -285,16 +285,16 @@ const ActorThreadContext = struct {
 };
 
 fn onFiberContextSwitch(maybe_fib: ?*fiber_mod.Fiber) void {
+    var act_id: u32 = 0;
     if (maybe_fib) |fib| {
         if (fib.entry == actorThread and fib.user_data != null) {
             const act_ctx: *ActorThreadContext = @ptrCast(@alignCast(fib.user_data.?));
-            idt.current_actor_id = act_ctx.actor.id;
-            syscall.setActorId(act_ctx.actor.id);
-            return;
+            act_id = act_ctx.actor.id;
         }
     }
-    idt.current_actor_id = 0;
-    syscall.setActorId(0);
+    smp.global_topology.getCurrentCore().current_actor_id = act_id;
+    idt.current_actor_id = act_id;
+    syscall.setActorId(act_id);
 }
 
 fn actorThread(ctx: ?*anyopaque) void {

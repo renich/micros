@@ -141,14 +141,17 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
         : [ret] "=r" (-> u64),
     );
 
-    if (current_actor_id == 0) {
+    const core = smp.global_topology.getCurrentCore();
+    const actor_id = if (builtin.is_test and current_actor_id != 0) current_actor_id else core.current_actor_id;
+
+    if (actor_id == 0) {
         handleRootPanic(cr2, frame);
     }
 
-    logSupervisorTrap(current_actor_id, rip, cr2, frame);
+    logSupervisorTrap(actor_id, rip, cr2, frame);
 
     const fault = supervisor_mod.FaultFrame{
-        .actor_id = current_actor_id,
+        .actor_id = actor_id,
         .vector = @truncate(frame.vector),
         .error_code = @truncate(frame.error_code),
         .rip = rip,
@@ -165,6 +168,7 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     frame.cs = 0x08;
     frame.ss = 0x10;
     frame.rflags &= ~@as(u64, 0x200);
+    core.current_actor_id = 0;
     current_actor_id = 0;
 }
 

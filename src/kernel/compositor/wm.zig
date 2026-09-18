@@ -69,6 +69,7 @@ pub const WindowManager = struct {
     desktop_w: u32,
     desktop_h: u32,
     next_win_id: u32,
+    needs_full_redraw: bool,
 
     pub fn init(allocator: std.mem.Allocator, w: u32, h: u32) WindowManager {
         return WindowManager{
@@ -79,6 +80,7 @@ pub const WindowManager = struct {
             .desktop_w = w,
             .desktop_h = h,
             .next_win_id = 1,
+            .needs_full_redraw = true,
         };
     }
 
@@ -126,6 +128,7 @@ pub const WindowManager = struct {
         self.windows[self.window_count] = win;
         self.window_count += 1;
         self.active_window_id = win_id;
+        self.needs_full_redraw = true;
 
         if (mode == .tiled) self.retile();
         return win;
@@ -147,6 +150,7 @@ pub const WindowManager = struct {
         if (self.active_window_id == id) {
             self.updateActiveAfterClose();
         }
+        self.needs_full_redraw = true;
         self.retile();
     }
 
@@ -160,6 +164,7 @@ pub const WindowManager = struct {
         }
         self.windows[self.window_count - 1] = win;
         self.active_window_id = id;
+        self.needs_full_redraw = true;
     }
 
     fn updateActiveAfterClose(self: *WindowManager) void {
@@ -171,6 +176,7 @@ pub const WindowManager = struct {
     }
 
     pub fn retile(self: *WindowManager) void {
+        self.needs_full_redraw = true;
         var tiled_count: usize = 0;
         var i: usize = 0;
         while (i < self.window_count) : (i += 1) {
@@ -189,7 +195,32 @@ pub const WindowManager = struct {
         }
     }
 
+    fn clearBackgroundDamage(canvas: *Canvas, desktop_w: u32, desktop_h: u32) void {
+        const d = canvas.damage;
+        if (d.isEmpty()) return;
+
+        const x_min = @max(0, d.min_x);
+        const y_min = @max(24, d.min_y);
+        const x_max = @min(desktop_w, d.max_x);
+        const y_max = @min(desktop_h, d.max_y);
+
+        var cy = y_min;
+        while (cy < y_max) : (cy += 1) {
+            var cx = x_min;
+            while (cx < x_max) : (cx += 1) {
+                canvas.setPixelRaw(cx, cy, COLOR_BG_DESKTOP);
+            }
+        }
+    }
+
     pub fn compose(self: *WindowManager, canvas: *Canvas) void {
+        if (self.needs_full_redraw) {
+            canvas.damage = DamageRect.full(self.desktop_w, self.desktop_h);
+            self.needs_full_redraw = false;
+        }
+
+        clearBackgroundDamage(canvas, self.desktop_w, self.desktop_h);
+
         var i: usize = 0;
         while (i < self.window_count) : (i += 1) {
             const win = self.windows[i].?;

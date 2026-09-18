@@ -224,7 +224,7 @@ pub const GopDaemon = struct {
 
     pub fn poll(self: *GopDaemon) void {
         if (self.state != .active) return;
-        self.wm.composeAllWindows(&self.canvas);
+        self.wm.compose(&self.canvas);
     }
 
     pub fn renderHyperTree(self: *GopDaemon) void {

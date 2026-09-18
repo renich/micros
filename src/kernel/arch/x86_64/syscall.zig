@@ -9,6 +9,7 @@ const cap_mod = @import("../../cap/capability.zig");
 const CapType = cap_mod.CapType;
 const Rights = cap_mod.Rights;
 const vmm = @import("../../mem/vmm.zig");
+const smp = @import("../../sched/smp.zig");
 
 pub const SyscallNumber = enum(u64) {
     actor_count = 1,
@@ -38,8 +39,8 @@ pub const CpuControlBlock = extern struct {
     reserved: u32 = 0,
 };
 
-pub var cpu_control_block: CpuControlBlock = .{};
-var syscall_stack: [16384]u8 align(4096) = undefined;
+pub var cpu_control_blocks: [smp.MAX_CORES]CpuControlBlock = [_]CpuControlBlock{.{}} ** smp.MAX_CORES;
+var syscall_stacks: [smp.MAX_CORES][16384]u8 align(4096) = undefined;
 var active_registry: ?*actor_mod.ActorRegistry = null;
 pub var kernel_allocator: ?std.mem.Allocator = null;
 pub var frame_info_fn: ?*const fn (usize) ?u64 = null;
@@ -61,13 +62,19 @@ pub fn setDeviceHandlers(
     irq_ack_fn = ack_fn;
 }
 
+pub fn getCurrentActorId() u32 {
+    const core = smp.global_topology.getCurrentCore();
+    return cpu_control_blocks[core.core_id].current_actor_id;
+}
+
 pub fn setActorId(id: u32) void {
-    cpu_control_block.current_actor_id = id;
+    const core = smp.global_topology.getCurrentCore();
+    cpu_control_blocks[core.core_id].current_actor_id = id;
 }
 
 pub fn getCallerActor() ?*actor_mod.Actor {
     const reg = active_registry orelse return null;
-    return reg.get(cpu_control_block.current_actor_id);
+    return reg.get(getCurrentActorId());
 }
 
 pub fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
@@ -76,8 +83,9 @@ pub fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
     return actor.hasCap(cap_type, rights);
 }
 
-pub fn init() void {
-    cpu_control_block.kernel_rsp = @intFromPtr(&syscall_stack) + syscall_stack.len;
+pub fn initCore(core_id: u32) void {
+    const ccb = &cpu_control_blocks[core_id];
+    ccb.kernel_rsp = @intFromPtr(&syscall_stacks[core_id]) + syscall_stacks[core_id].len;
 
     // 1. Enable SCE (System Call Enable) in IA32_EFER
     const efer = io.rdmsr(io.MSR_EFER);
@@ -95,8 +103,12 @@ pub fn init() void {
     // 4. Configure IA32_SFMASK to mask IF (0x200), TF (0x100), DF (0x400)
     io.wrmsr(io.MSR_SFMASK, 0x00000700);
 
-    // 5. Configure IA32_KERNEL_GS_BASE to point to CpuControlBlock
-    io.wrmsr(io.MSR_KERNEL_GS_BASE, @intFromPtr(&cpu_control_block));
+    // 5. Configure IA32_KERNEL_GS_BASE to point to per-core CpuControlBlock
+    io.wrmsr(io.MSR_KERNEL_GS_BASE, @intFromPtr(ccb));
+}
+
+pub fn init() void {
+    initCore(smp.global_topology.getCurrentCore().core_id);
 }
 
 pub export fn asmSyscallEntry() callconv(.naked) void {
@@ -144,7 +156,7 @@ fn handleActorSpawn(name_ptr: u64, name_len: u64) i64 {
     const pml4_phys = vmm.createActorAddressSpace() orelse return -2;
     const child = reg.spawn(
         alloc,
-        cpu_control_block.current_actor_id,
+        getCurrentActorId(),
         name,
         16,
         pml4_phys,
