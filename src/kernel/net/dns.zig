@@ -78,8 +78,10 @@ fn skipName(data: []const u8, start_offset: usize) ?usize {
         const len = data[idx];
         if (len == 0) return idx + 1;
         if ((len & 0xC0) == 0xC0) {
+            if (idx + 2 > data.len) return null;
             return idx + 2; // Pointer
         }
+        if (idx + 1 + @as(usize, len) > data.len) return null;
         idx += 1 + @as(usize, len);
     }
     return null;
@@ -115,7 +117,7 @@ pub fn parseResponse(payload: []const u8, expected_id: u16) ?[4]u8 {
             @memcpy(&ip, payload[idx .. idx + 4]);
             return ip;
         }
-        idx += rdlength;
+        idx = std.math.add(usize, idx, rdlength) catch return null;
     }
 
     return null;
@@ -172,4 +174,14 @@ test "dns answer parse" {
 
     const ip = parseResponse(resp_buf[0..idx], 0xABCD).?;
     try std.testing.expectEqualSlices(u8, &[_]u8{ 142, 250, 190, 46 }, &ip);
+}
+
+test "dns malformed packet rejection" {
+    var trunc_ptr = [_]u8{0xC0};
+    try std.testing.expectEqual(@as(?usize, null), skipName(&trunc_ptr, 0));
+
+    var overflow_label = [_]u8{ 10, 'a', 'b' };
+    try std.testing.expectEqual(@as(?usize, null), skipName(&overflow_label, 0));
+
+    try std.testing.expectEqual(@as(?[4]u8, null), parseResponse(&[_]u8{}, 0x1234));
 }

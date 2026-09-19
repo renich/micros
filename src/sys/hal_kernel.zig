@@ -69,12 +69,14 @@ pub fn close(fd: i32) !void {
 
 pub fn exit_group(status: usize) noreturn {
     _ = status;
+    asm volatile ("cli");
     while (true) {
         asm volatile ("hlt");
     }
 }
 
 pub fn poweroff() noreturn {
+    asm volatile ("cli");
     while (true) {
         asm volatile ("hlt");
     }

@@ -93,6 +93,7 @@ var global_rebuild: ?rebuild_mod.RebuildEngine = null;
 var global_bundle_data: ?[]const u8 = null;
 
 fn kernelPanic(stage: []const u8) noreturn {
+    asm volatile ("cli");
     serial.writeString("\n[KERNEL PANIC] Fatal error at stage: ");
     serial.writeString(stage);
     serial.writeString("\nHalting CPU.\n");
@@ -988,6 +989,7 @@ fn vmThread(ctx: ?*anyopaque) void {
 }
 
 fn haltLoop() noreturn {
+    asm volatile ("cli");
     while (true) {
         asm volatile ("hlt");
     }

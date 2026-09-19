@@ -261,6 +261,7 @@ fn nativeSysReboot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     try verifyRebootAuthority();
+    asm volatile ("cli");
     io.outb(0x64, 0xFE);
     while (true) {
         asm volatile ("hlt");

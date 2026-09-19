@@ -133,6 +133,7 @@ pub fn parsePushCommand(payload: []const u8) ?RefLine {
 
     const delims = findDelimiters(rest);
     if (delims.nul_idx) |n_idx| {
+        if (n_idx > delims.end_idx) return null;
         const raw_caps = if (n_idx + 1 <= delims.end_idx) rest[n_idx + 1 .. delims.end_idx] else "";
         return RefLine{
             .old_id = old_id,

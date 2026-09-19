@@ -104,6 +104,7 @@ export fn childFaultTrampoline() noreturn {
 }
 
 fn handleRootPanic(cr2: u64, frame: *const ExceptionStackFrame) noreturn {
+    asm volatile ("cli");
     serial.writeString("\n[FATAL CPU EXCEPTION IN ACTOR 0]\n");
     serial.writeString("[exception] VEC: 0x");
     serial.writeHex(frame.vector);

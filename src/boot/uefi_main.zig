@@ -98,6 +98,7 @@ fn exitBootServicesOrHalt(bs: *uefi.tables.BootServices, con_out: anytype) void 
     }
     if (!exited) {
         _ = con_out.outputString(&[_:0]u16{ '[', 'b', 'o', 'o', 't', ']', ' ', 'F', 'A', 'T', 'A', 'L', ':', ' ', 'E', 'x', 'i', 't', 'B', 'o', 'o', 't', 'S', 'e', 'r', 'v', 'i', 'c', 'e', 's', ' ', 'f', 'a', 'i', 'l', 'e', 'd', '\r', '\n', 0 }) catch false;
+        asm volatile ("cli");
         while (true) {
             asm volatile ("hlt");
         }
