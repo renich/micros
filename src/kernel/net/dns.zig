@@ -74,7 +74,8 @@ pub fn buildQuery(out_buf: []u8, hostname: []const u8, query_id: u16) !usize {
 
 fn skipName(data: []const u8, start_offset: usize) ?usize {
     var idx = start_offset;
-    while (idx < data.len) {
+    var hops: usize = 0;
+    while (idx < data.len and hops < 64) : (hops += 1) {
         const len = data[idx];
         if (len == 0) return idx + 1;
         if ((len & 0xC0) == 0xC0) {
@@ -101,8 +102,9 @@ pub fn parseResponse(payload: []const u8, expected_id: u16) ?[4]u8 {
     idx += 4; // Skip QTYPE and QCLASS
 
     // Parse answers
+    const max_records = @min(ancount, 64);
     var a: u16 = 0;
-    while (a < ancount and idx < payload.len) : (a += 1) {
+    while (a < max_records and idx < payload.len) : (a += 1) {
         idx = skipName(payload, idx) orelse return null;
         if (idx + 10 > payload.len) return null;
 

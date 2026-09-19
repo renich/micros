@@ -330,7 +330,7 @@ pub fn nativeSysGitAdvertiseRefs(vm_ptr: *anyopaque, args: []Value) anyerror!Val
     const branch: []const u8 = if (repo != null and repo.?.branch_len > 0) repo.?.branch[0..repo.?.branch_len] else "refs/heads/master";
 
     const len = git_transport.buildAdvertisementBody(head_sha, branch, &adv_buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, adv_buf[0..len]);
+    const duped = try vm.gcAllocator().dupe(u8, adv_buf[0..len]);
     return Value{ .string = duped };
 }
 
@@ -346,10 +346,10 @@ pub fn nativeSysGitReceivePack(vm_ptr: *anyopaque, args: []Value) anyerror!Value
     var resp_buf: [2048]u8 = undefined;
     const len = processReceivePack(vm.allocator, args[0].string, args[1].string, &resp_buf) catch {
         const err_len = git_transport.buildReportStatusBody("refs/heads/master", false, "unpack failed", &resp_buf) catch return Value{ .string = "" };
-        const duped = try vm.allocator.dupe(u8, resp_buf[0..err_len]);
+        const duped = try vm.gcAllocator().dupe(u8, resp_buf[0..err_len]);
         return Value{ .string = duped };
     };
-    const duped = try vm.allocator.dupe(u8, resp_buf[0..len]);
+    const duped = try vm.gcAllocator().dupe(u8, resp_buf[0..len]);
     return Value{ .string = duped };
 }
 
@@ -358,7 +358,7 @@ pub fn nativeSysGitGetHead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const repo = global_repos.get(args[0].string);
     if (repo == null or !repo.?.has_commits) return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, &repo.?.tip_sha);
+    const duped = try vm.gcAllocator().dupe(u8, &repo.?.tip_sha);
     return Value{ .string = duped };
 }
 
@@ -372,7 +372,7 @@ pub fn nativeSysGitCatFile(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const scratch = vm.allocator.alloc(u8, git_pack.MAX_GIT_OBJECT_SIZE) catch return Value{ .string = "" };
     defer vm.allocator.free(scratch);
     const n = get_fn(cas_hash, scratch) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, scratch[0..n]);
+    const duped = try vm.gcAllocator().dupe(u8, scratch[0..n]);
     return Value{ .string = duped };
 }
 
@@ -432,7 +432,7 @@ test "git syscall registration and advertisement" {
 
     var adv_args = [_]Value{Value{ .string = "new_repo.git" }};
     const adv_val = try nativeSysGitAdvertiseRefs(&vm, &adv_args);
-    defer vm.allocator.free(adv_val.string);
+    defer vm.gcAllocator().free(adv_val.string);
 
     try std.testing.expect(std.mem.indexOf(u8, adv_val.string, "# service=git-receive-pack\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, adv_val.string, "capabilities^{}") != null);
@@ -459,7 +459,7 @@ test "git cat file syscall with mock cas" {
 
     var cat_args = [_]Value{ Value{ .string = "site.git" }, Value{ .string = "index.html" } };
     const cat_val = try nativeSysGitCatFile(&vm, &cat_args);
-    defer vm.allocator.free(cat_val.string);
+    defer vm.gcAllocator().free(cat_val.string);
 
     try std.testing.expectEqualStrings("<h1>Deployed via MicrOS Sovereign Git</h1>\n", cat_val.string);
 }

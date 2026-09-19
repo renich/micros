@@ -1,13 +1,9 @@
 fn read_file(path) {
-    fd = sys_open(path);
-    if (fd < 0) {
-        print("Error: Could not open file.");
-        print(path);
-        return "";
+    content = sys_catalog_read(path);
+    if (len(content) > 0) {
+        return content;
     }
-    content = sys_read(fd, 65536);
-    sys_close(fd);
-    return content;
+    return sys_bundle_read(path);
 }
 
 fn compiler_main(path) {

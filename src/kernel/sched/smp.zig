@@ -109,6 +109,9 @@ pub const SmpTopology = struct {
     }
 
     pub fn getCurrentCore(self: *SmpTopology) *CpuCore {
+        const flags = if (!builtin.is_test) io.pushfqAndCli() else 0;
+        defer if (!builtin.is_test) io.popfq(flags);
+
         const apic_id = apic.getApicId();
         for (&self.cores) |*core| {
             if (core.state == .online and core.apic_id == apic_id) {

@@ -18,7 +18,7 @@ pub const CapError = error{
 
 pub const DEFAULT_CSPACE_CAPACITY: usize = 256;
 
-pub var unmap_extent_fn: ?*const fn (virt: u64, size: usize) void = null;
+pub var unmap_extent_fn: ?*const fn (virt: u64, size: usize) bool = null;
 
 pub const CSpace = struct {
     entries: []align(4096) Capability,
@@ -108,7 +108,9 @@ pub const CSpace = struct {
         if (cap.cap_type == .memory_extent and cap.data_addr != 0 and cap.data_size != 0) {
             if (unmap_extent_fn) |unmap_fn| {
                 const len: usize = std.math.cast(usize, cap.data_size) orelse 0;
-                unmap_fn(cap.data_addr, len);
+                if (!unmap_fn(cap.data_addr, len)) {
+                    return CapError.PermissionDenied;
+                }
             }
         }
 
@@ -323,9 +325,11 @@ test "SPEC-TECH-MIN-001: Formal Attenuation Matrix & Monotonic Security Gate Aud
 
 var test_unmapped_virt: u64 = 0;
 var test_unmapped_size: usize = 0;
-fn mockUnmapExtent(virt: u64, size: usize) void {
+var test_unmap_result: bool = true;
+fn mockUnmapExtent(virt: u64, size: usize) bool {
     test_unmapped_virt = virt;
     test_unmapped_size = size;
+    return test_unmap_result;
 }
 
 test "CSpace revoking memory_extent invokes unmap and TLB flush hook" {
@@ -336,6 +340,7 @@ test "CSpace revoking memory_extent invokes unmap and TLB flush hook" {
     defer unmap_extent_fn = null;
     test_unmapped_virt = 0;
     test_unmapped_size = 0;
+    test_unmap_result = true;
 
     const mem_cap = Capability{
         .cap_type = .memory_extent,
@@ -350,4 +355,24 @@ test "CSpace revoking memory_extent invokes unmap and TLB flush hook" {
     try std.testing.expectEqual(@as(u64, 0x4000_0000), test_unmapped_virt);
     try std.testing.expectEqual(@as(usize, 8192), test_unmapped_size);
     try std.testing.expect(cspace.get(h) == null);
+}
+
+test "CSpace revoking pinned memory_extent rejects revocation" {
+    const cspace = try CSpace.init(std.testing.allocator, 16);
+    defer cspace.deinit(std.testing.allocator);
+
+    unmap_extent_fn = mockUnmapExtent;
+    defer unmap_extent_fn = null;
+    test_unmap_result = false;
+
+    const mem_cap = Capability{
+        .cap_type = .memory_extent,
+        .rights = Rights.READ | Rights.WRITE | Rights.REVOKE,
+        .object_id = 1,
+        .data_addr = 0x4000_0000,
+        .data_size = 4096,
+    };
+    const h = try cspace.insert(mem_cap);
+    try std.testing.expectError(CapError.PermissionDenied, cspace.revoke(h));
+    try std.testing.expect(cspace.get(h) != null);
 }

@@ -86,7 +86,7 @@ fn nativeSysBlockDevName(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     const len = std.mem.indexOfScalar(u8, &dev.name, 0) orelse dev.name.len;
-    const duped = try vm.allocator.dupe(u8, dev.name[0..len]);
+    const duped = try vm.gcAllocator().dupe(u8, dev.name[0..len]);
     return Value{ .string = duped };
 }
 
@@ -245,12 +245,12 @@ fn nativeSysRebuildStatus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const engine = active_rebuild_engine orelse return error.RebuildEngineNotInitialized;
     const manifest = try engine.getActiveManifest();
 
-    var fields = try vm.allocator.alloc(Value, 4);
+    var fields = try vm.gcAllocator().alloc(Value, 4);
     fields[0] = Value{ .integer = @intCast(manifest.generation) };
     fields[1] = Value{ .boolean = manifest.isTrial() };
     fields[2] = Value{ .boolean = manifest.isStable() };
 
-    const k_hash_hex = try vm.allocator.alloc(u8, 64);
+    const k_hash_hex = try vm.gcAllocator().alloc(u8, 64);
     @import("chunk.zig").formatHexHash(&manifest.kernel_hash, k_hash_hex[0..64]);
     fields[3] = Value{ .string = k_hash_hex };
 
@@ -285,7 +285,7 @@ fn nativeSysBundlePack(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         };
     }
 
-    const bundle_bytes = try bundle_writer.packBundle(vm.allocator, entries);
+    const bundle_bytes = try bundle_writer.packBundle(vm.gcAllocator(), entries);
     return Value{ .string = bundle_bytes };
 }
 

@@ -228,10 +228,11 @@ fn handleCapRevoke(cap_slot: u64) i64 {
 }
 
 fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
+    if ((phys & 0xFFF) != 0 or (virt & 0xFFF) != 0) return -4;
+    if (virt >= 0x0000_8000_0000_0000) return -4;
     const caller = getCallerActor() orelse return -1;
     defer releaseActorRef(caller);
     if (!caller.authorizesPhysicalExtent(phys, 4096, Rights.WRITE)) return -1;
-    if (virt >= 0x0000_8000_0000_0000 or (virt & 0xFFF) != 0) return -4;
     if (caller.page_table_base == 0) return -2;
     const sanitized_flags = (flags & ~vmm.PAGE_ANON) | vmm.PAGE_PRESENT | vmm.PAGE_USER | vmm.PAGE_MMIO;
     if (!vmm.mapPage(caller.page_table_base, virt, phys, sanitized_flags)) {
@@ -241,6 +242,7 @@ fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
 }
 
 fn handleMemUnmap(virt: u64) i64 {
+    if ((virt & 0xFFF) != 0 or virt >= 0x0000_8000_0000_0000) return -4;
     const caller = getCallerActor() orelse return -1;
     defer releaseActorRef(caller);
     if (!caller.hasCap(.memory_extent, Rights.WRITE) and caller.id != actor_mod.GENESIS_ACTOR_ID) return -1;

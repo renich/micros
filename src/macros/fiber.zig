@@ -150,11 +150,13 @@ extern fn switchContextSysV(from_rsp: *usize, to_rsp: usize) void;
 extern fn switchContextWin64(from_rsp: *usize, to_rsp: usize) void;
 
 pub fn switchContext(from_rsp: *usize, to_rsp: usize) void {
+    asm volatile ("" ::: .{ .memory = true });
     if (builtin.os.tag == .uefi) {
         switchContextWin64(from_rsp, to_rsp);
     } else {
         switchContextSysV(from_rsp, to_rsp);
     }
+    asm volatile ("" ::: .{ .memory = true });
 }
 
 pub const MAX_SMP_CORES: usize = 16;

@@ -90,14 +90,18 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     return true;
 }
 
-pub fn unmapExtent(virt: u64, size: usize) void {
+pub fn unmapExtent(virt: u64, size: usize) bool {
     const cr3 = readCr3();
     const pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
-    if (pml4 == 0 or size == 0) return;
+    if (pml4 == 0 or size == 0) return true;
     var offset: usize = 0;
+    var all_unmapped = true;
     while (offset < size) : (offset += 4096) {
-        _ = unmapPage(pml4, virt + offset);
+        if (!unmapPage(pml4, virt + offset)) {
+            all_unmapped = false;
+        }
     }
+    return all_unmapped;
 }
 
 pub fn protectPage(pml4_phys: u64, virt: u64, prot: usize) bool {

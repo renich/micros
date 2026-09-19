@@ -290,26 +290,26 @@ test "catalog syscall registration and execution" {
 
     var write_args = [_]Value{ Value{ .string = "notes.txt" }, Value{ .string = "Remember to buy milk" } };
     const write_val = try nativeSysCatalogWrite(&vm, &write_args);
-    defer vm.allocator.free(write_val.string);
+    defer vm.gcAllocator().free(write_val.string);
     try std.testing.expectEqual(@as(usize, 64), write_val.string.len);
 
     var list_args = [_]Value{Value{ .string = "" }};
     const list_val = try nativeSysCatalogList(&vm, &list_args);
-    defer vm.allocator.free(list_val.string);
+    defer vm.gcAllocator().free(list_val.string);
     try std.testing.expect(std.mem.indexOf(u8, list_val.string, "notes.txt") != null);
 
     const status_val = try nativeSysCatalogStatus(&vm, &[_]Value{});
-    defer vm.allocator.free(status_val.string);
+    defer vm.gcAllocator().free(status_val.string);
     try std.testing.expect(std.mem.indexOf(u8, status_val.string, "\"entries\":1") != null);
 
     var read_args = [_]Value{Value{ .string = "notes.txt" }};
     const read_val = try nativeSysCatalogRead(&vm, &read_args);
-    defer vm.allocator.free(read_val.string);
+    defer vm.gcAllocator().free(read_val.string);
     try std.testing.expect(read_val.string.len > 0);
 
     var commit_args = [_]Value{Value{ .string = "test commit" }};
     const commit_val = try nativeSysCatalogCommit(&vm, &commit_args);
-    defer vm.allocator.free(commit_val.string);
+    defer vm.gcAllocator().free(commit_val.string);
     try std.testing.expectEqual(@as(usize, 64), commit_val.string.len);
 
     var del_args = [_]Value{Value{ .string = "notes.txt" }};

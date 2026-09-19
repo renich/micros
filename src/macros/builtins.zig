@@ -2,7 +2,6 @@ const std = @import("std");
 const eval = @import("eval.zig");
 const Value = eval.Value;
 const chunk_mod = @import("chunk.zig");
-const sys = @import("../sys.zig");
 const serializer = @import("serializer.zig");
 const vm_mod = @import("vm.zig");
 const VM = vm_mod.VM;
@@ -192,59 +191,6 @@ pub fn nativeSubstr(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .string = args[0].string[start..end] };
 }
 
-pub fn nativeSysOpen(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .string) return InterpretError.RuntimeError;
-    const path = args[0].string;
-
-    var buf: [1024]u8 = undefined;
-    if (path.len >= buf.len) return InterpretError.RuntimeError;
-    @memcpy(buf[0..path.len], path);
-    buf[path.len] = 0;
-
-    const fd = sys.io.open(@ptrCast(buf[0 .. path.len + 1].ptr), 0, 0) catch -1;
-    return eval.Value{ .integer = fd };
-}
-
-pub fn nativeSysRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    if (args.len != 2 or args[0] != .integer or args[1] != .integer) return InterpretError.RuntimeError;
-    if (args[0].integer < 0 or args[1].integer < 0) return InterpretError.RuntimeError;
-    const fd = @as(i32, @intCast(args[0].integer));
-    const size = @as(usize, @intCast(args[1].integer));
-
-    const buf = try vm.allocator.alloc(u8, size);
-    const bytes_read = sys.io.read(fd, buf) catch 0;
-    if (bytes_read == 0) {
-        vm.allocator.free(buf);
-        return eval.Value{ .string = "" };
-    }
-    const final_buf = try vm.gcAllocator().alloc(u8, bytes_read);
-    @memcpy(final_buf, buf[0..bytes_read]);
-    vm.allocator.free(buf);
-    return eval.Value{ .string = final_buf };
-}
-
-pub fn nativeSysWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 2 or args[0] != .integer or args[1] != .string) return InterpretError.RuntimeError;
-    if (args[0].integer < 0) return InterpretError.RuntimeError;
-    const fd = @as(i32, @intCast(args[0].integer));
-    const str = args[1].string;
-
-    const written = sys.io.write(fd, str) catch 0;
-    return eval.Value{ .integer = @as(i64, @intCast(written)) };
-}
-
-pub fn nativeSysClose(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .integer) return InterpretError.RuntimeError;
-    if (args[0].integer < 0) return InterpretError.RuntimeError;
-    const fd = @as(i32, @intCast(args[0].integer));
-    sys.io.close(fd) catch {};
-    return eval.Value{ .nil = {} };
-}
-
 pub var active_bundle_data: ?[]const u8 = null;
 
 pub fn setActiveBundle(bundle_bytes: ?[]const u8) void {
@@ -276,10 +222,6 @@ pub fn registerBuiltins(vm: *VM) !void {
     try vm.globals.put("make_bool", Value{ .native = nativeMakeBool });
     try vm.globals.put("exec_chunk", Value{ .native = nativeExecChunk });
     try vm.globals.put("bundle_get", Value{ .native = nativeBundleGet });
-    try vm.globals.put("sys_open", Value{ .native = nativeSysOpen });
-    try vm.globals.put("sys_read", Value{ .native = nativeSysRead });
-    try vm.globals.put("sys_write", Value{ .native = nativeSysWrite });
-    try vm.globals.put("sys_close", Value{ .native = nativeSysClose });
     try vm.globals.put("chunk_serialize", Value{ .native = nativeChunkSerialize });
     try vm.globals.put("chunk_hash", Value{ .native = nativeChunkHash });
 }

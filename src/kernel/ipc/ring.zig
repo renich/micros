@@ -175,7 +175,8 @@ pub const SpscRingBuffer = extern struct {
     pub fn isFull(self: *const SpscRingBuffer) bool {
         const t = self.tail.load(.acquire);
         const h = self.head.load(.acquire);
-        return ((t + 1) % self.capacity) == h;
+        const next_t = if (t + 1 >= self.capacity) 0 else t + 1;
+        return next_t == h;
     }
 
     pub fn isEmpty(self: *const SpscRingBuffer) bool {
@@ -187,9 +188,10 @@ pub const SpscRingBuffer = extern struct {
     pub fn writeByte(self: *SpscRingBuffer, byte: u8) bool {
         const t = self.tail.load(.monotonic);
         const h = self.head.load(.acquire);
-        if (((t + 1) % self.capacity) == h) return false;
+        const next_t = if (t + 1 >= self.capacity) 0 else t + 1;
+        if (next_t == h) return false;
         self.buffer[t] = byte;
-        self.tail.store((t + 1) % self.capacity, .release);
+        self.tail.store(next_t, .release);
         return true;
     }
 
@@ -198,7 +200,8 @@ pub const SpscRingBuffer = extern struct {
         const t = self.tail.load(.acquire);
         if (h == t) return null;
         const b = self.buffer[h];
-        self.head.store((h + 1) % self.capacity, .release);
+        const next_h = if (h + 1 >= self.capacity) 0 else h + 1;
+        self.head.store(next_h, .release);
         return b;
     }
 };
