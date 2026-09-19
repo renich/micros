@@ -172,6 +172,7 @@ fn nativeSysActorTerminate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (!checkCallerAuthority(.actor_control, cap_mod.Rights.WRITE)) return error.PermissionDenied;
     const ctx = active_ctx orelse return error.NoContext;
     const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
+    if (id == actor_mod.GENESIS_ACTOR_ID) return error.PermissionDenied;
     try ctx.registry.terminate(vm.allocator, id);
     return Value{ .boolean = true };
 }
@@ -414,7 +415,7 @@ fn nativeSysCasPut(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const put_fn = ctx.cas_put_fn orelse return error.NoStorageHandler;
     var hex_buf: [64]u8 = undefined;
     put_fn(args[0].string, &hex_buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, &hex_buf);
+    const duped = try vm.gcAllocator().dupe(u8, &hex_buf);
     return Value{ .string = duped };
 }
 
@@ -427,7 +428,7 @@ fn nativeSysCasGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const buf = try vm.allocator.alloc(u8, 4096);
     defer vm.allocator.free(buf);
     const len = get_fn(args[0].string, buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, buf[0..len]);
+    const duped = try vm.gcAllocator().dupe(u8, buf[0..len]);
     return Value{ .string = duped };
 }
 
@@ -440,7 +441,7 @@ fn nativeSysActorPersist(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
     var hex_buf: [64]u8 = undefined;
     persist_fn(id, &hex_buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, &hex_buf);
+    const duped = try vm.gcAllocator().dupe(u8, &hex_buf);
     return Value{ .string = duped };
 }
 
@@ -461,7 +462,7 @@ fn nativeSysBundleRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const ctx = active_ctx orelse return error.NoContext;
     const read_fn = ctx.bundle_read_fn orelse return Value{ .string = "" };
     if (read_fn(args[0].string)) |content| {
-        const duped = try vm.allocator.dupe(u8, content);
+        const duped = try vm.gcAllocator().dupe(u8, content);
         return Value{ .string = duped };
     }
     return Value{ .string = "" };
@@ -591,7 +592,11 @@ test "ABI actor lifecycle native bindings" {
 
     var registry = ActorRegistry.init();
     var supervisor = try Actor.init(allocator, 0, "genesis", 16, 0);
-    defer supervisor.deinit(allocator);
+    defer {
+        registry.actors[0] = null;
+        supervisor.deinit(allocator);
+    }
+    try registry.register(supervisor);
 
     _ = try supervisor.cspace.insert(cap_mod.Capability{
         .cap_type = .actor_control,
@@ -613,20 +618,23 @@ test "ABI actor lifecycle native bindings" {
 
     var empty_args = [_]Value{};
     const count_val = try nativeSysActorCount(&vm, &empty_args);
-    try std.testing.expectEqual(@as(i64, 0), count_val.integer);
+    try std.testing.expectEqual(@as(i64, 1), count_val.integer);
 
     var spawn_args = [_]Value{Value{ .string = "child_1" }};
     const spawn_val = try nativeSysActorSpawn(&vm, &spawn_args);
-    try std.testing.expectEqual(@as(i64, 0), spawn_val.integer);
-    try std.testing.expectEqual(@as(usize, 1), registry.active_count);
+    try std.testing.expectEqual(@as(i64, 1), spawn_val.integer);
+    try std.testing.expectEqual(@as(usize, 2), registry.active_count);
 
     const count2 = try nativeSysActorCount(&vm, &empty_args);
-    try std.testing.expectEqual(@as(i64, 1), count2.integer);
+    try std.testing.expectEqual(@as(i64, 2), count2.integer);
 
-    var term_args = [_]Value{Value{ .integer = 0 }};
+    var term_genesis = [_]Value{Value{ .integer = 0 }};
+    try std.testing.expectError(error.PermissionDenied, nativeSysActorTerminate(&vm, &term_genesis));
+
+    var term_args = [_]Value{Value{ .integer = 1 }};
     const term_val = try nativeSysActorTerminate(&vm, &term_args);
     try std.testing.expectEqual(true, term_val.boolean);
-    try std.testing.expectEqual(@as(usize, 0), registry.active_count);
+    try std.testing.expectEqual(@as(usize, 1), registry.active_count);
 }
 
 test "ABI bundle read native binding" {

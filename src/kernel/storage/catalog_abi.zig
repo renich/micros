@@ -156,7 +156,7 @@ pub fn nativeSysCatalogWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     global_catalog.writeBlob(args[0].string, args[1].string, &hex_buf) catch {
         return Value{ .string = "" };
     };
-    const duped = try vm.allocator.dupe(u8, &hex_buf);
+    const duped = try vm.gcAllocator().dupe(u8, &hex_buf);
     return Value{ .string = duped };
 }
 
@@ -168,7 +168,7 @@ pub fn nativeSysCatalogRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const scratch = vm.allocator.alloc(u8, cas_mod.MAX_CHUNK_PAYLOAD_SIZE) catch return Value{ .string = "" };
     defer vm.allocator.free(scratch);
     const n = global_catalog.readBlob(args[0].string, scratch) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, scratch[0..n]);
+    const duped = try vm.gcAllocator().dupe(u8, scratch[0..n]);
     return Value{ .string = duped };
 }
 
@@ -182,7 +182,7 @@ pub fn nativeSysCatalogList(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(scratch);
 
     const n = global_catalog.formatList(prefix, scratch) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, scratch[0..n]);
+    const duped = try vm.gcAllocator().dupe(u8, scratch[0..n]);
     return Value{ .string = duped };
 }
 
@@ -202,7 +202,7 @@ pub fn nativeSysCatalogCommit(vm_ptr: *anyopaque, args: []Value) anyerror!Value 
 
     var hex_buf: [chunk_mod.HEX_HASH_SIZE]u8 = undefined;
     global_catalog.commit(msg, &hex_buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, &hex_buf);
+    const duped = try vm.gcAllocator().dupe(u8, &hex_buf);
     return Value{ .string = duped };
 }
 
@@ -213,7 +213,7 @@ pub fn nativeSysCatalogStatus(vm_ptr: *anyopaque, args: []Value) anyerror!Value 
 
     var buf: [256]u8 = undefined;
     const n = global_catalog.formatStatus(&buf) catch return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, buf[0..n]);
+    const duped = try vm.gcAllocator().dupe(u8, buf[0..n]);
     return Value{ .string = duped };
 }
 

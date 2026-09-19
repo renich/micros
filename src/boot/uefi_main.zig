@@ -62,10 +62,7 @@ fn initMemoryMap(bs: *const uefi.tables.BootServices, info: *BootInfo) void {
     info.memory_map_entries = idx;
 }
 
-pub fn main() uefi.Status {
-    const con_out = uefi.system_table.con_out orelse return .device_error;
-    _ = con_out.outputString(&[_:0]u16{ 'M', 'i', 'c', 'r', 'O', 'S', ' ', 'U', 'E', 'F', 'I', ' ', 'B', 'o', 'o', 't', 'l', 'o', 'a', 'd', 'e', 'r', '\r', '\n', 0 }) catch false;
-
+fn initBootInfo(bs: ?*const uefi.tables.BootServices) void {
     global_boot_info.magic = boot_info_mod.BOOT_INFO_MAGIC;
     global_boot_info.hhdm_offset = 0;
     global_boot_info.memory_map_entries = 0;
@@ -82,23 +79,42 @@ pub fn main() uefi.Status {
         .format = .bgr_888,
     };
 
-    if (uefi.system_table.boot_services) |bs| {
-        initFramebuffer(bs, &global_boot_info.framebuffer);
-        initMemoryMap(bs, &global_boot_info);
+    if (bs) |services| {
+        initFramebuffer(services, &global_boot_info.framebuffer);
+        initMemoryMap(services, &global_boot_info);
     }
+}
+
+fn exitBootServicesOrHalt(bs: *uefi.tables.BootServices, con_out: anytype) void {
+    var retries: usize = 0;
+    var exited: bool = false;
+    while (retries < 3) : (retries += 1) {
+        initMemoryMap(bs, &global_boot_info);
+        const mmap = bs.getMemoryMap(&uefi_mmap_buffer) catch break;
+        if (bs.exitBootServices(uefi.handle, mmap.info.key)) |_| {
+            exited = true;
+            break;
+        } else |_| {}
+    }
+    if (!exited) {
+        _ = con_out.outputString(&[_:0]u16{ '[', 'b', 'o', 'o', 't', ']', ' ', 'F', 'A', 'T', 'A', 'L', ':', ' ', 'E', 'x', 'i', 't', 'B', 'o', 'o', 't', 'S', 'e', 'r', 'v', 'i', 'c', 'e', 's', ' ', 'f', 'a', 'i', 'l', 'e', 'd', '\r', '\n', 0 }) catch false;
+        while (true) {
+            asm volatile ("hlt");
+        }
+    }
+}
+
+pub fn main() uefi.Status {
+    const con_out = uefi.system_table.con_out orelse return .device_error;
+    _ = con_out.outputString(&[_:0]u16{ 'M', 'i', 'c', 'r', 'O', 'S', ' ', 'U', 'E', 'F', 'I', ' ', 'B', 'o', 'o', 't', 'l', 'o', 'a', 'd', 'e', 'r', '\r', '\n', 0 }) catch false;
+
+    initBootInfo(uefi.system_table.boot_services);
 
     _ = con_out.outputString(&[_:0]u16{ '[', 'b', 'o', 'o', 't', ']', ' ', 'B', 'o', 'o', 't', 'I', 'n', 'f', 'o', ' ', 'P', 'r', 'e', 'p', 'a', 'r', 'e', 'd', '\r', '\n', 0 }) catch false;
     _ = con_out.outputString(&[_:0]u16{ '[', 'b', 'o', 'o', 't', ']', ' ', 'J', 'u', 'm', 'p', 'i', 'n', 'g', ' ', 't', 'o', ' ', 'K', 'e', 'r', 'n', 'e', 'l', '.', '.', '.', '\r', '\n', 0 }) catch false;
 
     if (uefi.system_table.boot_services) |bs| {
-        var retries: usize = 0;
-        while (retries < 3) : (retries += 1) {
-            initMemoryMap(bs, &global_boot_info);
-            const mmap = bs.getMemoryMap(&uefi_mmap_buffer) catch break;
-            if (bs.exitBootServices(uefi.handle, mmap.info.key)) |_| {
-                break;
-            } else |_| {}
-        }
+        exitBootServicesOrHalt(bs, con_out);
     }
 
     kernel_main.kmain(&global_boot_info);

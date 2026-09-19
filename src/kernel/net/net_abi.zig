@@ -15,7 +15,6 @@ const CapType = cap_mod.CapType;
 const Rights = cap_mod.Rights;
 
 pub const NET_RECV_SCRATCH_SIZE: usize = 16384;
-var net_recv_scratch: [NET_RECV_SCRATCH_SIZE]u8 = undefined;
 
 pub var active_net_stack: ?*NetworkStack = null;
 pub var caller_auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool = null;
@@ -86,12 +85,29 @@ pub fn nativeSysNetRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const net_stack = active_net_stack orelse return Value{ .string = "" };
     const conn_id = castToU32(args[0].integer) orelse return Value{ .string = "" };
     const max_len_val = castToU32(args[1].integer) orelse return Value{ .string = "" };
-    const to_read = @min(@as(usize, max_len_val), net_recv_scratch.len);
+    const to_read = @min(@as(usize, max_len_val), NET_RECV_SCRATCH_SIZE);
+    if (to_read == 0) return Value{ .string = "" };
     const caller_id = getCallerActorId();
-    const n = net_stack.recvServer(conn_id, caller_id, net_recv_scratch[0..to_read]);
-    if (n == 0) return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, net_recv_scratch[0..n]);
-    return Value{ .string = duped };
+
+    var stack_buf: [1500]u8 = undefined;
+    if (to_read <= stack_buf.len) {
+        const n = net_stack.recvServer(conn_id, caller_id, stack_buf[0..to_read]);
+        if (n == 0) return Value{ .string = "" };
+        const duped = try vm.gcAllocator().dupe(u8, stack_buf[0..n]);
+        return Value{ .string = duped };
+    }
+
+    const dyn_buf = try vm.gcAllocator().alloc(u8, to_read);
+    const n = net_stack.recvServer(conn_id, caller_id, dyn_buf);
+    if (n == 0) {
+        vm.gcAllocator().free(dyn_buf);
+        return Value{ .string = "" };
+    }
+    if (n < to_read) {
+        const shrunk = try vm.gcAllocator().realloc(dyn_buf, n);
+        return Value{ .string = shrunk };
+    }
+    return Value{ .string = dyn_buf };
 }
 
 pub fn nativeSysNetSend(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

@@ -139,6 +139,7 @@ fn nativeSysDiskEspFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysDiskEspWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
+    try verifyStorageAuthority();
     if (args.len != 3 or args[0] != .integer or args[1] != .string or args[2] != .string) return error.InvalidArgs;
     const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
@@ -156,6 +157,7 @@ fn nativeSysDiskEspWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysDiskEspStageBootloader(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    try verifyStorageAuthority();
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
@@ -214,15 +216,17 @@ fn nativeSysCasConfirmBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysKernelSynthesize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    try verifyStorageAuthority();
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const bundle_bytes = args[0].string;
 
-    const kernel_bytes = try kernel_synthesizer.synthesizeKernel(vm.allocator, bundle_bytes);
+    const kernel_bytes = try kernel_synthesizer.synthesizeKernel(vm.gcAllocator(), bundle_bytes);
     return Value{ .string = kernel_bytes };
 }
 
 fn nativeSysKernelStageUpdate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    try verifyStorageAuthority();
     if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
     const kernel_data = args[0].string;
     const bundle_data = args[1].string;
@@ -230,7 +234,7 @@ fn nativeSysKernelStageUpdate(vm_ptr: *anyopaque, args: []Value) anyerror!Value 
     const engine = active_rebuild_engine orelse return error.RebuildEngineNotInitialized;
     const manifest_hash = try engine.stageSystemUpdate(kernel_data, bundle_data, "", 0);
 
-    const hex_slice = try vm.allocator.alloc(u8, 64);
+    const hex_slice = try vm.gcAllocator().alloc(u8, 64);
     @import("chunk.zig").formatHexHash(&manifest_hash, hex_slice[0..64]);
     return Value{ .string = hex_slice };
 }

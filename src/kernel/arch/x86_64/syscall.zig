@@ -185,6 +185,7 @@ fn handleActorKill(id_val: u64) i64 {
     const alloc = kernel_allocator orelse return -2;
     if (id_val > std.math.maxInt(u32)) return -3;
     const id: u32 = @intCast(id_val);
+    if (id == actor_mod.GENESIS_ACTOR_ID) return -1;
     reg.terminate(alloc, id) catch return -4;
     return 0;
 }

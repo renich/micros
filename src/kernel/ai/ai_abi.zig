@@ -49,7 +49,7 @@ pub fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const prompt = args[0].string;
     const len = infer_fn(prompt.ptr, prompt.len, &ai_prompt_resp_buf, ai_prompt_resp_buf.len);
     if (len == 0) return Value{ .string = "" };
-    const duped = try vm.allocator.dupe(u8, ai_prompt_resp_buf[0..len]);
+    const duped = try vm.gcAllocator().dupe(u8, ai_prompt_resp_buf[0..len]);
     return Value{ .string = duped };
 }
 
@@ -58,7 +58,7 @@ pub fn nativeSysAiExtractCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value 
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const resp = args[0].string;
     if (ai_mod.client.AiClient.extractCodeBlock(resp, &ai_extract_buf)) |len| {
-        const duped = try vm.allocator.dupe(u8, ai_extract_buf[0..len]);
+        const duped = try vm.gcAllocator().dupe(u8, ai_extract_buf[0..len]);
         return Value{ .string = duped };
     }
     return Value{ .string = "" };
@@ -94,6 +94,6 @@ pub fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     const result = disp.dispatch(call);
     const len = try ai_mod.tool_parser.formatResultJson(result, &ai_tool_res_buf);
-    const duped = try vm.allocator.dupe(u8, ai_tool_res_buf[0..len]);
+    const duped = try vm.gcAllocator().dupe(u8, ai_tool_res_buf[0..len]);
     return Value{ .string = duped };
 }
