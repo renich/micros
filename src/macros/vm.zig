@@ -84,6 +84,14 @@ pub const VM = struct {
         self.module_resolver = resolver;
     }
 
+    pub fn pauseGc(self: *VM) void {
+        if (self.gc_heap) |h| h.in_gc = true;
+    }
+
+    pub fn resumeGc(self: *VM) void {
+        if (self.gc_heap) |h| h.in_gc = false;
+    }
+
     pub fn gcAllocator(self: *VM) std.mem.Allocator {
         return if (self.gc_heap) |h| h.allocator() else self.allocator;
     }
@@ -100,9 +108,7 @@ pub const VM = struct {
             self.allocator.destroy(ch);
         }
         self.dynamic_chunks.deinit(self.allocator);
-        for (self.allocated_keys.items) |k| {
-            self.allocator.free(k);
-        }
+        for (self.allocated_keys.items) |k| self.allocator.free(k);
         self.allocated_keys.deinit(self.allocator);
         self.globals.deinit();
     }
@@ -126,38 +132,12 @@ pub const VM = struct {
         try res;
     }
 
-    fn valueReferencesChunk(val: Value, target_ptr: *anyopaque) bool {
-        return switch (val) {
-            .function => |f| f.chunk == target_ptr,
-            .closure => |c| blk: {
-                if (c.function.chunk == target_ptr) break :blk true;
-                for (c.upvalues) |uv| {
-                    if (valueReferencesChunk(uv.location.*, target_ptr)) break :blk true;
-                }
-                break :blk false;
-            },
-            .array => |arr| blk: {
-                for (arr) |item| {
-                    if (valueReferencesChunk(item, target_ptr)) break :blk true;
-                }
-                break :blk false;
-            },
-            .dict => |dict| blk: {
-                for (dict.entries) |entry| {
-                    if (valueReferencesChunk(entry.value, target_ptr)) break :blk true;
-                }
-                break :blk false;
-            },
-            else => false,
-        };
-    }
-
     pub fn isChunkReferenced(self: *VM, target_chunk: *chunk_mod.Chunk) bool {
         if (self.chunk == target_chunk) return true;
         const target_ptr: *anyopaque = @ptrCast(target_chunk);
 
         for (self.stack[0..self.sp]) |val| {
-            if (valueReferencesChunk(val, target_ptr)) return true;
+            if (tracer.valueReferencesChunk(val, target_ptr)) return true;
         }
         for (self.frames[0..self.frame_count]) |frame| {
             if (frame.closure) |cls| {
@@ -166,7 +146,7 @@ pub const VM = struct {
         }
         var it = self.globals.iterator();
         while (it.next()) |entry| {
-            if (valueReferencesChunk(entry.value_ptr.*, target_ptr)) return true;
+            if (tracer.valueReferencesChunk(entry.value_ptr.*, target_ptr)) return true;
         }
         return false;
     }
@@ -373,6 +353,9 @@ pub const VM = struct {
         if (self.sp == 0) return InterpretError.StackUnderflow;
         const constant = self.stack[self.sp - 1];
         if (constant != .function) return InterpretError.RuntimeError;
+
+        self.pauseGc();
+        defer self.resumeGc();
 
         const alloc = self.gcAllocator();
         var closure = try alloc.create(eval.Closure);
@@ -685,6 +668,10 @@ pub const VM = struct {
     fn execBuildDict(self: *VM) !void {
         const arg_count = self.readByte();
         if (self.sp < @as(usize, arg_count) * 2) return InterpretError.StackUnderflow;
+
+        self.pauseGc();
+        defer self.resumeGc();
+
         const alloc = self.gcAllocator();
         const dict = try alloc.create(eval.Dict);
         errdefer alloc.destroy(dict);

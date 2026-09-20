@@ -39,7 +39,11 @@ pub const ICR_TRIGGER_EDGE: u32 = 0 << 15;
 
 pub var lapic_virt_base: u64 = DEFAULT_LAPIC_BASE;
 pub var lapic_enabled: bool = false;
-pub var total_ticks: u64 = 0;
+pub var total_ticks = std.atomic.Value(u64).init(0);
+
+pub inline fn getTicks() u64 {
+    return total_ticks.load(.monotonic);
+}
 
 pub fn readReg(reg: u32) u32 {
     if (builtin.is_test or !lapic_enabled) return 0;

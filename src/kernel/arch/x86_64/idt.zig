@@ -306,8 +306,10 @@ fn keyboardInterruptHandler() callconv(.naked) void {
 }
 
 export fn apicTimerHandlerZig() void {
-    apic.total_ticks +%= 1;
     const core = smp.global_topology.getCurrentCore();
+    if (core.core_id == 0) {
+        _ = apic.total_ticks.fetchAdd(1, .monotonic);
+    }
     _ = smp.global_topology.tick(core.core_id);
     apic.eoi();
 }

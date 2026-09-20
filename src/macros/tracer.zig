@@ -84,6 +84,32 @@ pub fn traceExports(heap: *Heap, exports: ?*std.ArrayList(eval.Dict.Entry)) void
     }
 }
 
+pub fn valueReferencesChunk(val: Value, target_ptr: *anyopaque) bool {
+    return switch (val) {
+        .function => |f| f.chunk == target_ptr,
+        .closure => |c| blk: {
+            if (c.function.chunk == target_ptr) break :blk true;
+            for (c.upvalues) |uv| {
+                if (valueReferencesChunk(uv.location.*, target_ptr)) break :blk true;
+            }
+            break :blk false;
+        },
+        .array => |arr| blk: {
+            for (arr) |item| {
+                if (valueReferencesChunk(item, target_ptr)) break :blk true;
+            }
+            break :blk false;
+        },
+        .dict => |dict| blk: {
+            for (dict.entries) |entry| {
+                if (valueReferencesChunk(entry.value, target_ptr)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
 test "tracer compiles and marks basic types" {
     // Tests for tracer logic are covered via vm and gc integration tests
 }

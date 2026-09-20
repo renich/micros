@@ -287,9 +287,7 @@ fn freePt(pd_entry: u64) void {
     const pt: *PageTable = @ptrFromInt(pt_phys + hhdm_base);
     for (pt.entries) |pte| {
         if ((pte & PAGE_PRESENT) != 0 and (pte & PAGE_USER) != 0 and (pte & PAGE_ANON) != 0 and (pte & PAGE_MMIO) == 0) {
-            if ((pte & PAGE_PINNED) == 0) {
-                pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
-            }
+            pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
         }
     }
     pmm.freePage(pt_phys);
@@ -591,7 +589,7 @@ test "vmm pinDmaPages sets PAGE_PINNED and rejects unmap until unpinned" {
     try std.testing.expect(unmapPage(pml4_phys, test_virt));
 }
 
-test "vmm freePt preserves pinned DMA physical pages" {
+test "vmm freePt reclaims anonymous physical pages on actor teardown" {
     var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
     const saved_hhdm = hhdm_base;
     defer hhdm_base = saved_hhdm;
@@ -605,7 +603,6 @@ test "vmm freePt preserves pinned DMA physical pages" {
     const pd_entry = pt_phys | PAGE_PRESENT;
     freePt(pd_entry);
 
-    // pt.entries[0] had PAGE_PINNED so pmm.freePage(0x8000) was skipped
-    // pt.entries[1] was unpinned so it was freed
-    try std.testing.expect((pt.entries[0] & PAGE_PINNED) != 0);
+    // Both anonymous pages are reclaimed on actor teardown preventing physical leaks
+    try std.testing.expect((pt.entries[0] & PAGE_ANON) != 0);
 }

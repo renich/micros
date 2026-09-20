@@ -675,7 +675,7 @@ pub const NetworkStack = struct {
 
     pub fn pollTcpServer(self: *NetworkStack) void {
         _ = self.poll();
-        const current_ticks = apic.total_ticks;
+        const current_ticks = apic.getTicks();
         const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
         for (&self.server_conns) |*conn| {
             self.retransmitServerConn(conn, current_ticks, my_ip);

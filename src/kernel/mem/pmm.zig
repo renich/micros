@@ -84,15 +84,19 @@ fn reserveRange(phys_base: u64, size_bytes: usize) void {
     for (0..page_count) |p| {
         const page = start_page + p;
         if (page < total_pages) {
-            setBit(page);
-            if (free_pages > 0) free_pages -= 1;
+            if (!testBit(page)) {
+                setBit(page);
+                if (free_pages > 0) free_pages -= 1;
+            }
         }
     }
 }
 
 fn reserveCriticalPages(info: *const BootInfo, bitmap_phys: u64, bitmap_bytes: usize) void {
-    setBit(0);
-    if (free_pages > 0) free_pages -= 1;
+    if (!testBit(0)) {
+        setBit(0);
+        if (free_pages > 0) free_pages -= 1;
+    }
     reserveRange(bitmap_phys, bitmap_bytes);
     reserveRange(info.kernel_physical_base, info.kernel_size_bytes);
     reserveRange(info.bundle_base, info.bundle_size);

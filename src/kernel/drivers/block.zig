@@ -35,15 +35,19 @@ pub const BlockDevice = struct {
 
     pub inline fn readSectors(self: *BlockDevice, lba: u64, count: usize, buf: []u8) !void {
         if (count == 0) return error.InvalidSectorCount;
-        if (lba + count > self.total_sectors) return error.SectorOutOfBounds;
-        if (buf.len < count * self.sector_size) return error.BufferTooSmall;
+        const end = std.math.add(u64, lba, count) catch return error.SectorOutOfBounds;
+        if (end > self.total_sectors) return error.SectorOutOfBounds;
+        const req_bytes = std.math.mul(usize, count, self.sector_size) catch return error.BufferTooSmall;
+        if (buf.len < req_bytes) return error.BufferTooSmall;
         return self.vtable.readSectors(self.ptr, lba, count, buf);
     }
 
     pub inline fn writeSectors(self: *BlockDevice, lba: u64, count: usize, buf: []const u8) !void {
         if (count == 0) return error.InvalidSectorCount;
-        if (lba + count > self.total_sectors) return error.SectorOutOfBounds;
-        if (buf.len < count * self.sector_size) return error.BufferTooSmall;
+        const end = std.math.add(u64, lba, count) catch return error.SectorOutOfBounds;
+        if (end > self.total_sectors) return error.SectorOutOfBounds;
+        const req_bytes = std.math.mul(usize, count, self.sector_size) catch return error.BufferTooSmall;
+        if (buf.len < req_bytes) return error.BufferTooSmall;
         return self.vtable.writeSectors(self.ptr, lba, count, buf);
     }
 
@@ -59,7 +63,8 @@ pub const PartitionBlockDevice = struct {
     device: BlockDevice,
 
     pub fn init(parent: *BlockDevice, start_lba: u64, sector_count: u64, name: []const u8) !PartitionBlockDevice {
-        if (start_lba + sector_count > parent.total_sectors) return error.PartitionOutOfBounds;
+        const end_lba = std.math.add(u64, start_lba, sector_count) catch return error.PartitionOutOfBounds;
+        if (end_lba > parent.total_sectors) return error.PartitionOutOfBounds;
         var part = PartitionBlockDevice{
             .parent = parent,
             .start_lba = start_lba,
@@ -92,25 +97,31 @@ pub const PartitionBlockDevice = struct {
     fn partitionReadSector(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
         const self: *PartitionBlockDevice = @ptrCast(@alignCast(ctx));
         if (lba >= self.sector_count) return error.SectorOutOfBounds;
-        return self.parent.readSector(self.start_lba + lba, buf);
+        const parent_lba = std.math.add(u64, self.start_lba, lba) catch return error.SectorOutOfBounds;
+        return self.parent.readSector(parent_lba, buf);
     }
 
     fn partitionWriteSector(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
         const self: *PartitionBlockDevice = @ptrCast(@alignCast(ctx));
         if (lba >= self.sector_count) return error.SectorOutOfBounds;
-        return self.parent.writeSector(self.start_lba + lba, buf);
+        const parent_lba = std.math.add(u64, self.start_lba, lba) catch return error.SectorOutOfBounds;
+        return self.parent.writeSector(parent_lba, buf);
     }
 
     fn partitionReadSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
         const self: *PartitionBlockDevice = @ptrCast(@alignCast(ctx));
-        if (lba + count > self.sector_count) return error.SectorOutOfBounds;
-        return self.parent.readSectors(self.start_lba + lba, count, buf);
+        const end = std.math.add(u64, lba, count) catch return error.SectorOutOfBounds;
+        if (end > self.sector_count) return error.SectorOutOfBounds;
+        const parent_lba = std.math.add(u64, self.start_lba, lba) catch return error.SectorOutOfBounds;
+        return self.parent.readSectors(parent_lba, count, buf);
     }
 
     fn partitionWriteSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
         const self: *PartitionBlockDevice = @ptrCast(@alignCast(ctx));
-        if (lba + count > self.sector_count) return error.SectorOutOfBounds;
-        return self.parent.writeSectors(self.start_lba + lba, count, buf);
+        const end = std.math.add(u64, lba, count) catch return error.SectorOutOfBounds;
+        if (end > self.sector_count) return error.SectorOutOfBounds;
+        const parent_lba = std.math.add(u64, self.start_lba, lba) catch return error.SectorOutOfBounds;
+        return self.parent.writeSectors(parent_lba, count, buf);
     }
 
     fn partitionFlush(ctx: *anyopaque) anyerror!void {
