@@ -207,17 +207,30 @@ pub const X86Codegen = struct {
     }
 
     fn emitGetLocal(self: *X86Codegen, slot: u8) !void {
-        const offset: i8 = -@as(i8, @intCast((@as(usize, slot) + 1) * 8));
-        // mov rax, [rbp + disp8] (0x48, 0x8B, 0x45, <disp8>)
-        // push rax (0x50)
-        try self.buffer.emitBytes(&[_]u8{ 0x48, 0x8B, 0x45, @bitCast(offset), 0x50 });
+        const offset: i32 = -@as(i32, @intCast((@as(usize, slot) + 1) * 8));
+        if (offset >= -128 and offset <= 127) {
+            const d8: i8 = @intCast(offset);
+            // mov rax, [rbp + disp8] (0x48, 0x8B, 0x45, <disp8>), push rax (0x50)
+            try self.buffer.emitBytes(&[_]u8{ 0x48, 0x8B, 0x45, @bitCast(d8), 0x50 });
+        } else {
+            // mov rax, [rbp + disp32] (0x48, 0x8B, 0x85, <disp32>), push rax (0x50)
+            try self.buffer.emitBytes(&[_]u8{ 0x48, 0x8B, 0x85 });
+            try self.buffer.emitU32(@bitCast(offset));
+            try self.buffer.emitByte(0x50);
+        }
     }
 
     fn emitSetLocal(self: *X86Codegen, slot: u8) !void {
-        const offset: i8 = -@as(i8, @intCast((@as(usize, slot) + 1) * 8));
-        // mov rax, [rsp] (0x48, 0x8B, 0x04, 0x24)
-        // mov [rbp + disp8], rax (0x48, 0x89, 0x45, <disp8>)
-        try self.buffer.emitBytes(&[_]u8{ 0x48, 0x8B, 0x04, 0x24, 0x48, 0x89, 0x45, @bitCast(offset) });
+        const offset: i32 = -@as(i32, @intCast((@as(usize, slot) + 1) * 8));
+        if (offset >= -128 and offset <= 127) {
+            const d8: i8 = @intCast(offset);
+            // mov rax, [rsp] (0x48, 0x8B, 0x04, 0x24), mov [rbp + disp8], rax (0x48, 0x89, 0x45, <disp8>)
+            try self.buffer.emitBytes(&[_]u8{ 0x48, 0x8B, 0x04, 0x24, 0x48, 0x89, 0x45, @bitCast(d8) });
+        } else {
+            // mov rax, [rsp] (0x48, 0x8B, 0x04, 0x24), mov [rbp + disp32], rax (0x48, 0x89, 0x85, <disp32>)
+            try self.buffer.emitBytes(&[_]u8{ 0x48, 0x8B, 0x04, 0x24, 0x48, 0x89, 0x85 });
+            try self.buffer.emitU32(@bitCast(offset));
+        }
     }
 
     fn emitPop(self: *X86Codegen) !void {
@@ -442,4 +455,14 @@ test "x86_64 JIT math, bitwise, and unary completeness" {
     const native_fn = try codegen.compile(&ch, 0);
     const result = native_fn();
     try testing.expectEqual(@as(i64, -2), result);
+}
+
+test "codegen handles local slot >= 16 without overflow" {
+    const testing = std.testing;
+    var codegen = try X86Codegen.init(testing.allocator, 4096);
+    defer codegen.deinit();
+
+    try codegen.emitGetLocal(20);
+    try codegen.emitSetLocal(20);
+    try testing.expect(codegen.buffer.cursor > 0);
 }

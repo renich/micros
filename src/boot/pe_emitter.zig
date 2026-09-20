@@ -249,7 +249,7 @@ pub const PeEmitter = struct {
             } else {
                 state.init_data_size += raw_size;
             }
-            state.curr_rva = alignUp(state.curr_rva + virt_size, SECTION_ALIGNMENT);
+            state.curr_rva = alignUp(state.curr_rva + @max(virt_size, 1), SECTION_ALIGNMENT);
             state.curr_file_off += raw_size;
         }
         return state;
