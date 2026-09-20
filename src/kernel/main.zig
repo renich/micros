@@ -30,6 +30,7 @@ const parser_mod = @import("../macros/parser.zig");
 const compiler_mod = @import("../macros/compiler.zig");
 const supervisor_mod = @import("supervisor.zig");
 const abi_mod = @import("abi.zig");
+const actor_lifecycle = @import("actor_lifecycle.zig");
 const ps2_kbd_mod = @import("drivers/ps2_kbd.zig");
 const pci_mod = @import("drivers/pci.zig");
 const virtio_net_mod = @import("drivers/virtio_net.zig");
@@ -272,18 +273,15 @@ fn aiInferenceBridge(prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8,
     return ai_mod.mock.generateResponse(prompt_ptr[0..prompt_len], out_ptr[0..out_len]) catch 0;
 }
 
-const ActorThreadContext = struct {
-    allocator: std.mem.Allocator,
-    actor: *actor_mod.Actor,
-    vm: *vm_mod.VM,
-};
-
 fn onFiberContextSwitch(maybe_fib: ?*fiber_mod.Fiber) void {
+    const flags = if (!builtin.is_test) io.pushfqAndCli() else 0;
+    defer if (!builtin.is_test) io.popfq(flags);
+
     var act_id: u32 = 0;
     var pt_base: u64 = 0;
     if (maybe_fib) |fib| {
-        if (fib.entry == actorThread and fib.user_data != null) {
-            const act_ctx: *ActorThreadContext = @ptrCast(@alignCast(fib.user_data.?));
+        if (fib.entry == actor_lifecycle.actorThread and fib.user_data != null) {
+            const act_ctx: *actor_lifecycle.ActorThreadContext = @ptrCast(@alignCast(fib.user_data.?));
             act_id = act_ctx.actor.id;
             pt_base = act_ctx.actor.page_table_base;
         }
@@ -292,173 +290,16 @@ fn onFiberContextSwitch(maybe_fib: ?*fiber_mod.Fiber) void {
     idt.current_actor_id = act_id;
     syscall.setActorId(act_id);
     if (!builtin.is_test) {
-        if (pt_base != 0) {
+        if (pt_base != 0 and vmm.hhdm_base != 0) {
             vmm.switchAddressSpace(pt_base);
-        } else if (vmm.kernel_pml4_phys != 0) {
+        } else if (vmm.kernel_pml4_phys != 0 and vmm.readCr3() != vmm.kernel_pml4_phys) {
             vmm.switchAddressSpace(vmm.kernel_pml4_phys);
         }
     }
 }
 
-fn actorYieldCheck(vm: *vm_mod.VM) anyerror!void {
-    if (vm.user_data) |ud| {
-        const actor: *actor_mod.Actor = @ptrCast(@alignCast(ud));
-        if (actor.state == .terminated) return error.ActorTerminated;
-    }
-}
-
-fn actorThread(ctx: ?*anyopaque) void {
-    const act_ctx = @as(*ActorThreadContext, @ptrCast(@alignCast(ctx.?)));
-    const actor = act_ctx.actor;
-    var vm = act_ctx.vm;
-    defer {
-        if (vm.gc_heap) |h| {
-            h.deinit();
-            act_ctx.allocator.destroy(h);
-            vm.gc_heap = null;
-        }
-        vm.deinit();
-        act_ctx.allocator.destroy(vm);
-        act_ctx.allocator.destroy(act_ctx);
-        actor.release();
-    }
-    actor.state = .running;
-    vm.run(0) catch |err| {
-        if (actor.state != .terminated) actor.state = .faulted;
-        serial.writeString("[kernel] Spawned Actor crashed: ");
-        serial.writeString(@errorName(err));
-        if (err == vm_mod.InterpretError.RuntimeError and vm.last_missing_symbol != null) {
-            serial.writeString(" [Undefined: '");
-            serial.writeString(vm.last_missing_symbol.?);
-            serial.writeString("']");
-        }
-        serial.writeString(" frames=");
-        serial.writeDec(vm.frame_count);
-        serial.writeString(" ip=");
-        serial.writeHex(vm.ip);
-        serial.writeString(" sp=");
-        serial.writeHex(vm.sp);
-        serial.writeString("\n");
-        return;
-    };
-    actor.state = .terminated;
-}
-
-fn compileActorScript(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!*chunk_mod.Chunk {
-    const chunk = try allocator.create(chunk_mod.Chunk);
-    chunk.* = chunk_mod.Chunk.init();
-    errdefer {
-        chunk.deinit(allocator);
-        allocator.destroy(chunk);
-    }
-    var compiler = compiler_mod.Compiler.init(allocator, chunk);
-    var p = parser_mod.Parser.init(allocator, source);
-    while (p.current_token.token_type != .eof) {
-        const stmt = p.parseStatement() catch |err| {
-            serial.writeString("[kernel] Actor compilation failed for '");
-            serial.writeString(name);
-            serial.writeString("': ");
-            serial.writeString(@errorName(err));
-            serial.writeString("\n");
-            return err;
-        };
-        try compiler.compile(stmt);
-    }
-    return chunk;
-}
-
-fn logActorSpawn(id: u32, name: []const u8) void {
-    serial.writeString("  [  \x1b[32mok\x1b[0m  ] spawn: Actor ");
-    serial.writeDec(id);
-    serial.writeString(" (");
-    serial.writeString(name);
-    serial.writeString("\x1b[97m) online\x1b[0m\n");
-}
-
-fn runVmCollect(ctx: *anyopaque) void {
-    const vm_inst: *vm_mod.VM = @ptrCast(@alignCast(ctx));
-    if (vm_inst.gc_heap) |h| vm_inst.collect(h);
-}
-
-fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chunk: *chunk_mod.Chunk) !void {
-    const child_vm = try allocator.create(vm_mod.VM);
-    try child_vm.initInPlace(allocator, chunk);
-    errdefer {
-        child_vm.deinit();
-        allocator.destroy(child_vm);
-    }
-    const heap = try allocator.create(gc_mod.Heap);
-    heap.* = gc_mod.Heap.init(allocator);
-    heap.gc_callback = runVmCollect;
-    heap.gc_ctx = child_vm;
-    child_vm.gc_heap = heap;
-
-    try abi_mod.registerSyscalls(child_vm);
-    child_vm.user_data = child;
-    child_vm.yield_hook = actorYieldCheck;
-    const act_ctx = try allocator.create(ActorThreadContext);
-    act_ctx.* = .{
-        .allocator = allocator,
-        .actor = child,
-        .vm = child_vm,
-    };
-    errdefer allocator.destroy(act_ctx);
-    if (global_sched) |sched| {
-        _ = child.ref_count.fetchAdd(1, .acquire);
-        const fib = try sched.spawn(actorThread, act_ctx);
-        child.fiber_ctx = @ptrCast(fib);
-    }
-}
-
-fn isVerifiedSystemScript(name: []const u8, source: []const u8) bool {
-    const bsrc = bundleReadBridge(name) orelse return false;
-    if (!std.mem.eql(u8, bsrc, source)) return false;
-    const sys_names = [_][]const u8{ "msh", "harness", "installer", "rebuild", "httpd", "web", "vedit" };
-    for (sys_names) |sname| {
-        if (std.mem.eql(u8, name, sname)) return true;
-    }
-    return false;
-}
-
-fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []const u8) !void {
-    if (!isVerifiedSystemScript(name, source)) return;
-    if (global_fb) |*fb| {
-        _ = try child.insertCap(.{
-            .cap_type = .framebuffer,
-            .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE,
-            .object_id = CAP_OBJ_FRAMEBUFFER,
-            .data_addr = @intFromPtr(fb),
-            .data_size = @sizeOf(fb_mod.Framebuffer),
-        });
-    }
-    _ = try child.insertCap(.{ .cap_type = .actor_control, .rights = cap_mod.Rights.ALL, .object_id = CAP_OBJ_ACTOR_CTRL, .data_addr = 0, .data_size = 0 });
-    _ = try child.insertCap(.{ .cap_type = .storage_device, .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE, .object_id = CAP_OBJ_STORAGE, .data_addr = 0, .data_size = 0 });
-    _ = try child.insertCap(.{ .cap_type = .network_device, .rights = cap_mod.Rights.ALL, .object_id = CAP_OBJ_NETWORK, .data_addr = 0, .data_size = 0 });
-}
-
 fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
-    const persistent_source = try allocator.dupe(u8, source);
-    errdefer allocator.free(persistent_source);
-
-    const chunk = try compileActorScript(allocator, name, persistent_source);
-    errdefer {
-        chunk.deinit(allocator);
-        allocator.destroy(chunk);
-    }
-
-    const pml4_phys = vmm.createActorAddressSpace() orelse 0;
-    const child = try global_registry.spawn(allocator, actor_mod.GENESIS_ACTOR_ID, name, 16, pml4_phys);
-    errdefer {
-        if (pml4_phys != 0) vmm.destroyActorAddressSpace(pml4_phys);
-        global_registry.terminate(allocator, child.id) catch {};
-    }
-    child.source = persistent_source;
-
-    try delegateInitialCaps(child, name, persistent_source);
-    try attachActorVm(allocator, child, chunk);
-
-    logActorSpawn(child.id, name);
-    return child.id;
+    return actor_lifecycle.spawnActorFromCode(allocator, name, source);
 }
 
 fn casPutBridge(data: []const u8, out_hex: *[64]u8) anyerror!void {
@@ -484,7 +325,9 @@ fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.actor_source, src, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
-    try global_cas.?.setRootHash(&hash, dev);
+    if (actor_id == actor_mod.GENESIS_ACTOR_ID) {
+        try global_cas.?.setRootHash(&hash, dev);
+    }
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mpersist\x1b[90m: \x1b[97mActor \x1b[0m");
     serial.writeDec(actor_id);
     serial.writeString(" \x1b[97mroot hash \x1b[0m");
@@ -788,8 +631,9 @@ fn bundleListBridge(prefix: []const u8, out_buf: []u8) usize {
 fn getCurrentActorBridge() ?*actor_mod.Actor {
     const sched = global_sched orelse return null;
     const fib = sched.current orelse return null;
+    if (fib.entry != actor_lifecycle.actorThread) return null;
     const ud = fib.user_data orelse return null;
-    return @as(*ActorThreadContext, @ptrCast(@alignCast(ud))).actor;
+    return @as(*actor_lifecycle.ActorThreadContext, @ptrCast(@alignCast(ud))).actor;
 }
 
 fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo, genesis: *actor_mod.Actor) !*chunk_mod.Chunk {
@@ -817,6 +661,7 @@ fn loadGenesisChunk(allocator: std.mem.Allocator, boot_info: *const BootInfo, ge
         var p = parser_mod.Parser.init(allocator, source);
         while (p.current_token.token_type != .eof) {
             const stmt = try p.parseStatement();
+            defer stmt.deinit(allocator);
             try compiler.compile(stmt);
         }
         try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
@@ -914,7 +759,7 @@ fn initGenesisVm(
     genesis_vm.initInPlace(allocator, chunk) catch kernelPanic("vm_init");
     const heap = allocator.create(gc_mod.Heap) catch kernelPanic("gc_alloc");
     heap.* = gc_mod.Heap.init(allocator);
-    heap.gc_callback = runVmCollect;
+    heap.gc_callback = actor_lifecycle.runVmCollect;
     heap.gc_ctx = genesis_vm;
     genesis_vm.gc_heap = heap;
     return genesis_vm;
@@ -949,7 +794,15 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     var sched = fiber_mod.Scheduler.init(allocator);
     sched.on_context_switch = onFiberContextSwitch;
     global_sched = &sched;
-    _ = sched.spawn(vmThread, genesis_vm) catch kernelPanic("fiber_spawn");
+    const genesis_act_ctx = allocator.create(actor_lifecycle.ActorThreadContext) catch kernelPanic("genesis_act_ctx");
+    genesis_act_ctx.* = .{
+        .allocator = allocator,
+        .actor = genesis,
+        .vm = genesis_vm,
+        .owns_chunk = false,
+    };
+    actor_lifecycle.init(&sched, &global_registry, if (global_fb != null) &global_fb.? else null, bundleReadBridge);
+    _ = sched.spawn(actor_lifecycle.actorThread, genesis_act_ctx) catch kernelPanic("fiber_spawn");
     _ = sched.spawn(serviceWorker, null) catch kernelPanic("service_spawn");
     sched.run();
 
@@ -974,19 +827,6 @@ fn serviceWorker(ctx: ?*anyopaque) void {
         if (work == 0) io.pause();
         fiber_mod.yield();
     }
-}
-
-fn vmThread(ctx: ?*anyopaque) void {
-    var vm = @as(*vm_mod.VM, @ptrCast(@alignCast(ctx.?)));
-    defer {
-        if (vm.gc_heap) |h| {
-            h.deinit();
-            vm.gc_heap = null;
-        }
-    }
-    vm.run(0) catch {
-        serial.writeString("[kernel] Genesis Actor crashed!\n");
-    };
 }
 
 fn haltLoop() noreturn {

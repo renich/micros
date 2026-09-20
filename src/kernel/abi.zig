@@ -33,6 +33,8 @@ pub const net_abi = @import("net/net_abi.zig");
 pub const git_abi = @import("net/git_abi.zig");
 pub const cap_abi = @import("cap/cap_abi.zig");
 pub const PhysFrameInfo = cap_abi.PhysFrameInfo;
+pub const console_abi = @import("ipc/console_abi.zig");
+pub const fb_abi = @import("compositor/fb_abi.zig");
 const cap_mod = @import("cap/capability.zig");
 const net_stack_mod = @import("net/stack.zig");
 const NetworkStack = net_stack_mod.NetworkStack;
@@ -77,13 +79,13 @@ var ai_ctx: ai_abi.AiContext = .{};
 
 pub fn checkCallerAuthority(cap_type: @import("cap/capability.zig").CapType, rights: u16) bool {
     const ctx = active_ctx orelse return false;
-    const actor = if (ctx.current_actor_fn) |get_act| (get_act() orelse ctx.supervisor) else ctx.supervisor;
+    const actor = if (ctx.current_actor_fn) |get_act| (get_act() orelse return false) else ctx.supervisor;
     return actor.hasCap(cap_type, rights);
 }
 
 pub fn getCallerActor() ?*Actor {
     const ctx = active_ctx orelse return null;
-    return if (ctx.current_actor_fn) |get_act| (get_act() orelse ctx.supervisor) else ctx.supervisor;
+    return if (ctx.current_actor_fn) |get_act| (get_act() orelse return null) else ctx.supervisor;
 }
 
 pub fn getCallerActorId() u32 {
@@ -125,6 +127,8 @@ pub fn setContext(ctx: *AbiContext) void {
         .check_auth_fn = checkCallerAuthority,
     };
     ai_abi.setAiContext(&ai_ctx);
+    fb_abi.setContext(ctx.framebuffer, checkCallerAuthority);
+    console_abi.setContext(ctx.kbd_ctrl, checkCallerAuthority);
 }
 
 pub fn clearContext() void {
@@ -136,6 +140,8 @@ pub fn clearContext() void {
     cap_abi.clearCapAbiContext();
     window_abi.clearWindowContext();
     ai_abi.clearAiContext();
+    fb_abi.setContext(null, null);
+    console_abi.setContext(null, null);
 }
 
 fn castToU32(val: i64) ?u32 {
@@ -177,57 +183,6 @@ fn nativeSysActorTerminate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = true };
 }
 
-fn nativeSysFbClear(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
-    const color = castToU32(args[0].integer) orelse return error.InvalidArgs;
-    const ctx = active_ctx orelse return Value{ .nil = {} };
-    if (ctx.framebuffer) |fb| {
-        fb.clear(color);
-    }
-    return Value{ .nil = {} };
-}
-
-fn nativeSysFbDrawString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 5 or args[0] != .integer or args[1] != .integer or
-        args[2] != .string or args[3] != .integer or args[4] != .integer)
-    {
-        return error.InvalidArgs;
-    }
-    if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
-    const x = castToU32(args[0].integer) orelse return error.InvalidArgs;
-    const y = castToU32(args[1].integer) orelse return error.InvalidArgs;
-    const color = castToU32(args[3].integer) orelse return error.InvalidArgs;
-    const bg = castToU32(args[4].integer) orelse return error.InvalidArgs;
-    const ctx = active_ctx orelse return Value{ .nil = {} };
-    if (ctx.framebuffer) |fb| {
-        fb.drawString(x, y, args[2].string, color, bg);
-    }
-    return Value{ .nil = {} };
-}
-
-fn nativeSysFbDrawRect(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 5 or args[0] != .integer or args[1] != .integer or
-        args[2] != .integer or args[3] != .integer or args[4] != .integer)
-    {
-        return error.InvalidArgs;
-    }
-    if (!checkCallerAuthority(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
-    const x = castToU32(args[0].integer) orelse return error.InvalidArgs;
-    const y = castToU32(args[1].integer) orelse return error.InvalidArgs;
-    const w = castToU32(args[2].integer) orelse return error.InvalidArgs;
-    const h = castToU32(args[3].integer) orelse return error.InvalidArgs;
-    const color = castToU32(args[4].integer) orelse return error.InvalidArgs;
-    const ctx = active_ctx orelse return Value{ .nil = {} };
-    if (ctx.framebuffer) |fb| {
-        fb.drawRect(x, y, w, h, color);
-    }
-    return Value{ .nil = {} };
-}
-
 fn nativeSysIpcRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     const caller_id = getCallerActorId();
@@ -255,22 +210,6 @@ fn nativeSysIpcRecv(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .integer = 0 };
 }
 
-fn nativeSysSerialWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
-    const str = args[0].string;
-    var i: usize = 0;
-    while (i < str.len) : (i += 1) {
-        if (str[i] == '\\' and i + 1 < str.len and str[i + 1] == 'n') {
-            serial.writeChar('\n');
-            i += 1;
-        } else {
-            serial.writeChar(str[i]);
-        }
-    }
-    return Value{ .nil = {} };
-}
-
 fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
@@ -279,87 +218,6 @@ fn nativeSysFaultCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return Value{ .integer = @intCast(sup.total_faults) };
     }
     return Value{ .integer = 0 };
-}
-
-fn decodeAnsiParam(b3: u8) ?i64 {
-    return switch (b3) {
-        'A' => ps2_mod.KeyCode.UP,
-        'B' => ps2_mod.KeyCode.DOWN,
-        'C' => ps2_mod.KeyCode.RIGHT,
-        'D' => ps2_mod.KeyCode.LEFT,
-        'H' => ps2_mod.KeyCode.HOME,
-        'F' => ps2_mod.KeyCode.END,
-        '3' => blk: {
-            _ = serial.readCharTimeout(30_000);
-            break :blk ps2_mod.KeyCode.DELETE;
-        },
-        '4', '8' => blk: {
-            _ = serial.readCharTimeout(30_000);
-            break :blk ps2_mod.KeyCode.END;
-        },
-        '5' => blk: {
-            _ = serial.readCharTimeout(30_000);
-            break :blk ps2_mod.KeyCode.PAGE_UP;
-        },
-        '6' => blk: {
-            _ = serial.readCharTimeout(30_000);
-            break :blk ps2_mod.KeyCode.PAGE_DOWN;
-        },
-        else => null,
-    };
-}
-
-fn decodeSerialEscape() ?i64 {
-    const b2 = serial.readCharTimeout(30_000) orelse return null;
-    if (b2 == 'O') {
-        const b3 = serial.readCharTimeout(30_000) orelse return null;
-        return decodeAnsiParam(b3);
-    }
-    if (b2 != '[') return @as(i64, b2);
-    const b3 = serial.readCharTimeout(30_000) orelse return null;
-    if (b3 == '1' or b3 == '7') {
-        const b4 = serial.readCharTimeout(30_000) orelse return ps2_mod.KeyCode.HOME;
-        if (b4 == '~') return ps2_mod.KeyCode.HOME;
-        if (b4 == ';') {
-            _ = serial.readCharTimeout(30_000);
-            const b6 = serial.readCharTimeout(30_000) orelse return null;
-            return decodeAnsiParam(b6);
-        }
-        return null;
-    }
-    return decodeAnsiParam(b3);
-}
-
-fn nativeSysSerialRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    _ = args;
-    if (serial.readChar()) |c| {
-        if (c == 27) {
-            if (decodeSerialEscape()) |code| return Value{ .integer = code };
-        }
-        return Value{ .integer = @as(i64, c) };
-    }
-    return Value{ .integer = -1 };
-}
-
-fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    _ = args;
-    const ctx = active_ctx orelse return Value{ .integer = -1 };
-    const kbd = ctx.kbd_ctrl orelse return Value{ .integer = -1 };
-    if (!ps2_mod.hasData()) return Value{ .integer = -1 };
-    const scan = ps2_mod.readScancode();
-    if (scan == 0 or scan == 0xFF) return Value{ .integer = -1 };
-    const ev = kbd.processScancode(scan) orelse return Value{ .integer = -1 };
-    if (ev.action == .press) {
-        if (ev.ascii != 0) {
-            return Value{ .integer = @as(i64, ev.ascii) };
-        }
-        if (ev.keycode != 0) {
-            return Value{ .integer = @as(i64, ev.keycode) };
-        }
-    }
-    return Value{ .integer = -1 };
 }
 
 fn nativeSysActorSpawnCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -436,9 +294,13 @@ fn nativeSysActorPersist(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
     if (!checkCallerAuthority(.storage_device, cap_mod.Rights.WRITE)) return error.PermissionDenied;
+    const caller_id = getCallerActorId();
+    const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
+    if (caller_id != 0 and caller_id != id) {
+        if (!checkCallerAuthority(.actor_control, cap_mod.Rights.WRITE)) return error.PermissionDenied;
+    }
     const ctx = active_ctx orelse return error.NoContext;
     const persist_fn = ctx.persist_actor_fn orelse return error.NoStorageHandler;
-    const id = castToU32(args[0].integer) orelse return error.InvalidArgs;
     var hex_buf: [64]u8 = undefined;
     persist_fn(id, &hex_buf) catch return Value{ .string = "" };
     const duped = try vm.gcAllocator().dupe(u8, &hex_buf);
@@ -486,31 +348,19 @@ fn nativeSysActorWait(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = true };
 }
 
-fn nativeSysKbdLayout(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const layout = args[0].integer;
-    if (layout == 0) {
-        ps2_mod.active_layout = .us_qwerty;
-    } else if (layout == 1) {
-        ps2_mod.active_layout = .es_latam;
-    }
-    return Value{ .integer = 0 };
-}
-
 pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_actor_count", Value{ .native = nativeSysActorCount });
     try vm.globals.put("sys_actor_spawn", Value{ .native = nativeSysActorSpawn });
     try vm.globals.put("sys_actor_terminate", Value{ .native = nativeSysActorTerminate });
-    try vm.globals.put("sys_fb_clear", Value{ .native = nativeSysFbClear });
-    try vm.globals.put("sys_fb_draw_string", Value{ .native = nativeSysFbDrawString });
-    try vm.globals.put("sys_fb_draw_rect", Value{ .native = nativeSysFbDrawRect });
+    try vm.globals.put("sys_fb_clear", Value{ .native = fb_abi.nativeSysFbClear });
+    try vm.globals.put("sys_fb_draw_string", Value{ .native = fb_abi.nativeSysFbDrawString });
+    try vm.globals.put("sys_fb_draw_rect", Value{ .native = fb_abi.nativeSysFbDrawRect });
     try vm.globals.put("sys_ipc_recv", Value{ .native = nativeSysIpcRecv });
-    try vm.globals.put("sys_serial_write", Value{ .native = nativeSysSerialWrite });
+    try vm.globals.put("sys_serial_write", Value{ .native = console_abi.nativeSysSerialWrite });
     try vm.globals.put("sys_fault_count", Value{ .native = nativeSysFaultCount });
-    try vm.globals.put("sys_serial_read", Value{ .native = nativeSysSerialRead });
-    try vm.globals.put("sys_kbd_read", Value{ .native = nativeSysKbdRead });
-    try vm.globals.put("sys_kbd_layout", Value{ .native = nativeSysKbdLayout });
+    try vm.globals.put("sys_serial_read", Value{ .native = console_abi.nativeSysSerialRead });
+    try vm.globals.put("sys_kbd_read", Value{ .native = console_abi.nativeSysKbdRead });
+    try vm.globals.put("sys_kbd_layout", Value{ .native = console_abi.nativeSysKbdLayout });
     try vm.globals.put("sys_ai_prompt", Value{ .native = ai_abi.nativeSysAiPrompt });
     try vm.globals.put("sys_ai_extract_code", Value{ .native = ai_abi.nativeSysAiExtractCode });
     try vm.globals.put("sys_ai_tool_call", Value{ .native = ai_abi.nativeSysAiToolCall });
@@ -897,16 +747,6 @@ test "ABI window and compositor native bindings" {
     try std.testing.expect(close_val.boolean);
 }
 
-test "decodeAnsiParam maps escape sequence characters to keycodes" {
-    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.UP), decodeAnsiParam('A'));
-    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.DOWN), decodeAnsiParam('B'));
-    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.RIGHT), decodeAnsiParam('C'));
-    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.LEFT), decodeAnsiParam('D'));
-    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.HOME), decodeAnsiParam('H'));
-    try std.testing.expectEqual(@as(?i64, ps2_mod.KeyCode.END), decodeAnsiParam('F'));
-    try std.testing.expectEqual(@as(?i64, null), decodeAnsiParam('Z'));
-}
-
 test "sys_ipc_recv rejects unauthorized non-genesis actors without capability" {
     const allocator = std.testing.allocator;
     var registry = actor_mod.ActorRegistry.init();
@@ -993,5 +833,5 @@ test "abi ipc_ring type confusion and framebuffer negative coordinate rejection"
     _ = try genesis.insertCap(fb_cap);
     Helper.act = genesis;
     var neg_clear = [_]Value{Value{ .integer = -1 }};
-    try std.testing.expectError(error.InvalidArgs, nativeSysFbClear(&vm, &neg_clear));
+    try std.testing.expectError(error.InvalidArgs, fb_abi.nativeSysFbClear(&vm, &neg_clear));
 }

@@ -47,7 +47,7 @@ fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
     if (caller_auth_fn) |auth| {
         return auth(cap_type, rights);
     }
-    return true;
+    return false;
 }
 
 fn castToU32(val: i64) ?u32 {
