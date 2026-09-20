@@ -10,6 +10,7 @@ const VM = vm_mod.VM;
 const ai_mod = @import("../ai.zig");
 const cap_mod = @import("../cap/capability.zig");
 const actor_mod = @import("../actor.zig");
+const serial = @import("../serial.zig");
 
 pub const AiContext = struct {
     ai_inference_fn: ?*const fn (prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize = null,
@@ -30,8 +31,8 @@ var active_ai_ctx: ?*AiContext = null;
 var ai_prompt_resp_buf: [16384]u8 = undefined;
 var ai_extract_buf: [8192]u8 = undefined;
 var ai_tool_scratch: [8192]u8 = undefined;
-var ai_tool_res_buf: [1024]u8 = undefined;
-var ai_tool_storage_buf: [1024]u8 = undefined;
+var ai_tool_res_buf: [16384]u8 = undefined;
+var ai_tool_storage_buf: [16384]u8 = undefined;
 
 pub fn setAiContext(ctx: *AiContext) void {
     active_ai_ctx = ctx;
@@ -93,7 +94,14 @@ pub fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     );
 
     const result = disp.dispatch(call);
-    const len = try ai_mod.tool_parser.formatResultJson(result, &ai_tool_res_buf);
+    const len = ai_mod.tool_parser.formatResultJson(result, &ai_tool_res_buf) catch |err| blk: {
+        serial.writeString("[kernel] formatResultJson error: ");
+        serial.writeString(@errorName(err));
+        serial.writeString("\n");
+        const fallback = "{\"status\":\"error\",\"message\":\"result buffer overflow\"}";
+        @memcpy(ai_tool_res_buf[0..fallback.len], fallback);
+        break :blk fallback.len;
+    };
     const duped = try vm.gcAllocator().dupe(u8, ai_tool_res_buf[0..len]);
     return Value{ .string = duped };
 }

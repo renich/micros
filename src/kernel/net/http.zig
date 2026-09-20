@@ -185,6 +185,27 @@ pub fn decodeChunkedBody(src: []const u8, dest: []u8) !usize {
     return d_pos;
 }
 
+pub fn isChunkedComplete(src: []const u8) bool {
+    var s_pos: usize = 0;
+    while (s_pos < src.len) {
+        const delim = "\r\n";
+        const eol = std.mem.indexOfPos(u8, src, s_pos, delim) orelse return false;
+        const chunk_size = parseChunkSize(src[s_pos..eol]) catch return false;
+        s_pos = eol + delim.len;
+        if (chunk_size == 0) return true;
+        if (chunk_size > src.len - s_pos) return false;
+        s_pos += chunk_size;
+        if (s_pos + 2 <= src.len and std.mem.eql(u8, src[s_pos .. s_pos + 2], "\r\n")) {
+            s_pos += 2;
+        } else if (s_pos < src.len and src[s_pos] == '\n') {
+            s_pos += 1;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
 pub fn extractJsonCandidateText(json_payload: []const u8, out_buf: []u8) ?usize {
     const key_needle = "\"text\":";
     var search_pos: usize = 0;

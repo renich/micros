@@ -290,14 +290,36 @@ pub fn extractToolCall(json_payload: []const u8, scratch_buf: []u8) ?tools.ToolC
     return null;
 }
 
+fn formatSafeString(out_buf: []u8, prefix: []const u8, content: []const u8, suffix: []const u8) !usize {
+    const overhead = prefix.len + suffix.len + 3;
+    if (out_buf.len <= overhead) return error.BufferTooSmall;
+    const max_content = out_buf.len - (prefix.len + suffix.len);
+    var off: usize = 0;
+    @memcpy(out_buf[off .. off + prefix.len], prefix);
+    off += prefix.len;
+    if (content.len <= max_content) {
+        @memcpy(out_buf[off .. off + content.len], content);
+        off += content.len;
+    } else {
+        const take = max_content - 3;
+        @memcpy(out_buf[off .. off + take], content[0..take]);
+        off += take;
+        @memcpy(out_buf[off .. off + 3], "...");
+        off += 3;
+    }
+    @memcpy(out_buf[off .. off + suffix.len], suffix);
+    off += suffix.len;
+    return off;
+}
+
 pub fn formatResultJson(result: tools.ToolResult, out_buf: []u8) !usize {
     return switch (result) {
-        .command_executed => |out| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"output\":\"{s}\"}}", .{out})).len,
-        .file_viewed => |content| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"bytes\":{d},\"content\":\"{s}\"}}", .{ content.len, content })).len,
+        .command_executed => |out| formatSafeString(out_buf, "{\"status\":\"ok\",\"output\":\"", out, "\"}"),
+        .file_viewed => |content| formatSafeString(out_buf, "{\"status\":\"ok\",\"content\":\"", content, "\"}"),
         .file_written => |bytes| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"bytes_written\":{d}}}", .{bytes})).len,
         .content_replaced => |ok| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"replaced\":{}}}", .{ok})).len,
-        .dir_listed => |list| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"listing\":\"{s}\"}}", .{list})).len,
-        .search_results => |res| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"matches\":\"{s}\"}}", .{res})).len,
+        .dir_listed => |list| formatSafeString(out_buf, "{\"status\":\"ok\",\"listing\":\"", list, "\"}"),
+        .search_results => |res| formatSafeString(out_buf, "{\"status\":\"ok\",\"matches\":\"", res, "\"}"),
         .actor_spawned => |id| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"actor_id\":{d}}}", .{id})).len,
         .capability_granted => |ok| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"granted\":{}}}", .{ok})).len,
         .storage_written => |hash| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"hex_hash\":\"{s}\"}}", .{hash})).len,

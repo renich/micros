@@ -20,10 +20,10 @@ pub const IP_BROADCAST: [4]u8 = [_]u8{ 255, 255, 255, 255 };
 pub const IP_ZERO: [4]u8 = [_]u8{ 0, 0, 0, 0 };
 pub const DNS_FALLBACK_GOOGLE: [4]u8 = [_]u8{ 8, 8, 8, 8 };
 pub const DNS_FALLBACK_CLOUDFLARE: [4]u8 = [_]u8{ 1, 1, 1, 1 };
-pub const MAX_SYN_RETRIES: usize = 5;
+pub const MAX_SYN_RETRIES: usize = 6;
 pub const MAX_CHUNK_RETRIES: usize = 5;
 pub const MAX_DNS_RETRIES: usize = 3;
-pub const BASE_SYN_ITERS: usize = 100_000;
+pub const BASE_SYN_ITERS: usize = 1_000_000;
 pub const BASE_CHUNK_ITERS: usize = 100_000;
 
 pub const NetworkStack = struct {

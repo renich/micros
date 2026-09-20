@@ -137,7 +137,7 @@ pub const AiDaemon = struct {
         }
         if (resp.is_chunked) {
             const body_slice = data[resp.body_offset..];
-            return std.mem.indexOf(u8, body_slice, "0\r\n\r\n") != null;
+            return http_mod.isChunkedComplete(body_slice);
         }
         return false;
     }
@@ -201,12 +201,15 @@ pub const AiDaemon = struct {
             return 0;
         };
 
-        var resp_buf: [16384]u8 = undefined;
-        var chunk_buf: [16384]u8 = undefined;
-        const read_bytes = readFullResponse(adapter, &resp_buf);
+        const resp_buf = self.allocator.alloc(u8, 65536) catch return 0;
+        defer self.allocator.free(resp_buf);
+        const chunk_buf = self.allocator.alloc(u8, 65536) catch return 0;
+        defer self.allocator.free(chunk_buf);
+
+        const read_bytes = readFullResponse(adapter, resp_buf);
         if (read_bytes == 0) return 0;
 
-        const body = extractResponseBody(resp_buf[0..read_bytes], &chunk_buf) orelse return 0;
+        const body = extractResponseBody(resp_buf[0..read_bytes], chunk_buf) orelse return 0;
         return self.client.extractResponseText(body, out_buf) orelse 0;
     }
 
