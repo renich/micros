@@ -73,7 +73,6 @@ pub const PartitionBlockDevice = struct {
         };
         const copy_len = @min(name.len, part.device.name.len);
         @memcpy(part.device.name[0..copy_len], name[0..copy_len]);
-        part.device.ptr = @ptrCast(&part);
         return part;
     }
 

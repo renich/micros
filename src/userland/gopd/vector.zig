@@ -159,6 +159,7 @@ pub const VectorCanvas = struct {
         spread: u32,
         shadow_color: u32,
     ) void {
+        if (spread == 0) return;
         const sx = rx - @as(i32, @intCast(spread));
         const sy = ry - @as(i32, @intCast(spread));
         const sw = rw + spread * 2;

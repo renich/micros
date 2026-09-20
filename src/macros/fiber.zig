@@ -9,6 +9,53 @@ pub const CANARY_MAGIC: u64 = 0xDEADBEEFCAFEBABE;
 pub const MAX_STACK_SLOTS: usize = 4;
 var stack_pool: [MAX_STACK_SLOTS][SLOT_SIZE]u8 align(4096) = undefined;
 var stack_used: [MAX_STACK_SLOTS]bool = [_]bool{false} ** MAX_STACK_SLOTS;
+var stack_lock = std.atomic.Value(bool).init(false);
+
+fn acquireStackLock() u64 {
+    const rflags: u64 = if (builtin.os.tag == .freestanding) blk: {
+        var flags: u64 = undefined;
+        asm volatile (
+            \\pushfq
+            \\popq %[flags]
+            \\cli
+            : [flags] "=r" (flags),
+        );
+        break :blk flags;
+    } else 0;
+    while (stack_lock.swap(true, .acquire)) {
+        std.atomic.spinLoopHint();
+    }
+    return rflags;
+}
+
+fn releaseStackLock(rflags: u64) void {
+    stack_lock.store(false, .release);
+    if (builtin.os.tag == .freestanding) {
+        if ((rflags & 0x200) != 0) {
+            asm volatile ("sti" ::: .{ .memory = true });
+        }
+    }
+}
+
+fn allocatePoolSlot() ?usize {
+    var slot_idx: ?usize = null;
+    const rflags = acquireStackLock();
+    for (&stack_used, 0..) |*used, idx| {
+        if (!used.*) {
+            used.* = true;
+            slot_idx = idx;
+            break;
+        }
+    }
+    releaseStackLock(rflags);
+    return slot_idx;
+}
+
+fn releasePoolSlot(idx: usize) void {
+    const rf = acquireStackLock();
+    stack_used[idx] = false;
+    releaseStackLock(rf);
+}
 
 pub const FiberState = enum {
     ready,
@@ -30,29 +77,15 @@ pub const Fiber = struct {
     pool_slot: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator, id: usize, entry: FiberFn, user_data: ?*anyopaque) !*Fiber {
-        var slot_idx: ?usize = null;
-        for (&stack_used, 0..) |*used, idx| {
-            if (!used.*) {
-                used.* = true;
-                slot_idx = idx;
-                break;
-            }
-        }
-
-        if (slot_idx) |idx| {
-            @memset(stack_pool[idx][0..GUARD_SIZE], 0xAA);
-        }
+        const slot_idx = allocatePoolSlot();
+        if (slot_idx) |idx| @memset(stack_pool[idx][0..GUARD_SIZE], 0xAA);
 
         const stack_slice = if (slot_idx) |idx|
             stack_pool[idx][GUARD_SIZE..SLOT_SIZE]
         else
             try allocator.alloc(u8, STACK_SIZE);
         errdefer {
-            if (slot_idx) |idx| {
-                stack_used[idx] = false;
-            } else {
-                allocator.free(stack_slice);
-            }
+            if (slot_idx) |idx| releasePoolSlot(idx) else allocator.free(stack_slice);
         }
 
         const fiber = try allocator.create(Fiber);
@@ -71,11 +104,7 @@ pub const Fiber = struct {
     }
 
     pub fn deinit(self: *Fiber, allocator: std.mem.Allocator) void {
-        if (self.pool_slot) |idx| {
-            stack_used[idx] = false;
-        } else {
-            allocator.free(self.stack);
-        }
+        if (self.pool_slot) |idx| releasePoolSlot(idx) else allocator.free(self.stack);
         allocator.destroy(self);
     }
 

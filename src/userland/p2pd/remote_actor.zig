@@ -19,6 +19,12 @@ pub const TOKEN_PAYLOAD_SIZE: usize = 128;
 pub const TOKEN_TOTAL_SIZE: usize = 192;
 pub const MAX_REMOTE_ACTORS: usize = 32;
 
+pub fn computeNodeId(pubkey: *const [PUBKEY_LEN]u8) [NODE_ID_LEN]u8 {
+    var out_id: [NODE_ID_LEN]u8 = undefined;
+    std.crypto.hash.Blake3.hash(pubkey, &out_id, .{});
+    return out_id;
+}
+
 pub const CapabilityToken = extern struct {
     issuer_id: [NODE_ID_LEN]u8 align(1),
     subject_id: [NODE_ID_LEN]u8 align(1),
@@ -50,6 +56,11 @@ pub const CapabilityToken = extern struct {
         if (current_ticks > self.expires_at_ticks) return error.TokenExpired;
         if (current_ticks < self.issued_at_ticks) return error.TokenNotYetValid;
         if ((self.rights & required_rights) != required_rights) return error.InsufficientRights;
+
+        const expected_issuer = computeNodeId(issuer_pubkey_bytes);
+        if (!isZeroSlice(&self.issuer_id) and !std.mem.eql(u8, &self.issuer_id, &expected_issuer)) {
+            return error.IssuerMismatch;
+        }
 
         if (subject) |sub| {
             if (!isZeroSlice(&self.subject_id) and !std.mem.eql(u8, &self.subject_id, sub)) {
@@ -206,7 +217,7 @@ test "CapabilityToken signing and verification" {
     const kp = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(seed);
 
     var token = CapabilityToken{
-        .issuer_id = [_]u8{0x01} ** NODE_ID_LEN,
+        .issuer_id = computeNodeId(&kp.public_key.bytes),
         .subject_id = [_]u8{0x02} ** NODE_ID_LEN,
         .rights = RIGHT_SPAWN_ACTOR | RIGHT_SUPERVISE_ACTOR,
         .resource_hash = [_]u8{0x99} ** HASH_SIZE,
@@ -219,6 +230,12 @@ test "CapabilityToken signing and verification" {
 
     const subject = [_]u8{0x02} ** NODE_ID_LEN;
     try token.verify(&kp.public_key.bytes, 250, &subject, RIGHT_SPAWN_ACTOR);
+
+    // Issuer mismatch rejection
+    var wrong_token = token;
+    wrong_token.issuer_id = [_]u8{0x99} ** NODE_ID_LEN;
+    const iss_err = wrong_token.verify(&kp.public_key.bytes, 250, &subject, RIGHT_SPAWN_ACTOR);
+    try std.testing.expectError(error.IssuerMismatch, iss_err);
 
     // Expired token rejection
     const exp_err = token.verify(&kp.public_key.bytes, 501, &subject, RIGHT_SPAWN_ACTOR);

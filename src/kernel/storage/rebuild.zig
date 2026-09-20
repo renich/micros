@@ -91,7 +91,6 @@ pub const RebuildEngine = struct {
         const target_path = if (target_slot == 'A') "/EFI/BOOT/SLOT_A.EFI" else "/EFI/BOOT/SLOT_B.EFI";
 
         try fat32.writeFile(dev, target_path, kernel_data);
-        try fat32.writeFile(dev, "/EFI/BOOT/BOOTX64.EFI", kernel_data);
 
         var new_state = [_]u8{ target_slot, '\n' };
         try fat32.writeFile(dev, "/EFI/BOOT/BOOTSTATE.DAT", &new_state);
@@ -197,7 +196,6 @@ pub const RebuildEngine = struct {
             defer allocator.free(kernel_buf);
             const k_len = try self.cas.getChunk(&prev_manifest.kernel_hash, kernel_buf, self.dev);
             try fat32.writeFile(edev, fallback_path, kernel_buf[0..k_len]);
-            try fat32.writeFile(edev, "/EFI/BOOT/BOOTX64.EFI", kernel_buf[0..k_len]);
 
             var new_state = [_]u8{ fallback_slot, '\n' };
             try fat32.writeFile(edev, "/EFI/BOOT/BOOTSTATE.DAT", &new_state);

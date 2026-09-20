@@ -185,7 +185,7 @@ pub const VirtioNetDevice = struct {
         self.rx_queue.last_used_idx +%= 1;
 
         const desc_id = elem.id;
-        if (desc_id >= QUEUE_SIZE) return null;
+        if (desc_id >= NUM_RX_BUFFERS) return null;
         const total_len = elem.len;
         const hdr_size = @sizeOf(VirtioNetHeader);
 
@@ -194,7 +194,8 @@ pub const VirtioNetDevice = struct {
             io.outw(self.io_base + REG_QUEUE_NOTIFY, QUEUE_RX);
             return 0;
         }
-        const payload_len = @min(total_len - hdr_size, out_buffer.len);
+        const max_safe_len = if (RX_BUFFER_LEN > hdr_size) RX_BUFFER_LEN - hdr_size else 0;
+        const payload_len = @min(total_len - hdr_size, @min(out_buffer.len, max_safe_len));
 
         const buf_offset = @as(usize, @intCast(desc_id)) * RX_BUFFER_LEN;
         const src = self.rx_buffers_virt[buf_offset + hdr_size .. buf_offset + hdr_size + payload_len];

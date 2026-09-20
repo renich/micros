@@ -359,7 +359,14 @@ pub const Compiler = struct {
     }
 
     fn compileReturnExpr(self: *Compiler, ret: ast.ReturnExpr) anyerror!void {
-        if (ret.value) |v| try self.compile(v);
+        if (ret.value) |v| {
+            try self.compile(v);
+        } else {
+            try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
+            const nil_idx = try self.chunk.addConstant(self.allocator, eval.Value{ .nil = {} });
+            try self.chunk.writeChunk(self.allocator, @intCast((nil_idx >> 8) & 0xFF));
+            try self.chunk.writeChunk(self.allocator, @intCast(nil_idx & 0xFF));
+        }
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.return_op));
     }
 

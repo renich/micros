@@ -635,6 +635,7 @@ fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool 
     const hhdm = boot_info.hhdm_offset;
     global_nvme = nvme_mod.NvmeDevice.init(
         nvme_pci,
+        hhdm,
         p.asq,
         @ptrFromInt(p.asq + hhdm),
         p.acq,

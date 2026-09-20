@@ -142,8 +142,13 @@ pub export fn asmSyscallEntry() callconv(.naked) void {
         \\popq %%r12
         \\popq %%rbx
         \\popq %%rbp
+        \\orq $0x200, (%%rsp)
         \\popq %%r11
         \\popq %%rcx
+        \\btq $47, %%rcx
+        \\jnc 1f
+        \\xorq %%rcx, %%rcx
+        \\1:
         \\movq %%gs:0, %%rsp
         \\swapgs
         \\sysretq
@@ -157,6 +162,21 @@ fn handleActorSpawn(name_ptr: u64, name_len: u64) i64 {
     if (name_len == 0 or name_len > 32 or name_ptr == 0) return -3;
     const USERLAND_MAX: u64 = 0x0000_7FFF_FFFF_FFFF;
     if (name_ptr >= USERLAND_MAX or name_len > USERLAND_MAX - name_ptr) return -3;
+
+    const caller = getCallerActor();
+    if (caller) |c| {
+        defer releaseActorRef(c);
+        if (c.page_table_base != 0) {
+            const page_start = name_ptr & ~@as(u64, 0xFFF);
+            const page_end = (name_ptr + name_len - 1) & ~@as(u64, 0xFFF);
+            if (vmm.virtToPhys(c.page_table_base, page_start) == null or
+                vmm.virtToPhys(c.page_table_base, page_end) == null)
+            {
+                return -3;
+            }
+        }
+    }
+
     const reg = actor_mod.active_registry orelse return -2;
     const alloc = kernel_allocator orelse return -2;
 
@@ -234,7 +254,10 @@ fn handleMemMap(virt: u64, phys: u64, flags: u64) i64 {
     defer releaseActorRef(caller);
     if (!caller.authorizesPhysicalExtent(phys, 4096, Rights.WRITE)) return -1;
     if (caller.page_table_base == 0) return -2;
-    const sanitized_flags = (flags & ~vmm.PAGE_ANON) | vmm.PAGE_PRESENT | vmm.PAGE_USER | vmm.PAGE_MMIO;
+    var sanitized_flags = (flags & ~vmm.PAGE_ANON) | vmm.PAGE_PRESENT | vmm.PAGE_USER | vmm.PAGE_MMIO;
+    if ((sanitized_flags & vmm.PAGE_WRITABLE) != 0) {
+        sanitized_flags |= vmm.PAGE_NO_EXECUTE;
+    }
     if (!vmm.mapPage(caller.page_table_base, virt, phys, sanitized_flags)) {
         return -3;
     }

@@ -263,6 +263,7 @@ pub const NvmeDevice = struct {
 
     pub fn init(
         pci_dev: pci.PciDevice,
+        hhdm_offset: u64,
         asq_phys: u64,
         asq_virt: [*]u8,
         acq_phys: u64,
@@ -276,7 +277,8 @@ pub const NvmeDevice = struct {
         dma_phys: u64,
         dma_virt: [*]u8,
     ) !NvmeDevice {
-        const mmio = pci_dev.getMmioAddr(0) orelse return error.NoMmioBar;
+        const mmio_phys = pci_dev.getMmioAddr(0) orelse return error.NoMmioBar;
+        const mmio = mmio_phys + hhdm_offset;
         pci_dev.enableBusMastering();
 
         const cap = readMmio64(mmio + REG_CAP);

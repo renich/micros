@@ -50,6 +50,40 @@ pub fn traceValue(heap: *Heap, value: Value) void {
     }
 }
 
+pub fn traceChunk(heap: *Heap, ch: anytype) void {
+    for (ch.constants.items) |constant| {
+        traceValue(heap, constant);
+    }
+}
+
+pub fn traceCallFrames(heap: *Heap, frames: anytype) void {
+    for (frames) |frame| {
+        if (frame.closure) |c| {
+            traceValue(heap, Value{ .closure = c });
+        } else {
+            heap.markSlice(frame.function.name.ptr, frame.function.name.len);
+        }
+    }
+}
+
+pub fn traceOpenUpvalues(heap: *Heap, upvalues: ?*eval.Upvalue) void {
+    var curr = upvalues;
+    while (curr) |uv| {
+        heap.markSlice(@ptrCast(uv), @sizeOf(eval.Upvalue));
+        traceValue(heap, uv.location.*);
+        curr = uv.next;
+    }
+}
+
+pub fn traceExports(heap: *Heap, exports: ?*std.ArrayList(eval.Dict.Entry)) void {
+    if (exports) |exp| {
+        for (exp.items) |entry| {
+            heap.markSlice(entry.key.ptr, entry.key.len);
+            traceValue(heap, entry.value);
+        }
+    }
+}
+
 test "tracer compiles and marks basic types" {
     // Tests for tracer logic are covered via vm and gc integration tests
 }

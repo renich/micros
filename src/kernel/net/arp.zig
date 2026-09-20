@@ -39,7 +39,7 @@ pub const ArpTable = struct {
     }} ** ARP_TABLE_CAPACITY,
     count: usize = 0,
 
-    pub fn insert(self: *ArpTable, ip: [4]u8, mac: [6]u8) void {
+    pub fn insertWithProtected(self: *ArpTable, ip: [4]u8, mac: [6]u8, protected_ip: ?[4]u8) void {
         for (&self.entries) |*entry| {
             if (entry.valid and std.mem.eql(u8, &entry.ip, &ip)) {
                 entry.mac = mac;
@@ -55,8 +55,19 @@ pub const ArpTable = struct {
                 return;
             }
         }
-        // Evict first slot on overflow
+        // Evict a non-protected slot on overflow
+        for (&self.entries, 0..) |*entry, idx| {
+            if (protected_ip) |prot| {
+                if (std.mem.eql(u8, &entry.ip, &prot)) continue;
+            }
+            self.entries[idx] = ArpEntry{ .ip = ip, .mac = mac, .valid = true };
+            return;
+        }
         self.entries[0] = ArpEntry{ .ip = ip, .mac = mac, .valid = true };
+    }
+
+    pub fn insert(self: *ArpTable, ip: [4]u8, mac: [6]u8) void {
+        self.insertWithProtected(ip, mac, null);
     }
 
     pub fn lookup(self: *const ArpTable, ip: [4]u8) ?[6]u8 {

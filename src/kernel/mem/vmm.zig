@@ -327,7 +327,8 @@ pub fn destroyActorAddressSpace(actor_pml4_phys: u64) void {
     pmm.freePage(actor_pml4_phys);
 }
 
-var next_heap_vaddr = std.atomic.Value(u64).init(0x0000_1000_0000_0000);
+var next_kernel_heap_vaddr = std.atomic.Value(u64).init(0xFFFF_9000_0000_0000);
+var next_user_heap_vaddr = std.atomic.Value(u64).init(0x0000_2000_0000_0000);
 
 fn rollbackMapPages(pml4: u64, base_vaddr: u64, count: usize) void {
     var j: usize = 0;
@@ -351,9 +352,14 @@ pub fn map_pages(addr: ?*anyopaque, length: usize, flags: u64) !*anyopaque {
         break :blk raw;
     } else blk: {
         const span: u64 = @as(u64, @intCast(num_pages)) * 4096;
-        const v = next_heap_vaddr.fetchAdd(span, .monotonic);
-        if ((flags & PAGE_USER) != 0 and v + span > 0x0000_8000_0000_0000) return error.InvalidArgs;
-        break :blk v;
+        if ((flags & PAGE_USER) != 0) {
+            const v = next_user_heap_vaddr.fetchAdd(span, .monotonic);
+            if (v + span > 0x0000_8000_0000_0000) return error.InvalidArgs;
+            break :blk v;
+        } else {
+            const v = next_kernel_heap_vaddr.fetchAdd(span, .monotonic);
+            break :blk v;
+        }
     };
 
     var i: usize = 0;

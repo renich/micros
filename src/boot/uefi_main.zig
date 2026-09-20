@@ -62,13 +62,26 @@ fn initMemoryMap(bs: *const uefi.tables.BootServices, info: *BootInfo) void {
     info.memory_map_entries = idx;
 }
 
-fn initBootInfo(bs: ?*const uefi.tables.BootServices) void {
+fn initLoadedImage(bs: *uefi.tables.BootServices, info: *BootInfo) void {
+    if (bs.openProtocol(uefi.protocol.LoadedImage, uefi.handle, .{ .by_handle_protocol = .{ .agent = uefi.handle } })) |maybe_img| {
+        if (maybe_img) |img| {
+            info.kernel_physical_base = @intFromPtr(img.image_base);
+            info.kernel_virtual_base = info.kernel_physical_base;
+            info.kernel_size_bytes = @intCast(img.image_size);
+        }
+    } else |_| {}
+}
+
+fn initBootInfo(bs: ?*uefi.tables.BootServices) void {
     global_boot_info.magic = boot_info_mod.BOOT_INFO_MAGIC;
     global_boot_info.hhdm_offset = 0;
     global_boot_info.memory_map_entries = 0;
     global_boot_info.memory_map_ptr = &memory_descriptors_buf;
     global_boot_info.bundle_base = 0;
     global_boot_info.bundle_size = 0;
+    global_boot_info.kernel_physical_base = 0;
+    global_boot_info.kernel_virtual_base = 0;
+    global_boot_info.kernel_size_bytes = 0;
 
     global_boot_info.framebuffer = FramebufferInfo{
         .base_addr = 0,
@@ -80,6 +93,7 @@ fn initBootInfo(bs: ?*const uefi.tables.BootServices) void {
     };
 
     if (bs) |services| {
+        initLoadedImage(services, &global_boot_info);
         initFramebuffer(services, &global_boot_info.framebuffer);
         initMemoryMap(services, &global_boot_info);
     }

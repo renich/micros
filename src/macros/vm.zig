@@ -185,21 +185,12 @@ pub const VM = struct {
     }
 
     fn traceConstants(self: *VM, heap: *gc.Heap) void {
-        for (self.chunk.constants.items) |constant| {
-            tracer.traceValue(heap, constant);
-        }
+        tracer.traceChunk(heap, self.chunk);
         for (self.dynamic_chunks.items) |ch| {
-            if (ch == self.chunk) continue;
-            for (ch.constants.items) |constant| {
-                tracer.traceValue(heap, constant);
-            }
+            if (ch != self.chunk) tracer.traceChunk(heap, ch);
         }
-        if (self.module_resolver) |resolver| {
-            for (resolver.dynamic_chunks.items) |ch| {
-                for (ch.constants.items) |constant| {
-                    tracer.traceValue(heap, constant);
-                }
-            }
+        if (self.module_resolver) |res| {
+            for (res.dynamic_chunks.items) |ch| tracer.traceChunk(heap, ch);
         }
     }
 
@@ -207,6 +198,9 @@ pub const VM = struct {
         heap.clearMarks();
         self.pruneDynamicChunks();
         self.traceConstants(heap);
+        tracer.traceCallFrames(heap, self.frames[0..self.frame_count]);
+        tracer.traceOpenUpvalues(heap, self.open_upvalues);
+        tracer.traceExports(heap, self.current_exports);
 
         // Trace globals
         var it = self.globals.iterator();

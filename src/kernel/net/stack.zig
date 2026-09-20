@@ -45,7 +45,12 @@ pub const NetworkStack = struct {
     next_listener_id: u32 = 1,
 
     pub fn init(device: *virtio_net_mod.VirtioNetDevice) NetworkStack {
-        return NetworkStack{ .device = device };
+        var nonce = io.rdtsc();
+        if (nonce == 0) nonce = 0x5359_4E5F_4D49_4352;
+        return NetworkStack{
+            .device = device,
+            .syn_secret_nonce = nonce,
+        };
     }
 
     pub fn handleIncoming(self: *NetworkStack, raw_frame: []const u8) void {
@@ -61,7 +66,8 @@ pub const NetworkStack = struct {
 
     fn processArp(self: *NetworkStack, data: []const u8) void {
         const arp = arp_mod.parseArp(data) orelse return;
-        self.arp_table.insert(arp.sender_ip, arp.sender_mac);
+        const prot_ip = if (self.dhcp_config.bound) self.dhcp_config.gateway else null;
+        self.arp_table.insertWithProtected(arp.sender_ip, arp.sender_mac, prot_ip);
 
         if (arp.opcode == arp_mod.OP_REQUEST and self.dhcp_config.bound) {
             if (std.mem.eql(u8, &arp.target_ip, &self.dhcp_config.ip)) {
@@ -72,7 +78,8 @@ pub const NetworkStack = struct {
 
     fn processIpv4(self: *NetworkStack, src_mac: [6]u8, data: []const u8) void {
         const ip_hdr = ipv4_mod.parseHeader(data) orelse return;
-        self.arp_table.insert(ip_hdr.src_ip, src_mac);
+        const prot_ip = if (self.dhcp_config.bound) self.dhcp_config.gateway else null;
+        self.arp_table.insertWithProtected(ip_hdr.src_ip, src_mac, prot_ip);
         if (!self.isTargetIp(ip_hdr.dst_ip)) return;
 
         const ip_header_len = @as(usize, ip_hdr.ihl) * 4;
@@ -286,6 +293,7 @@ pub const NetworkStack = struct {
     }
 
     pub fn sendUdpBroadcast(self: *NetworkStack, src_port: u16, dst_port: u16, payload: []const u8) !void {
+        if (payload.len > 1514 - 8) return error.PacketTooLarge;
         var udp_buf: [1514]u8 = undefined;
         const udp_hdr_len = try udp_mod.writeHeader(&udp_buf, src_port, dst_port, @intCast(payload.len));
         @memcpy(udp_buf[udp_hdr_len .. udp_hdr_len + payload.len], payload);
@@ -301,6 +309,7 @@ pub const NetworkStack = struct {
     }
 
     pub fn sendUdp(self: *NetworkStack, dst_ip: [4]u8, src_port: u16, dst_port: u16, payload: []const u8) !void {
+        if (payload.len > 1514 - 8) return error.PacketTooLarge;
         var udp_buf: [1514]u8 = undefined;
         const udp_hdr_len = try udp_mod.writeHeader(&udp_buf, src_port, dst_port, @intCast(payload.len));
         @memcpy(udp_buf[udp_hdr_len .. udp_hdr_len + payload.len], payload);
@@ -536,6 +545,7 @@ pub const NetworkStack = struct {
         self.packet_id +%= 1;
 
         const payload_offset = ip_offset + ip_hdr_len;
+        if (payload_offset + payload.len > frame_buf.len) return error.PacketTooLarge;
         @memcpy(frame_buf[payload_offset .. payload_offset + payload.len], payload);
 
         const total_frame_len = payload_offset + payload.len;
