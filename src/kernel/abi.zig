@@ -127,11 +127,13 @@ pub fn setContext(ctx: *AbiContext) void {
     ai_abi.setAiContext(&ai_ctx);
     fb_abi.setContext(ctx.framebuffer, checkCallerAuthority);
     console_abi.setContext(ctx.kbd_ctrl, checkCallerAuthority);
+    console_abi.setInputRing(ctx.ipc_ring);
 }
 
 pub fn clearContext() void {
     active_ctx = null;
     storage_abi.caller_auth_fn = null;
+    console_abi.setInputRing(null);
     catalog_abi.clearCatalogContext();
     net_abi.clearNetworkContext();
     git_abi.clearGitContext();

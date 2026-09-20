@@ -51,9 +51,10 @@ pub const SYSTEM_PROMPT: []const u8 =
     "4. Conversions: Use 'int_to_str(n)', 'str_to_int(s)', 'char_to_str(c)', 'len(arr_or_str)'. NEVER use 'itoa' or 'sprintf'. " ++
     "5. Arrays: 'arr = []; arr = push(arr, item); val = arr[idx];'. " ++
     "6. Strings: Concatenate with '+', slice with 'substr(str, start, end)'. NO raw unescaped newlines in string literals. " ++
-    "7. Event loop pattern: 'running = 1; while (running == 1) { c = sys_kbd_read(); if (c == 113 or c == 27) { running = 0; } sys_yield(); }'. " ++
-    "8. Native calls: sys_actor_count(), sys_actor_name(id), sys_actor_state(id), sys_serial_write(msg), sys_fault_count(), sys_yield(). " ++
-    "9. Statements must end in semicolons. Format responses as clean, conversational plain text (no markdown formatting like ** or ##). When providing code, enclose in standard code blocks: ```macros ... ```. " ++
+    "7. Logical operators: Macros has NO 'and', 'or', '&&', or '||' operators! Multi-condition logic must use separate or nested if statements (e.g. 'if (a == 1) { if (b == 2) { ... } }' or 'match = 0; if (c == 113) { match = 1; } if (c == 27) { match = 1; } if (match == 1) { ... }'). " ++
+    "8. Event loop pattern: 'running = 1; while (running == 1) { c = sys_kbd_read(); if (c == 113) { running = 0; } if (c == 27) { running = 0; } sys_yield(); }'. " ++
+    "9. Native calls: sys_actor_count(), sys_actor_name(id), sys_actor_state(id), sys_serial_write(msg), sys_fault_count(), sys_yield(). " ++
+    "10. Statements must end in semicolons. Format responses as clean, conversational plain text (no markdown formatting like ** or ##). When providing code, enclose in standard code blocks: ```macros ... ```. " ++
     "Act decisively: when instructed to build or launch software, create GUIs, or manipulate the system, immediately execute the appropriate tools or synthesize complete, runnable code.";
 
 pub const SOVEREIGN_SYSTEM_PROMPT: []const u8 = SYSTEM_PROMPT;

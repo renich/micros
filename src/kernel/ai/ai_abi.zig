@@ -45,6 +45,9 @@ pub fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const ctx = active_ai_ctx orelse return error.NoContext;
+    if (ctx.check_auth_fn) |check_fn| {
+        if (!check_fn(.network_device, cap_mod.Rights.WRITE)) return error.PermissionDenied;
+    }
     const infer_fn = ctx.ai_inference_fn orelse return error.NoAiHandler;
     const prompt = args[0].string;
     const len = infer_fn(prompt.ptr, prompt.len, &ai_prompt_resp_buf, ai_prompt_resp_buf.len);
@@ -74,7 +77,7 @@ pub fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return Value{ .string = "" };
     };
 
-    const caller = if (ctx.current_actor_fn) |get_fn| (get_fn() orelse ctx.supervisor) else ctx.supervisor;
+    const caller = if (ctx.current_actor_fn) |get_fn| (get_fn() orelse return error.PermissionDenied) else ctx.supervisor;
     const disp_ctx = ai_mod.dispatcher.DispatcherContext{
         .spawn_fn = ctx.spawn_code_fn,
         .grant_fn = ctx.grant_cap_fn,

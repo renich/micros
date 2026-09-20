@@ -141,7 +141,7 @@ pub const ToolDispatcher = struct {
             }
         }
         _ = spawn(self.allocator, "harness_exec", args.command) catch {
-            return tools.ToolResult{ .command_executed = "Command dispatched" };
+            return tools.ToolResult{ .error_msg = "SpawnFailed: unable to compile or spawn actor" };
         };
         return tools.ToolResult{ .command_executed = "Command spawned as actor" };
     }
@@ -178,8 +178,11 @@ pub const ToolDispatcher = struct {
         if (!self.hasCap(.storage_device, Rights.WRITE)) {
             return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.WRITE required" };
         }
-        var read_scratch: [4096]u8 = undefined;
-        const read_len = catalog_abi.global_catalog.readBlob(args.path, &read_scratch) catch {
+        const read_scratch = self.allocator.alloc(u8, 65536) catch {
+            return tools.ToolResult{ .error_msg = "OutOfMemory" };
+        };
+        defer self.allocator.free(read_scratch);
+        const read_len = catalog_abi.global_catalog.readBlob(args.path, read_scratch) catch {
             return tools.ToolResult{ .error_msg = "FileNotFound" };
         };
         const src = read_scratch[0..read_len];
@@ -216,12 +219,15 @@ pub const ToolDispatcher = struct {
         if (!self.hasCap(.storage_device, Rights.READ)) {
             return tools.ToolResult{ .error_msg = "PermissionDenied: storage_device.READ required" };
         }
+        const file_buf = self.allocator.alloc(u8, 65536) catch {
+            return tools.ToolResult{ .error_msg = "OutOfMemory" };
+        };
+        defer self.allocator.free(file_buf);
         var offset: usize = 0;
         for (0..catalog_abi.global_catalog.workspace.header.entry_count) |i| {
             const entry = &catalog_abi.global_catalog.workspace.entries[i];
             const name = entry.getName();
-            var file_buf: [1024]u8 = undefined;
-            const flen = catalog_abi.global_catalog.readBlob(name, &file_buf) catch continue;
+            const flen = catalog_abi.global_catalog.readBlob(name, file_buf) catch continue;
             if (std.mem.indexOf(u8, file_buf[0..flen], args.query) != null) {
                 if (offset + name.len + 1 < self.storage_buf.len) {
                     @memcpy(self.storage_buf[offset .. offset + name.len], name);

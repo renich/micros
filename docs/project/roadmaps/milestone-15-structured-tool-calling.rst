@@ -14,8 +14,7 @@ Milestones & Deliverables
       - ``spawn_actor(name: []const u8, source: []const u8) -> u32``
       - ``grant_capability(target_actor: u32, cap_type: u16, rights: u32) -> bool``
       - ``write_storage(payload: []const u8) -> [64]u8``
-      - ``read_storage(hex_hash: [64]u8) -> []const u8``
-      - ``draw_canvas(x: u32, y: u32, w: u32, h: u32, color: u32) -> void``
+      - ``run_command(command: []const u8) -> []const u8``
       - ``query_telemetry() -> TelemetrySnapshot``
    - Generate static JSON tool definitions at compile time adhering to standard function calling specifications for Gemini (``functionDeclarations``) and OpenAI (``tools`` array).
 

@@ -8,13 +8,20 @@ const Value = eval_mod.Value;
 const serial = @import("../serial.zig");
 const ps2_mod = @import("../drivers/ps2_kbd.zig");
 const cap_mod = @import("../cap/capability.zig");
+const ring_mod = @import("ring.zig");
+const events_mod = @import("events.zig");
 
 pub var active_kbd: ?*ps2_mod.Ps2Keyboard = null;
+pub var active_ring: ?*ring_mod.RingBuffer = null;
 pub var caller_auth_fn: ?*const fn (cap_type: cap_mod.CapType, rights: u16) bool = null;
 
 pub fn setContext(kbd: ?*ps2_mod.Ps2Keyboard, auth_fn: ?*const fn (cap_type: cap_mod.CapType, rights: u16) bool) void {
     active_kbd = kbd;
     caller_auth_fn = auth_fn;
+}
+
+pub fn setInputRing(ring: ?*ring_mod.RingBuffer) void {
+    active_ring = ring;
 }
 
 fn checkAuth(cap_type: cap_mod.CapType, rights: u16) bool {
@@ -86,25 +93,32 @@ pub fn nativeSysSerialRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .integer = -1 };
 }
 
+fn readRingEvent(ring: *ring_mod.RingBuffer) ?Value {
+    const frame = ring.pop() orelse return null;
+    const ev = events_mod.fromMessageFrame(&frame) orelse return null;
+    if (ev.action != .press) return null;
+    if (ev.ascii != 0) return Value{ .integer = @as(i64, ev.ascii) };
+    if (ev.keycode != 0) return Value{ .integer = @as(i64, ev.keycode) };
+    return null;
+}
+
 pub fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (!checkAuth(.framebuffer, cap_mod.Rights.READ) and !checkAuth(.actor_control, cap_mod.Rights.READ)) {
         return error.PermissionDenied;
     }
+    if (active_ring) |ring| {
+        if (readRingEvent(ring)) |val| return val;
+    }
     const kbd = active_kbd orelse return Value{ .integer = -1 };
     if (!ps2_mod.hasData()) return Value{ .integer = -1 };
     const scan = ps2_mod.readScancode();
     if (scan == 0 or scan == 0xFF) return Value{ .integer = -1 };
     const ev = kbd.processScancode(scan) orelse return Value{ .integer = -1 };
-    if (ev.action == .press) {
-        if (ev.ascii != 0) {
-            return Value{ .integer = @as(i64, ev.ascii) };
-        }
-        if (ev.keycode != 0) {
-            return Value{ .integer = @as(i64, ev.keycode) };
-        }
-    }
+    if (ev.action != .press) return Value{ .integer = -1 };
+    if (ev.ascii != 0) return Value{ .integer = @as(i64, ev.ascii) };
+    if (ev.keycode != 0) return Value{ .integer = @as(i64, ev.keycode) };
     return Value{ .integer = -1 };
 }
 

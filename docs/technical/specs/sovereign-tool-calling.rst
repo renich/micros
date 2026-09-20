@@ -28,28 +28,46 @@ In MicrOS, tool calls are not ambient operations:
 
 2. Canonical System Tool Registry
 =================================
-The microkernel exposes 6 canonical system tools across Gemini and OpenAI provider envelopes.
+The microkernel exposes a comprehensive co-engineering and kernel management toolset across Gemini and OpenAI provider envelopes.
 
-2.1 Tool Signatures & Schemas
------------------------------
+2.1 Software Engineering & OS Co-Engineering Tools
+--------------------------------------------------
 
-1. ``spawn_actor(name: []const u8, source: []const u8) -> u32``
+1. ``run_command(command: []const u8) -> []const u8``
+   Executes bundled system applications (e.g., ``desk``, ``msh``, ``mon``, ``status``, ``bench``) or userland utilities. Requires ``Rights.EXECUTE`` on ``CapType.actor_control``.
+
+2. ``view_file(path: []const u8) -> []const u8``
+   Reads the exact contents of files bundled in the microkernel genesis manifest or persistent CAS. Requires ``Rights.READ`` on ``CapType.storage_device``.
+
+3. ``write_to_file(path: []const u8, content: []const u8) -> bool``
+   Creates or overwrites a file in the active persistent working manifest. Requires ``Rights.WRITE`` on ``CapType.storage_device``.
+
+4. ``replace_file_content(path: []const u8, target: []const u8, replacement: []const u8) -> bool``
+   Performs an atomic search-and-replace modification to a bundled or persistent file. Requires ``Rights.WRITE`` on ``CapType.storage_device``.
+
+5. ``list_dir(prefix: []const u8) -> []const u8``
+   Lists files matching the specified prefix in the genesis bundle and persistent storage. Requires ``Rights.READ`` on ``CapType.storage_device``.
+
+6. ``grep_search(query: []const u8) -> []const u8``
+   Searches all genesis bundle source files for matching lines, returning paths and matching lines. Requires ``Rights.READ`` on ``CapType.storage_device``.
+
+2.2 Kernel Capability & Storage Tools
+-------------------------------------
+
+7. ``spawn_actor(name: []const u8, source: []const u8) -> u32``
    Spawns an isolated child actor running Macros source code within a dedicated cooperative fiber and CSpace. Requires ``Rights.EXECUTE`` on ``CapType.actor_control``.
 
-2. ``grant_capability(target_actor: u32, source_slot: u32, rights_mask: u16) -> bool``
+8. ``grant_capability(target_actor: u32, source_slot: u32, rights_mask: u16) -> bool``
    Attenuates and delegates a capability from the caller's CSpace to the target actor. Requires ``Rights.GRANT`` on the source capability.
 
-3. ``write_storage(payload: []const u8) -> [64]u8``
+9. ``write_storage(payload: []const u8) -> [64]u8``
    Writes payload immutably into the Content-Addressed Storage (CAS) engine, returning the 64-character hex BLAKE3 hash. Requires ``Rights.WRITE`` on ``CapType.storage_device``.
 
-4. ``read_storage(hex_hash: [64]u8) -> []const u8``
-   Retrieves immutable payload by its 64-character hex BLAKE3 hash. Requires ``Rights.READ`` on ``CapType.storage_device``.
+10. ``read_storage(hex_hash: [64]u8) -> []const u8``
+    Retrieves immutable payload by its 64-character hex BLAKE3 hash. Requires ``Rights.READ`` on ``CapType.storage_device``.
 
-5. ``draw_canvas(x: u32, y: u32, w: u32, h: u32, color: u32) -> void``
-   Blits a solid color rectangle to the linear 1280x800 GOP framebuffer. Requires ``Rights.WRITE`` on ``CapType.framebuffer``.
-
-6. ``query_telemetry() -> TelemetrySnapshot``
-   Reads active actor count, fault containment metrics, available memory pages, and kernel uptime. Requires ``Rights.READ`` on ``CapType.actor_control``.
+11. ``query_telemetry() -> TelemetrySnapshot``
+    Reads active actor count, fault containment metrics, available memory pages, and kernel uptime. Requires ``Rights.READ`` on ``CapType.actor_control``.
 
 3. Wire Protocol & Streaming Parser ABI
 =======================================

@@ -59,11 +59,19 @@ fn cleanupActorThread(act_ctx: *ActorThreadContext, vm: *vm_mod.VM, actor: *acto
         vm.chunk.deinit(act_ctx.allocator);
         act_ctx.allocator.destroy(vm.chunk);
     }
+    const actor_id = actor.id;
+    const alloc = act_ctx.allocator;
     act_ctx.allocator.destroy(act_ctx);
     if (vmm.kernel_pml4_phys != 0 and vmm.readCr3() != vmm.kernel_pml4_phys) {
         vmm.switchAddressSpace(vmm.kernel_pml4_phys);
     }
-    actor.release();
+    if (global_registry) |reg| {
+        reg.terminate(alloc, actor_id) catch {
+            actor.release();
+        };
+    } else {
+        actor.release();
+    }
 }
 
 fn logActorCrash(actor: *actor_mod.Actor, vm: *vm_mod.VM, err: anyerror) void {
@@ -119,6 +127,7 @@ pub fn compileActorScript(allocator: std.mem.Allocator, name: []const u8, source
         defer stmt.deinit(allocator);
         try compiler.compile(stmt);
     }
+    try chunk.writeChunk(allocator, @intFromEnum(chunk_mod.OpCode.return_op));
     return chunk;
 }
 

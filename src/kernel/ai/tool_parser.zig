@@ -58,15 +58,36 @@ pub fn findMatchingBrace(src: []const u8, start_idx: usize) ?usize {
 }
 
 pub fn findKeyColon(json: []const u8, key: []const u8) ?usize {
-    var search_idx: usize = 0;
-    while (std.mem.indexOfPos(u8, json, search_idx, key)) |pos| {
-        search_idx = pos + key.len;
-        if (pos == 0 or json[pos - 1] != '"') continue;
-        if (pos + key.len >= json.len or json[pos + key.len] != '"') continue;
-        const p = skipWhitespace(json, pos + key.len + 1);
-        if (p < json.len and json[p] == ':') {
-            return skipWhitespace(json, p + 1);
+    var i: usize = 0;
+    var in_str = false;
+    var escaped = false;
+    while (i < json.len) : (i += 1) {
+        const c = json[i];
+        if (escaped) {
+            escaped = false;
+            continue;
         }
+        if (c == '\\' and in_str) {
+            escaped = true;
+            continue;
+        }
+        if (c != '"') continue;
+        if (in_str) {
+            in_str = false;
+            continue;
+        }
+        const after_q = i + 1;
+        if (after_q + key.len < json.len and
+            std.mem.startsWith(u8, json[after_q..], key) and
+            json[after_q + key.len] == '"')
+        {
+            const after_closing = after_q + key.len + 1;
+            const colon_pos = skipWhitespace(json, after_closing);
+            if (colon_pos < json.len and json[colon_pos] == ':') {
+                return skipWhitespace(json, colon_pos + 1);
+            }
+        }
+        in_str = true;
     }
     return null;
 }
@@ -275,19 +296,49 @@ pub fn extractToolCall(json_payload: []const u8, scratch_buf: []u8) ?tools.ToolC
 fn formatSafeString(out_buf: []u8, prefix: []const u8, content: []const u8, suffix: []const u8) !usize {
     const overhead = prefix.len + suffix.len + 3;
     if (out_buf.len <= overhead) return error.BufferTooSmall;
-    const max_content = out_buf.len - (prefix.len + suffix.len);
     var off: usize = 0;
     @memcpy(out_buf[off .. off + prefix.len], prefix);
     off += prefix.len;
-    if (content.len <= max_content) {
-        @memcpy(out_buf[off .. off + content.len], content);
-        off += content.len;
-    } else {
-        const take = max_content - 3;
-        @memcpy(out_buf[off .. off + take], content[0..take]);
-        off += take;
-        @memcpy(out_buf[off .. off + 3], "...");
-        off += 3;
+
+    for (content) |c| {
+        if (off + suffix.len + 3 >= out_buf.len) {
+            if (off + suffix.len + 3 < out_buf.len) {
+                @memcpy(out_buf[off .. off + 3], "...");
+                off += 3;
+            }
+            break;
+        }
+        switch (c) {
+            '"' => {
+                out_buf[off] = '\\';
+                out_buf[off + 1] = '"';
+                off += 2;
+            },
+            '\\' => {
+                out_buf[off] = '\\';
+                out_buf[off + 1] = '\\';
+                off += 2;
+            },
+            '\n' => {
+                out_buf[off] = '\\';
+                out_buf[off + 1] = 'n';
+                off += 2;
+            },
+            '\r' => {
+                out_buf[off] = '\\';
+                out_buf[off + 1] = 'r';
+                off += 2;
+            },
+            '\t' => {
+                out_buf[off] = '\\';
+                out_buf[off + 1] = 't';
+                off += 2;
+            },
+            else => {
+                out_buf[off] = c;
+                off += 1;
+            },
+        }
     }
     @memcpy(out_buf[off .. off + suffix.len], suffix);
     off += suffix.len;
@@ -305,7 +356,7 @@ pub fn formatResultJson(result: tools.ToolResult, out_buf: []u8) !usize {
         .actor_spawned => |id| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"actor_id\":{d}}}", .{id})).len,
         .capability_granted => |ok| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"granted\":{}}}", .{ok})).len,
         .storage_written => |hash| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"hex_hash\":\"{s}\"}}", .{hash})).len,
-        .storage_read => |payload| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"bytes\":{d}}}", .{payload.len})).len,
+        .storage_read => |payload| formatSafeString(out_buf, "{\"status\":\"ok\",\"content\":\"", payload, "\"}"),
         .telemetry => |t| (try std.fmt.bufPrint(
             out_buf,
             "{{\"status\":\"ok\",\"actors\":{d},\"faults\":{d},\"pages\":{d},\"uptime\":{d}}}",
@@ -395,4 +446,17 @@ test "format tool result and gemini return leg" {
     const ret_len = try formatGeminiResponse(&ret_buf, "spawn_actor", res_buf[0..res_len]);
     try std.testing.expect(std.mem.indexOf(u8, ret_buf[0..ret_len], "\"functionResponse\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ret_buf[0..ret_len], "\"actor_id\":3") != null);
+}
+
+test "format tool result escapes quotes and newlines" {
+    var res_buf: [256]u8 = undefined;
+    const res_len = try formatResultJson(tools.ToolResult{ .file_viewed = "x = \"hello\";\ny = 2;\n" }, &res_buf);
+    try std.testing.expectEqualStrings("{\"status\":\"ok\",\"content\":\"x = \\\"hello\\\";\\ny = 2;\\n\"}", res_buf[0..res_len]);
+}
+
+test "findKeyColon ignores keys embedded in string literals" {
+    const json = "{\"command\":\"cat \\\"target\\\": bar\",\"target\":\"main.zig\"}";
+    const pos = findKeyColon(json, "target");
+    try std.testing.expect(pos != null);
+    try std.testing.expectEqualStrings("\"main.zig\"}", json[pos.?..]);
 }
