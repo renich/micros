@@ -357,39 +357,6 @@ fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerro
     return true;
 }
 
-const CANVAS_VIEWPORT_X: u32 = 882;
-const CANVAS_VIEWPORT_Y: u32 = 250;
-const CANVAS_VIEWPORT_W: u32 = 376;
-const CANVAS_VIEWPORT_H: u32 = 528;
-
-fn drawCanvasBridge(x: u32, y: u32, w: u32, h: u32, color: u32) void {
-    var dest_x: u32 = x;
-    var dest_y: u32 = y;
-    var dest_w: u32 = w;
-    var dest_h: u32 = h;
-
-    if (x < 880) {
-        const rem_x = x % CANVAS_VIEWPORT_W;
-        const rem_y = y % CANVAS_VIEWPORT_H;
-        dest_x = CANVAS_VIEWPORT_X + rem_x;
-        dest_y = CANVAS_VIEWPORT_Y + rem_y;
-        dest_w = @min(w, CANVAS_VIEWPORT_W - rem_x);
-        dest_h = @min(h, CANVAS_VIEWPORT_H - rem_y);
-    } else {
-        dest_x = @min(x, 1279);
-        dest_y = @min(y, 799);
-        dest_w = @min(w, 1280 - dest_x);
-        dest_h = @min(h, 800 - dest_y);
-    }
-
-    if (global_canvas) |*canvas| {
-        canvas.drawRect(dest_x, dest_y, dest_w, dest_h, color);
-    }
-    if (global_fb) |*fb| {
-        fb.drawRect(dest_x, dest_y, dest_w, dest_h, color);
-    }
-}
-
 fn telemetryBridge() ai_mod.tools.TelemetrySnapshot {
     const faults = if (global_supervisor) |s| s.total_faults else 0;
     return .{ .active_actors = @intCast(global_registry.active_count), .total_faults = faults, .free_ram_pages = 256, .uptime_ticks = 100 };
@@ -735,7 +702,6 @@ fn createAbiContext(genesis: *actor_mod.Actor, ipc_ring: *ipc_mod.RingBuffer) ab
         .persist_actor_fn = persistActorBridge,
         .spawn_cas_fn = spawnCasBridge,
         .grant_cap_fn = grantCapBridge,
-        .draw_canvas_fn = drawCanvasBridge,
         .telemetry_fn = telemetryBridge,
         .bundle_read_fn = bundleReadBridge,
         .bundle_list_fn = bundleListBridge,

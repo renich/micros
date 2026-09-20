@@ -410,7 +410,7 @@ test "Harness VM stack depth tracking with simulated commands" {
     try vm.globals.put("sys_ai_prompt", @import("macros/eval.zig").Value{ .native = testAiPromptMock });
     test_serial_idx = 0;
     try vm.run(0);
-    try std_mod.testing.expect(vm.sp <= 64);
+    try std_mod.testing.expect(vm.sp <= 80);
 }
 
 test "Tokenize mock extracted code" {

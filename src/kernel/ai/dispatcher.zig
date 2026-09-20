@@ -15,7 +15,6 @@ pub const DispatcherContext = struct {
     grant_fn: ?*const fn (target_actor: u32, source_slot: u32, rights_mask: u16) anyerror!bool = null,
     cas_put_fn: ?*const fn (data: []const u8, out_hex: *[64]u8) anyerror!void = null,
     cas_get_fn: ?*const fn (hex_hash: []const u8, out_buf: []u8) anyerror!usize = null,
-    draw_canvas_fn: ?*const fn (x: u32, y: u32, w: u32, h: u32, color: u32) void = null,
     telemetry_fn: ?*const fn () tools.TelemetrySnapshot = null,
     bundle_read_fn: ?*const fn (name: []const u8) ?[]const u8 = null,
     bundle_list_fn: ?*const fn (prefix: []const u8, out_buf: []u8) usize = null,
@@ -107,17 +106,6 @@ pub const ToolDispatcher = struct {
         return tools.ToolResult{ .storage_read = self.storage_buf[0..read_len] };
     }
 
-    fn dispatchDraw(self: *const ToolDispatcher, args: tools.DrawCanvasArgs) tools.ToolResult {
-        if (!self.hasCap(.framebuffer, Rights.WRITE)) {
-            return tools.ToolResult{ .error_msg = "PermissionDenied: framebuffer.WRITE required" };
-        }
-        if (self.ctx.draw_canvas_fn) |draw| {
-            draw(args.x, args.y, args.w, args.h, args.color);
-            return tools.ToolResult{ .canvas_drawn = {} };
-        }
-        return tools.ToolResult{ .error_msg = "NotImplemented: draw_canvas" };
-    }
-
     fn dispatchTelemetry(self: *const ToolDispatcher) tools.ToolResult {
         if (!self.hasCap(.actor_control, Rights.READ)) {
             return tools.ToolResult{ .error_msg = "PermissionDenied: actor_control.READ required" };
@@ -132,13 +120,30 @@ pub const ToolDispatcher = struct {
         if (!self.hasCap(.actor_control, Rights.EXECUTE)) {
             return tools.ToolResult{ .error_msg = "PermissionDenied: actor_control.EXECUTE required" };
         }
-        if (self.ctx.spawn_fn) |spawn| {
-            _ = spawn(self.allocator, "harness_exec", args.command) catch {
-                return tools.ToolResult{ .command_executed = "Command dispatched" };
+        const spawn = self.ctx.spawn_fn orelse {
+            return tools.ToolResult{ .error_msg = "NotImplemented: run_command" };
+        };
+        const trimmed = std.mem.trim(u8, args.command, " \t\r\n");
+        if (self.ctx.bundle_read_fn) |bread| {
+            var name_buf: [32]u8 = undefined;
+            const full_name = blk: {
+                if (std.mem.endsWith(u8, trimmed, ".mx")) break :blk trimmed;
+                if (trimmed.len + 3 > name_buf.len) break :blk trimmed;
+                @memcpy(name_buf[0..trimmed.len], trimmed);
+                @memcpy(name_buf[trimmed.len .. trimmed.len + 3], ".mx");
+                break :blk name_buf[0 .. trimmed.len + 3];
             };
-            return tools.ToolResult{ .command_executed = "Command spawned as actor" };
+            if (bread(full_name)) |src| {
+                _ = spawn(self.allocator, full_name, src) catch {
+                    return tools.ToolResult{ .error_msg = "SpawnFailed" };
+                };
+                return tools.ToolResult{ .command_executed = "Spawned system application from bundle" };
+            }
         }
-        return tools.ToolResult{ .command_executed = "Command acknowledged" };
+        _ = spawn(self.allocator, "harness_exec", args.command) catch {
+            return tools.ToolResult{ .command_executed = "Command dispatched" };
+        };
+        return tools.ToolResult{ .command_executed = "Command spawned as actor" };
     }
 
     fn dispatchViewFile(self: *const ToolDispatcher, args: tools.ViewFileArgs) tools.ToolResult {
@@ -240,7 +245,6 @@ pub const ToolDispatcher = struct {
             .grant_capability => |args| self.dispatchGrant(args),
             .write_storage => |args| self.dispatchWrite(args),
             .read_storage => |args| self.dispatchRead(args),
-            .draw_canvas => |args| self.dispatchDraw(args),
             .query_telemetry => self.dispatchTelemetry(),
         };
     }
@@ -270,16 +274,6 @@ fn mockCasGet(hex: []const u8, out_buf: []u8) anyerror!usize {
     const s = "stored payload";
     @memcpy(out_buf[0..s.len], s);
     return s.len;
-}
-
-var test_drawn: bool = false;
-fn mockDraw(x: u32, y: u32, w: u32, h: u32, color: u32) void {
-    _ = x;
-    _ = y;
-    _ = w;
-    _ = h;
-    _ = color;
-    test_drawn = true;
 }
 
 const TelemetrySnapshot = tools.TelemetrySnapshot;

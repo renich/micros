@@ -4,42 +4,17 @@
 // context auto-compression, clipboard copy/paste, search, readline & vim modes.
 
 fn init_theme() {
-    CLR_BG = 0;             // Pure pitch black: 0x000000
-    CLR_HEADER_BG = 856343; // Dark charcoal header: 0x0D1117
-    CLR_BORDER = 2238254;   // Hairline graphite border: 0x22272E
-    CLR_TEXT = 15132390;    // Crisp neutral white: 0xE6EDF3
-    CLR_MUTED = 8226192;    // Refined slate gray: 0x7D8590
-    CLR_ACCENT = 5809919;   // Ice sapphire blue: 0x58A6FF
-    CLR_GREEN = 4176208;    // Emerald green: 0x3FB950
-    CLR_WARN = 13801762;    // Amber: 0xD29922
-    
-    // Chat History & Multi-Conversation State
-    chat_lines = [];
-    chat_colors = [];
-    cur_line_text = "";
-    cur_line_color = CLR_TEXT;
-    conv_history = [];
-    
-    conversations = ["General"];
-    conv_active_idx = 0;
-    conv_stores = push([], []);
-    conv_color_stores = push([], []);
-    conv_prompt_stores = push([], []);
-    clipboard_buf = "";
-    last_resp_text = "";
-    last_resp_code = "";
-    compressed_summary = "";
-    prompt_history = [];
-    hist_pos = 0 - 1;
-    saved_draft = "";
-    line_buf = "";
-    line_pos = 0;
-    vim_mode = 0;
-    PROMPT_Y = 750;
-    ESC = char_to_str(27);
-    ANSI_RESET = ESC + "[0m";
-    ANSI_BOLD = ESC + "[1m";
-    ANSI_CYAN = ESC + "[96m";
+    CLR_BG = 0; CLR_HEADER_BG = 856343; CLR_BORDER = 2238254;
+    CLR_TEXT = 15132390; CLR_MUTED = 8226192; CLR_ACCENT = 5809919;
+    CLR_GREEN = 4176208; CLR_WARN = 13801762;
+    chat_lines = []; chat_colors = []; cur_line_text = ""; cur_line_color = CLR_TEXT;
+    conv_history = []; conversations = ["General"]; conv_active_idx = 0;
+    conv_stores = [[]]; conv_color_stores = [[]]; conv_prompt_stores = [[]];
+    clipboard_buf = ""; last_resp_text = ""; last_resp_code = "";
+    compressed_summary = ""; prompt_history = []; hist_pos = 0 - 1;
+    saved_draft = ""; line_buf = ""; line_pos = 0; vim_mode = 0;
+    PROMPT_Y = 750; ESC = char_to_str(27);
+    ANSI_RESET = ESC + "[0m"; ANSI_BOLD = ESC + "[1m"; ANSI_CYAN = ESC + "[96m";
 }
 
 fn draw_header() {
@@ -58,14 +33,6 @@ fn draw_panels() {
     sys_fb_draw_rect(20, 48, 820, 1, CLR_BORDER);
     sys_fb_draw_string(880, 32, "ACTORS & TELEMETRY", CLR_MUTED, CLR_BG);
     sys_fb_draw_rect(880, 48, 380, 1, CLR_BORDER);
-    sys_fb_draw_rect(880, 218, 380, 1, CLR_BORDER);
-    sys_fb_draw_string(880, 226, "LIVE GRAPHICS CANVAS", CLR_MUTED, CLR_BG);
-    sys_fb_draw_rect(880, 240, 380, 1, CLR_BORDER);
-    sys_fb_draw_rect(880, 248, 380, 532, 659732);
-    sys_fb_draw_rect(880, 248, 380, 1, CLR_BORDER);
-    sys_fb_draw_rect(880, 779, 380, 1, CLR_BORDER);
-    sys_fb_draw_rect(880, 248, 1, 532, CLR_BORDER);
-    sys_fb_draw_rect(1259, 248, 1, 532, CLR_BORDER);
 }
 
 fn render_chat() {
@@ -86,16 +53,13 @@ fn render_chat() {
 }
 
 fn cmd_clear() {
-    chat_lines = [];
-    chat_colors = [];
+    chat_lines = []; chat_colors = [];
     render_chat();
     return 0;
 }
 
 fn console_write(text, color) {
-    if (len(cur_line_text) == 0) {
-        cur_line_color = color;
-    }
+    if (len(cur_line_text) == 0) { cur_line_color = color; }
     cur_line_text = cur_line_text + text;
     sys_serial_write(text);
 }
@@ -103,8 +67,7 @@ fn console_write(text, color) {
 fn console_newline() {
     chat_lines = push(chat_lines, cur_line_text);
     chat_colors = push(chat_colors, cur_line_color);
-    cur_line_text = "";
-    cur_line_color = CLR_TEXT;
+    cur_line_text = ""; cur_line_color = CLR_TEXT;
     render_chat();
     sys_serial_write("\r\n");
 }
@@ -184,8 +147,8 @@ fn console_print_wrapped(text, color) {
 }
 
 fn render_inspector() {
-    sys_fb_draw_rect(861, 25, 419, 190, CLR_BG);
-    sys_fb_draw_rect(860, 25, 1, 190, CLR_BORDER);
+    sys_fb_draw_rect(861, 25, 419, 775, CLR_BG);
+    sys_fb_draw_rect(860, 25, 1, 775, CLR_BORDER);
     sys_fb_draw_string(880, 32, "ACTORS & TELEMETRY", CLR_MUTED, CLR_BG);
     sys_fb_draw_rect(880, 48, 380, 1, CLR_BORDER);
     sys_fb_draw_string(880, 60, "Active Actors:  " + int_to_str(sys_actor_count()), CLR_TEXT, CLR_BG);
@@ -197,17 +160,25 @@ fn render_inspector() {
         if (st >= 0) {
             nm = sys_actor_name(var_id);
             sys_fb_draw_string(880, var_y, "Actor " + int_to_str(var_id) + ":  " + nm, CLR_MUTED, CLR_BG);
-            var_y = var_y + 14;
+            var_y = var_y + 16;
         }
         var_id = var_id + 1;
     }
 
+    var_y = var_y + 12;
     sys_fb_draw_string(880, var_y, "Fault Guard:    " + int_to_str(sys_fault_count()) + " faults", CLR_MUTED, CLR_BG);
-    var_y = var_y + 14;
+    var_y = var_y + 16;
     sys_fb_draw_string(880, var_y, "State:          Online", CLR_GREEN, CLR_BG);
-    var_y = var_y + 14;
+    var_y = var_y + 16;
     clip_len = len(clipboard_buf);
     sys_fb_draw_string(880, var_y, "Clipboard:      " + int_to_str(clip_len) + " chars", CLR_ACCENT, CLR_BG);
+    var_y = var_y + 24;
+    sys_fb_draw_rect(880, var_y, 380, 1, CLR_BORDER);
+    var_y = var_y + 12;
+    sys_fb_draw_string(880, var_y, "SOVEREIGN SYSTEM CONTROL", CLR_MUTED, CLR_BG);
+    sys_fb_draw_string(880, var_y + 20, "/desk, /gui : Sovereign Desktop", CLR_TEXT, CLR_BG);
+    sys_fb_draw_string(880, var_y + 36, "/help       : Command Reference", CLR_MUTED, CLR_BG);
+    sys_fb_draw_string(880, var_y + 52, "/tools      : Resident AI Tools", CLR_MUTED, CLR_BG);
 }
 
 fn find_str(haystack, needle) {
@@ -255,10 +226,7 @@ fn is_prefix(str, pre) {
 fn hist_prev() {
     hlen = len(prompt_history);
     if (hlen == 0) { return 0; }
-    if (hist_pos == 0 - 1) {
-        saved_draft = line_buf;
-        hist_pos = hlen;
-    }
+    if (hist_pos == 0 - 1) { saved_draft = line_buf; hist_pos = hlen; }
     if (hist_pos > 0) {
         hist_pos = hist_pos - 1;
         line_buf = prompt_history[hist_pos];
@@ -343,7 +311,7 @@ fn cmd_pkg() {
 fn cmd_help() {
     console_writeln("-- Harness Slash Commands ----------------------", CLR_MUTED);
     console_writeln("  /help, /tools, /files, /cat   - Commands, tools, workspace files", CLR_TEXT);
-    console_writeln("  /run [path]                   - Execute script or synthesized code", CLR_TEXT);
+    console_writeln("  /run [path], /desk, /gui      - Run script or Sovereign Desktop", CLR_TEXT);
     console_writeln("  /stats, /status, /peers, /pkg - Session metrics, cluster & SPK1", CLR_TEXT);
     console_writeln("  /actors, /kill <id>           - List or terminate active actors", CLR_TEXT);
     console_writeln("  /chats, /new, /switch, /clear - Multi-turn conversation sessions", CLR_TEXT);
@@ -359,7 +327,7 @@ fn cmd_tools() {
     console_writeln("-- Resident AI Tools & Capabilities ------------", CLR_MUTED);
     console_writeln("  run_command, view_file, write_to_file, replace_file_content", CLR_TEXT);
     console_writeln("  list_dir, grep_search, spawn_actor, grant_capability", CLR_TEXT);
-    console_writeln("  query_telemetry, write_storage, read_storage, draw_canvas", CLR_TEXT);
+    console_writeln("  query_telemetry, write_storage, read_storage", CLR_TEXT);
     console_writeln("------------------------------------------------", CLR_MUTED);
     return 0;
 }
@@ -370,7 +338,7 @@ fn cmd_files(prefix) {
         console_writeln("-- Genesis Bundle Modules ----------------------", CLR_MUTED);
         console_writeln("  init.mx, msh.mx, harness.mx, installer.mx", CLR_TEXT);
         console_writeln("  lexer.mx, parser.mx, compiler.mx, bundle.mx", CLR_TEXT);
-        console_writeln("  rebuild.mx, http_server.mx, vedit.mx", CLR_TEXT);
+        console_writeln("  rebuild.mx, http_server.mx, vedit.mx, desk.mx", CLR_TEXT);
     } else {
         console_writeln("-- Workspace Files -----------------------------", CLR_MUTED);
         console_writeln(list, CLR_TEXT);
@@ -393,6 +361,35 @@ fn cmd_cat(path) {
     }
     return 0;
 }
+
+fn restore_harness_ui() {
+    sys_fb_clear(CLR_BG);
+    draw_header();
+    draw_panels();
+    render_inspector();
+    render_chat();
+    render_prompt();
+}
+
+fn cmd_desk() {
+    d_src = sys_bundle_read("desk.mx");
+    if (len(d_src) == 0) {
+        console_writeln("Error: desk.mx not found in bundle.", CLR_WARN);
+        return 0;
+    }
+    console_writeln("Launching Sovereign Desktop...", CLR_GREEN);
+    sys_fb_clear(CLR_BG);
+    d_id = sys_actor_spawn_code("desk", d_src);
+    if (d_id < 0) {
+        console_writeln("Error: Failed to spawn desk actor.", CLR_WARN);
+        return 0;
+    }
+    sys_actor_wait(d_id);
+    restore_harness_ui();
+    console_writeln("Desktop closed. Returned to harness.", CLR_MUTED);
+    return 0;
+}
+
 
 fn cmd_run(arg) {
     if (len(arg) == 0) {
@@ -682,11 +679,11 @@ fn cmd_actors() {
 }
 
 fn format_tool_badge(res) {
-    if (find_str(res, "rendered") >= 0) { return "* [canvas] Visual elements rendered to Live Graphics Canvas"; }
     if (find_str(res, "actor_id") >= 0) { return "* [actor] Child actor spawned in sandbox"; }
     if (find_str(res, "uptime") >= 0) { return "* [telemetry] Kernel telemetry synchronized"; }
     if (find_str(res, "bytes_written") >= 0) { return "* [storage] Wrote blob to persistent CAS"; }
     if (find_str(res, "listing") >= 0) { return "* [catalog] Listed directory catalog files"; }
+    if (find_str(res, "output") >= 0) { return "* [command] MicroShell command executed"; }
     return "* [tool] Execution completed";
 }
 
@@ -695,11 +692,29 @@ fn resolve_tool_calls(initial_resp) {
     turn = 0;
     while (turn < 5) {
         tool_res = sys_ai_tool_call(cur_resp);
-        if (len(tool_res) == 0) {
-            return cur_resp;
-        }
+        if (len(tool_res) == 0) { return cur_resp; }
         console_writeln(format_tool_badge(tool_res), CLR_MUTED);
         render_inspector();
+        chk_desk = 0;
+        if (find_str(tool_res, "bundle") >= 0) { chk_desk = 1; }
+        if (find_str(cur_resp, "desk") >= 0) { chk_desk = 1; }
+        if (chk_desk == 1) {
+            di = 0;
+            while (di < 32) {
+                if (sys_actor_state(di) >= 0) {
+                    nm = sys_actor_name(di);
+                    is_d = 0;
+                    if (nm == "desk") { is_d = 1; }
+                    if (nm == "desk.mx") { is_d = 1; }
+                    if (is_d == 1) {
+                        sys_actor_wait(di);
+                        restore_harness_ui();
+                        di = 32;
+                    }
+                }
+                di = di + 1;
+            }
+        }
         cur_resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or provide final summary.");
         if (len(cur_resp) == 0) {
             console_writeln("[harness] Follow-up turn failed.", CLR_WARN);
@@ -785,32 +800,28 @@ fn eval_command(cmd) {
     c = cmd;
     if (is_prefix(c, "/")) { c = substr(c, 1, len(c)); }
     if (c == "help") { return cmd_help(); }
+    if (c == "desk") { return cmd_desk(); }
+    if (c == "gui") { return cmd_desk(); }
     if (c == "tools") { return cmd_tools(); }
     if (c == "files") { return cmd_files(""); }
     if (c == "ls") { return cmd_files(""); }
-    if (c == "stats") { return cmd_stats(); }
-    if (c == "status") { return cmd_status(); }
-    if (c == "peers") { return cmd_peers(); }
-    if (c == "pkg") { return cmd_pkg(); }
-    if (c == "actors") { return cmd_actors(); }
-    if (c == "clear") { return cmd_clear(); }
-    if (c == "history") { return cmd_history(); }
-    if (c == "reset") { return cmd_reset(); }
-    if (c == "model") { return cmd_model(); }
-    if (c == "chats") { return cmd_conversations(); }
-    if (c == "compress") { return cmd_compress(); }
-    if (c == "paste") { return cmd_paste(); }
+    if (c == "stats") { return cmd_stats(); } else if (c == "status") { return cmd_status(); }
+    else if (c == "peers") { return cmd_peers(); } else if (c == "pkg") { return cmd_pkg(); }
+    else if (c == "actors") { return cmd_actors(); } else if (c == "clear") { return cmd_clear(); }
+    else if (c == "history") { return cmd_history(); } else if (c == "reset") { return cmd_reset(); }
+    else if (c == "model") { return cmd_model(); } else if (c == "chats") { return cmd_conversations(); }
+    else if (c == "compress") { return cmd_compress(); } else if (c == "paste") { return cmd_paste(); }
     if (c == "copy") { return cmd_copy(""); }
     if (c == "copy code") { return cmd_copy("code"); }
-    if (c == "new") { return cmd_new_conv(""); }
-    if (c == "run") { return cmd_run(""); }
     if (is_prefix(c, "copy ")) { return cmd_copy(substr(c, 5, len(c))); }
+    if (c == "new") { return cmd_new_conv(""); }
     if (is_prefix(c, "new ")) { return cmd_new_conv(substr(c, 4, len(c))); }
+    if (c == "run") { return cmd_run(""); }
+    if (is_prefix(c, "run ")) { return cmd_run(substr(c, 4, len(c))); }
     if (is_prefix(c, "switch ")) { return cmd_switch_conv(substr(c, 7, len(c))); }
     if (is_prefix(c, "search ")) { return cmd_search(substr(c, 7, len(c))); }
     if (is_prefix(c, "cat ")) { return cmd_cat(substr(c, 4, len(c))); }
     if (is_prefix(c, "files ")) { return cmd_files(substr(c, 6, len(c))); }
-    if (is_prefix(c, "run ")) { return cmd_run(substr(c, 4, len(c))); }
     if (is_prefix(c, "store ")) { return cmd_store(substr(c, 6, len(c))); }
     if (is_prefix(c, "fetch ")) { return cmd_fetch(substr(c, 6, len(c))); }
     if (is_prefix(c, "persist ")) { return cmd_persist(substr(c, 8, len(c))); }
@@ -829,9 +840,7 @@ fn eval_command(cmd) {
 fn render_prompt() {
     sys_fb_draw_rect(20, PROMPT_Y, 835, 16, CLR_BG);
     prompt_str = "harness> ";
-    if (vim_mode == 1) {
-        prompt_str = "harness:norm> ";
-    }
+    if (vim_mode == 1) { prompt_str = "harness:norm> "; }
     sys_fb_draw_string(20, PROMPT_Y, prompt_str, CLR_ACCENT, CLR_BG);
     prompt_offset = 20 + len(prompt_str) * 8;
     sys_fb_draw_string(prompt_offset, PROMPT_Y, line_buf, CLR_TEXT, CLR_BG);
@@ -877,9 +886,7 @@ fn handle_newline() {
         saved_draft = "";
         eval_command(line_buf);
     }
-    line_buf = "";
-    line_pos = 0;
-    vim_mode = 0;
+    line_buf = ""; line_pos = 0; vim_mode = 0;
     return true;
 }
 
@@ -902,17 +909,12 @@ fn handle_vim_key(c) {
     if (c == 65) { vim_mode = 0; line_pos = len(line_buf); return 0; } // A
     if (c == 104) { if (line_pos > 0) { line_pos = line_pos - 1; } return 0; } // h
     if (c == 108) { if (line_pos < len(line_buf)) { line_pos = line_pos + 1; } return 0; } // l
-    if (c == 107) { hist_prev(); return 0; } // k
-    if (c == 106) { hist_next(); return 0; } // j
+    if (c == 48) { line_pos = 0; return 0; } // 0
+    if (c == 36) { line_pos = len(line_buf); return 0; } // $
     if (c == 119) { jump_word_forward(); return 0; } // w
     if (c == 98) { jump_word_backward(); return 0; } // b
-    if (c == 48) { line_pos = 0; return 0; } // 0
-    if (c == 36) { if (len(line_buf) > 0) { line_pos = len(line_buf) - 1; } return 0; } // $
     if (c == 120) { delete_char_at_cursor(); return 0; } // x
     if (c == 100) { line_buf = ""; line_pos = 0; return 0; } // d
-    if (c == 99) { line_buf = ""; line_pos = 0; vim_mode = 0; return 0; } // c
-    if (c == 112) { cmd_paste(); return 0; } // p
-    if (c == 47) { vim_mode = 0; line_buf = "/search "; line_pos = 8; return 0; } // /
     return 0;
 }
 
@@ -921,14 +923,10 @@ fn harness_loop() {
     render_prompt();
     while (running) {
         c = poll_char();
-        if (c == 13) { c = 10; }
-        if (c == 127) { c = 8; }
-        if (c == 1) { c = 262; }
-        if (c == 5) { c = 263; }
-        if (c == 2) { c = 258; }
-        if (c == 6) { c = 259; }
-        if (c == 16) { c = 256; }
-        if (c == 14) { c = 257; }
+        if (c == 13) { c = 10; } else if (c == 127) { c = 8; }
+        else if (c == 1) { c = 262; } else if (c == 5) { c = 263; }
+        else if (c == 2) { c = 258; } else if (c == 6) { c = 259; }
+        else if (c == 16) { c = 256; } else if (c == 14) { c = 257; }
         if (c < 0) {
             sys_yield();
         } else if (c == 256) {

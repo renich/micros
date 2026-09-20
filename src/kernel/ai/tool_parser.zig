@@ -241,23 +241,6 @@ fn parseReadStorageArgs(args_json: []const u8) ?tools.ToolCall {
     };
 }
 
-fn parseDrawCanvasArgs(args_json: []const u8) ?tools.ToolCall {
-    const x = findArgU32(args_json, "x") orelse return null;
-    const y = findArgU32(args_json, "y") orelse return null;
-    const w = findArgU32(args_json, "w") orelse return null;
-    const h = findArgU32(args_json, "h") orelse return null;
-    const color = findArgU32(args_json, "color") orelse return null;
-    return tools.ToolCall{
-        .draw_canvas = .{
-            .x = x,
-            .y = y,
-            .w = w,
-            .h = h,
-            .color = color,
-        },
-    };
-}
-
 pub fn parseToolCall(name: []const u8, args_json: []const u8, str_buf: []u8) ?tools.ToolCall {
     const tt = tools.parseToolType(name) orelse return null;
     return switch (tt) {
@@ -271,7 +254,6 @@ pub fn parseToolCall(name: []const u8, args_json: []const u8, str_buf: []u8) ?to
         .grant_capability => parseGrantCapArgs(args_json),
         .write_storage => parseWriteStorageArgs(args_json, str_buf),
         .read_storage => parseReadStorageArgs(args_json),
-        .draw_canvas => parseDrawCanvasArgs(args_json),
         .query_telemetry => tools.ToolCall{ .query_telemetry = .{} },
     };
 }
@@ -324,7 +306,6 @@ pub fn formatResultJson(result: tools.ToolResult, out_buf: []u8) !usize {
         .capability_granted => |ok| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"granted\":{}}}", .{ok})).len,
         .storage_written => |hash| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"hex_hash\":\"{s}\"}}", .{hash})).len,
         .storage_read => |payload| (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"bytes\":{d}}}", .{payload.len})).len,
-        .canvas_drawn => (try std.fmt.bufPrint(out_buf, "{{\"status\":\"ok\",\"rendered\":true}}", .{})).len,
         .telemetry => |t| (try std.fmt.bufPrint(
             out_buf,
             "{{\"status\":\"ok\",\"actors\":{d},\"faults\":{d},\"pages\":{d},\"uptime\":{d}}}",
@@ -384,17 +365,13 @@ test "find key colon and matching brace" {
 
 test "extract envelope gemini and parse tool call" {
     const gemini_json =
-        "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"draw_canvas\"," ++
-        "\"args\":{\"x\": 10, \"y\": 20, \"w\": 100, \"h\": 50, \"color\": 65280}}}]}}]}";
+        "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"run_command\"," ++
+        "\"args\":{\"command\":\"desk\"}}}]}}]}";
     var scratch: [1024]u8 = undefined;
     const call = extractToolCall(gemini_json, &scratch);
     try std.testing.expect(call != null);
-    try std.testing.expectEqual(tools.ToolType.draw_canvas, @as(tools.ToolType, call.?));
-    try std.testing.expectEqual(@as(u32, 10), call.?.draw_canvas.x);
-    try std.testing.expectEqual(@as(u32, 20), call.?.draw_canvas.y);
-    try std.testing.expectEqual(@as(u32, 100), call.?.draw_canvas.w);
-    try std.testing.expectEqual(@as(u32, 50), call.?.draw_canvas.h);
-    try std.testing.expectEqual(@as(u32, 65280), call.?.draw_canvas.color);
+    try std.testing.expectEqual(tools.ToolType.run_command, @as(tools.ToolType, call.?));
+    try std.testing.expectEqualStrings("desk", call.?.run_command.command);
 }
 
 test "extract envelope openai escaped arguments" {
