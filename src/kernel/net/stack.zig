@@ -22,9 +22,10 @@ pub const DNS_FALLBACK_GOOGLE: [4]u8 = [_]u8{ 8, 8, 8, 8 };
 pub const DNS_FALLBACK_CLOUDFLARE: [4]u8 = [_]u8{ 1, 1, 1, 1 };
 pub const MAX_SYN_RETRIES: usize = 6;
 pub const MAX_CHUNK_RETRIES: usize = 5;
-pub const MAX_DNS_RETRIES: usize = 3;
+pub const MAX_DNS_RETRIES: usize = 4;
 pub const BASE_SYN_ITERS: usize = 1_000_000;
 pub const BASE_CHUNK_ITERS: usize = 100_000;
+pub const BASE_DNS_ITERS: usize = 1_500_000;
 
 pub const NetworkStack = struct {
     device: *virtio_net_mod.VirtioNetDevice,
@@ -357,11 +358,12 @@ pub const NetworkStack = struct {
         var attempt: usize = 0;
         while (attempt < MAX_DNS_RETRIES) : (attempt += 1) {
             self.dns_result = null;
+            self.dns_xid +%= 1;
             var dns_buf: [512]u8 = undefined;
             const qlen = try dns_mod.buildQuery(&dns_buf, hostname, self.dns_xid);
             try self.sendUdp(dns_ip, 49153, dns_mod.PORT_DNS, dns_buf[0..qlen]);
 
-            const wait_iters = 100_000 * (attempt + 1);
+            const wait_iters = BASE_DNS_ITERS * (attempt + 1);
             var iter: usize = 0;
             while (self.dns_result == null and iter < wait_iters) : (iter += 1) {
                 _ = self.poll();

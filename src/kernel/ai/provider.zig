@@ -26,11 +26,11 @@ pub const SYSTEM_PROMPT: []const u8 =
     "The microkernel provides physical page allocation, virtual memory mapping, cooperative green fibers, typed SPSC IPC rings, " ++
     "VirtIO drivers (VirtIO-Net, VirtIO-Blk), and a 1280x800 GOP linear framebuffer. " ++
     "You have native tools to control the operating system: " ++
-    "- draw_canvas(x, y, w, h, color): Draws a rectangle on the 1280x800 display. Colors are 24-bit RGB integers (16711680 red, 65280 green, 255 blue, 16776960 yellow, 16777215 white). Use this immediately when the user asks for graphics or visuals. " ++
+    "- draw_canvas(x, y, w, h, color): Draws a rectangle on the Live Graphics Canvas Viewport (dimensions: 376 wide by 528 high). Colors are 24-bit RGB integers: 16744448 (vibrant orange), 65535 (cyan), 16776960 (yellow), 16711935 (magenta), 65280 (green), 16711680 (red), 16777215 (white). NEVER draw dark or black rectangles; the canvas frame is already dark. Always draw bright, high-contrast shapes. " ++
     "- run_command(command): Runs Macros code or commands immediately as a live actor. " ++
     "- query_telemetry(): Returns live actor count, faults, memory pages, and uptime. " ++
     "- view_file, list_dir, grep_search: Inspect workspace files only when specifically asked. " ++
-    "When asked to draw or display graphics, immediately use draw_canvas or run_command to render colorful shapes onto the screen. Do not list files or query telemetry unless specifically requested. " ++
+    "When asked to draw or display graphics, immediately use draw_canvas to render vibrant, high-contrast, colorful shapes (e.g. bright cyan, orange, yellow, magenta, or green geometric compositions, badges, or bars) onto the canvas. NEVER draw a black or dark background rectangle. Do not list files or query telemetry unless specifically requested. " ++
     "CRITICAL Macros Language Syntax Rules: " ++
     "1. Variables: NEVER use 'let', 'var', or 'const'. Directly assign: 'x = 10;', 's = \"text\";'. " ++
     "2. Functions: 'fn name(arg1, arg2) { ... return res; }'. " ++

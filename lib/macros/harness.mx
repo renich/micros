@@ -36,9 +36,6 @@ fn init_theme() {
     line_pos = 0;
     vim_mode = 0;
     PROMPT_Y = 750;
-}
-
-fn init_ansi() {
     ESC = char_to_str(27);
     ANSI_RESET = ESC + "[0m";
     ANSI_BOLD = ESC + "[1m";
@@ -61,6 +58,14 @@ fn draw_panels() {
     sys_fb_draw_rect(20, 48, 820, 1, CLR_BORDER);
     sys_fb_draw_string(880, 32, "ACTORS & TELEMETRY", CLR_MUTED, CLR_BG);
     sys_fb_draw_rect(880, 48, 380, 1, CLR_BORDER);
+    sys_fb_draw_rect(880, 218, 380, 1, CLR_BORDER);
+    sys_fb_draw_string(880, 226, "LIVE GRAPHICS CANVAS", CLR_MUTED, CLR_BG);
+    sys_fb_draw_rect(880, 240, 380, 1, CLR_BORDER);
+    sys_fb_draw_rect(880, 248, 380, 532, 659732);
+    sys_fb_draw_rect(880, 248, 380, 1, CLR_BORDER);
+    sys_fb_draw_rect(880, 779, 380, 1, CLR_BORDER);
+    sys_fb_draw_rect(880, 248, 1, 532, CLR_BORDER);
+    sys_fb_draw_rect(1259, 248, 1, 532, CLR_BORDER);
 }
 
 fn render_chat() {
@@ -84,6 +89,7 @@ fn cmd_clear() {
     chat_lines = [];
     chat_colors = [];
     render_chat();
+    return 0;
 }
 
 fn console_write(text, color) {
@@ -98,6 +104,7 @@ fn console_newline() {
     chat_lines = push(chat_lines, cur_line_text);
     chat_colors = push(chat_colors, cur_line_color);
     cur_line_text = "";
+    cur_line_color = CLR_TEXT;
     render_chat();
     sys_serial_write("\r\n");
 }
@@ -177,29 +184,28 @@ fn console_print_wrapped(text, color) {
 }
 
 fn render_inspector() {
-    sys_fb_draw_rect(861, 25, 419, 775, CLR_BG);
-    sys_fb_draw_rect(860, 25, 1, 775, CLR_BORDER);
+    sys_fb_draw_rect(861, 25, 419, 190, CLR_BG);
+    sys_fb_draw_rect(860, 25, 1, 190, CLR_BORDER);
     sys_fb_draw_string(880, 32, "ACTORS & TELEMETRY", CLR_MUTED, CLR_BG);
     sys_fb_draw_rect(880, 48, 380, 1, CLR_BORDER);
     sys_fb_draw_string(880, 60, "Active Actors:  " + int_to_str(sys_actor_count()), CLR_TEXT, CLR_BG);
     
-    var_y = 84;
+    var_y = 80;
     var_id = 0;
     while (var_id < 8) {
         st = sys_actor_state(var_id);
         if (st >= 0) {
             nm = sys_actor_name(var_id);
             sys_fb_draw_string(880, var_y, "Actor " + int_to_str(var_id) + ":  " + nm, CLR_MUTED, CLR_BG);
-            var_y = var_y + 16;
+            var_y = var_y + 14;
         }
         var_id = var_id + 1;
     }
 
-    var_y = var_y + 16;
     sys_fb_draw_string(880, var_y, "Fault Guard:    " + int_to_str(sys_fault_count()) + " faults", CLR_MUTED, CLR_BG);
-    var_y = var_y + 16;
+    var_y = var_y + 14;
     sys_fb_draw_string(880, var_y, "State:          Online", CLR_GREEN, CLR_BG);
-    var_y = var_y + 16;
+    var_y = var_y + 14;
     clip_len = len(clipboard_buf);
     sys_fb_draw_string(880, var_y, "Clipboard:      " + int_to_str(clip_len) + " chars", CLR_ACCENT, CLR_BG);
 }
@@ -336,20 +342,15 @@ fn cmd_pkg() {
 
 fn cmd_help() {
     console_writeln("-- Harness Slash Commands ----------------------", CLR_MUTED);
-    console_writeln("  /help, /tools   - Commands, tools & capabilities", CLR_TEXT);
-    console_writeln("  /files, /cat    - Workspace & genesis files inspection", CLR_TEXT);
-    console_writeln("  /run [path]     - Execute script or last synthesized code", CLR_TEXT);
-    console_writeln("  /stats, /status - Session metrics & system health", CLR_TEXT);
-    console_writeln("  /peers, /pkg    - P2P mesh cluster & packages", CLR_TEXT);
-    console_writeln("  /actors, /kill  - List or terminate active actors", CLR_TEXT);
-    console_writeln("  /chats, /new    - List or create conversation sessions", CLR_TEXT);
-    console_writeln("  /switch, /clear - Switch conversation or clear log", CLR_TEXT);
-    console_writeln("  /search <query> - Search chat history for text", CLR_TEXT);
-    console_writeln("  /copy, /paste   - Clipboard copy (resp/code) and paste", CLR_TEXT);
-    console_writeln("  /compress       - Compress older context turns", CLR_TEXT);
-    console_writeln("  /history, /reset- Display history or reset agent context", CLR_TEXT);
-    console_writeln("  /model, /layout - Model details & keyboard layout (es/us)", CLR_TEXT);
-    console_writeln("  /exit           - Return to MicroShell (msh)", CLR_TEXT);
+    console_writeln("  /help, /tools, /files, /cat   - Commands, tools, workspace files", CLR_TEXT);
+    console_writeln("  /run [path]                   - Execute script or synthesized code", CLR_TEXT);
+    console_writeln("  /stats, /status, /peers, /pkg - Session metrics, cluster & SPK1", CLR_TEXT);
+    console_writeln("  /actors, /kill <id>           - List or terminate active actors", CLR_TEXT);
+    console_writeln("  /chats, /new, /switch, /clear - Multi-turn conversation sessions", CLR_TEXT);
+    console_writeln("  /search <query>               - Search chat history for text", CLR_TEXT);
+    console_writeln("  /copy, /paste, /compress      - Clipboard & context compression", CLR_TEXT);
+    console_writeln("  /history, /reset              - Agent context & prompt history", CLR_TEXT);
+    console_writeln("  /model, /layout (es/us), /exit- Config and exit to MicroShell", CLR_TEXT);
     console_writeln("------------------------------------------------", CLR_MUTED);
     return 0;
 }
@@ -680,6 +681,15 @@ fn cmd_actors() {
     console_writeln("------------------------------------------------", CLR_BORDER);
 }
 
+fn format_tool_badge(res) {
+    if (find_str(res, "rendered") >= 0) { return "* [canvas] Visual elements rendered to Live Graphics Canvas"; }
+    if (find_str(res, "actor_id") >= 0) { return "* [actor] Child actor spawned in sandbox"; }
+    if (find_str(res, "uptime") >= 0) { return "* [telemetry] Kernel telemetry synchronized"; }
+    if (find_str(res, "bytes_written") >= 0) { return "* [storage] Wrote blob to persistent CAS"; }
+    if (find_str(res, "listing") >= 0) { return "* [catalog] Listed directory catalog files"; }
+    return "* [tool] Execution completed";
+}
+
 fn resolve_tool_calls(initial_resp) {
     cur_resp = initial_resp;
     turn = 0;
@@ -688,11 +698,7 @@ fn resolve_tool_calls(initial_resp) {
         if (len(tool_res) == 0) {
             return cur_resp;
         }
-        if (len(tool_res) > 96) {
-            console_writeln("● " + substr(tool_res, 0, 96) + "...", CLR_GREEN);
-        } else {
-            console_writeln("● " + tool_res, CLR_GREEN);
-        }
+        console_writeln(format_tool_badge(tool_res), CLR_MUTED);
         render_inspector();
         cur_resp = sys_ai_prompt("Tool result: " + tool_res + ". Continue task or provide final summary.");
         if (len(cur_resp) == 0) {
@@ -723,7 +729,7 @@ fn cmd_ai(prompt) {
     resp = resolve_tool_calls(resp);
     last_resp_text = resp;
     last_resp_code = extract_code(resp);
-    console_write("harness> ", CLR_GREEN);
+    console_writeln("harness>", CLR_ACCENT);
     console_print_wrapped(resp, CLR_TEXT);
     if (len(last_resp_code) > 0) {
         console_writeln("[harness] Code synthesized. Type '/run' to execute.", CLR_MUTED);
@@ -977,7 +983,6 @@ fn harness_loop() {
 
 fn harness_main() {
     init_theme();
-    init_ansi();
     sys_fb_clear(CLR_BG);
     draw_header();
     draw_panels();

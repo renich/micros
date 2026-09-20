@@ -41,7 +41,7 @@ src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/msh.mx lib/macros/harness.
 	./tools/micros-bundle $@ init.mx=lib/macros/init.mx msh.mx=lib/macros/msh.mx harness.mx=lib/macros/harness.mx desk.mx=lib/macros/desk.mx installer.mx=lib/macros/installer.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx http_server.mx=lib/macros/http_server.mx vedit.mx=lib/macros/vedit.mx
 
 ## test: Execute the unit and integration test suite
-test:
+test: src/kernel/genesis.mcb
 	@echo "=> Running tests..."
 	$(ZIG) build test
 	$(MAKE) -C tools test
