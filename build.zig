@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
         (if (std.mem.eql(u8, ai_provider_str, "local_http")) @as(u16, 11434) else @as(u16, 443));
     const ai_use_tls = b.option(bool, "ai-use-tls", "Enable TLS 1.3 encryption (default: true)") orelse
         (!std.mem.eql(u8, ai_provider_str, "local_http") and !std.mem.eql(u8, ai_provider_str, "mock"));
+    const ai_thinking_level = b.option([]const u8, "ai-thinking-level", "Resident AI Thinking Level: high, medium, low") orelse "high";
 
     const kernel_options = b.addOptions();
     kernel_options.addOption([]const u8, "ai_provider", ai_provider_str);
@@ -63,6 +64,7 @@ pub fn build(b: *std.Build) void {
     kernel_options.addOption([]const u8, "ai_endpoint", ai_endpoint);
     kernel_options.addOption(u16, "ai_port", ai_port);
     kernel_options.addOption(bool, "ai_use_tls", ai_use_tls);
+    kernel_options.addOption([]const u8, "ai_thinking_level", ai_thinking_level);
     kernel_options.addOption([]const u8, "gemini_api_key", ai_api_key);
 
     // Stage 1 UEFI Bootloader (boot.efi)

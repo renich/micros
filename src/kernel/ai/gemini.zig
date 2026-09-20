@@ -23,10 +23,16 @@ pub fn buildPath(buf: []u8, model: []const u8, api_key: []const u8) !usize {
     return off;
 }
 
-pub fn buildRequestBody(buf: []u8, system_prompt: []const u8, user_prompt: []const u8) !usize {
+pub fn buildRequestBodyWithThinking(
+    buf: []u8,
+    system_prompt: []const u8,
+    user_prompt: []const u8,
+    thinking_level: []const u8,
+) !usize {
     const p1 = "{\"system_instruction\":{\"parts\":[{\"text\":\"";
     const p2 = "\"}]},\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"";
-    const p3 = "\"}]}],\"tools\":" ++ tools_mod.GEMINI_TOOLS_JSON ++ ",\"generationConfig\":{\"temperature\":0.7,\"topK\":40,\"maxOutputTokens\":2048,\"thinkingConfig\":{\"thinkingLevel\":\"low\"}}}";
+    const p3 = "\"}]}],\"tools\":" ++ tools_mod.GEMINI_TOOLS_JSON ++ ",\"generationConfig\":{\"temperature\":0.7,\"topK\":40,\"maxOutputTokens\":8192,\"thinkingConfig\":{\"thinkingLevel\":\"";
+    const p4 = "\"}}}";
 
     var off: usize = 0;
     if (off + p1.len > buf.len) return error.BufferTooSmall;
@@ -45,7 +51,19 @@ pub fn buildRequestBody(buf: []u8, system_prompt: []const u8, user_prompt: []con
     @memcpy(buf[off .. off + p3.len], p3);
     off += p3.len;
 
+    if (off + thinking_level.len > buf.len) return error.BufferTooSmall;
+    @memcpy(buf[off .. off + thinking_level.len], thinking_level);
+    off += thinking_level.len;
+
+    if (off + p4.len > buf.len) return error.BufferTooSmall;
+    @memcpy(buf[off .. off + p4.len], p4);
+    off += p4.len;
+
     return off;
+}
+
+pub fn buildRequestBody(buf: []u8, system_prompt: []const u8, user_prompt: []const u8) !usize {
+    return buildRequestBodyWithThinking(buf, system_prompt, user_prompt, "high");
 }
 
 pub fn extractText(json_payload: []const u8, out_buf: []u8) ?usize {
@@ -80,6 +98,11 @@ test "gemini request body format" {
     const body = buf[0..len];
     try std.testing.expect(std.mem.indexOf(u8, body, "sys prompt") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "user prompt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"thinkingLevel\":\"high\"") != null);
+
+    const len2 = try buildRequestBodyWithThinking(&buf, "sys prompt", "user prompt", "medium");
+    const body2 = buf[0..len2];
+    try std.testing.expect(std.mem.indexOf(u8, body2, "\"thinkingLevel\":\"medium\"") != null);
 }
 
 test "gemini extract text" {

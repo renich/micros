@@ -18,6 +18,7 @@ pub const ProviderConfig = struct {
     use_tls: bool = true,
     model: []const u8,
     api_key: []const u8 = "",
+    thinking_level: []const u8 = "high",
 };
 
 pub const SYSTEM_PROMPT: []const u8 =

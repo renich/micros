@@ -34,7 +34,12 @@ pub const AiClient = struct {
         const path_len = try gemini_mod.buildPath(&path_buf, self.config.model, self.config.api_key);
         const path = path_buf[0..path_len];
 
-        const body_len = try gemini_mod.buildRequestBody(body_buf, provider_mod.SOVEREIGN_SYSTEM_PROMPT, prompt);
+        const body_len = try gemini_mod.buildRequestBodyWithThinking(
+            body_buf,
+            provider_mod.SOVEREIGN_SYSTEM_PROMPT,
+            prompt,
+            self.config.thinking_level,
+        );
         const body = body_buf[0..body_len];
 
         return try http.formatPostRequest(req_buf, self.config.endpoint, path, "application/json", body);

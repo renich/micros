@@ -225,6 +225,7 @@ fn initAiDaemon(allocator: std.mem.Allocator) void {
         .use_tls = config.ai_use_tls,
         .model = config.ai_model,
         .api_key = config.ai_api_key,
+        .thinking_level = config.ai_thinking_level,
     };
     const ipc_cap = cap_mod.Capability{ .cap_type = .ipc_ring, .rights = cap_mod.Rights.ALL, .object_id = 1, .data_addr = @intFromPtr(&global_ai_req_ring), .data_size = @sizeOf(ipc_mod.SpscRingBuffer) };
     const net_ptr = if (global_netd != null) &global_netd.? else null;
@@ -359,7 +360,8 @@ fn grantCapBridge(target_actor: u32, source_slot: u32, rights_mask: u16) anyerro
 fn drawCanvasBridge(x: u32, y: u32, w: u32, h: u32, color: u32) void {
     if (global_canvas) |*canvas| {
         canvas.drawRect(x, y, w, h, color);
-    } else if (global_fb) |*fb| {
+    }
+    if (global_fb) |*fb| {
         fb.drawRect(x, y, w, h, color);
     }
 }

@@ -196,7 +196,6 @@ pub fn isVerifiedSystemScript(name: []const u8, source: []const u8) bool {
 
 pub fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []const u8) !void {
     if (child.supervisor_id != actor_mod.GENESIS_ACTOR_ID) return;
-    if (!isVerifiedSystemScript(name, source)) return;
     if (global_fb) |fb| {
         _ = try child.insertCap(.{
             .cap_type = .framebuffer,
@@ -206,6 +205,7 @@ pub fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []
             .data_size = @sizeOf(fb_mod.Framebuffer),
         });
     }
+    if (!isVerifiedSystemScript(name, source)) return;
     _ = try child.insertCap(.{ .cap_type = .actor_control, .rights = cap_mod.Rights.ALL, .object_id = 6, .data_addr = 0, .data_size = 0 });
     _ = try child.insertCap(.{ .cap_type = .storage_device, .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE, .object_id = 5, .data_addr = 0, .data_size = 0 });
     _ = try child.insertCap(.{ .cap_type = .network_device, .rights = cap_mod.Rights.ALL, .object_id = 4, .data_addr = 0, .data_size = 0 });
@@ -242,4 +242,27 @@ pub fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source
 
     logActorSpawn(child.id, name);
     return child.id;
+}
+
+test "delegateInitialCaps attenuates capabilities for dynamic actors" {
+    const allocator = std.testing.allocator;
+    var fake_fb = fb_mod.Framebuffer{
+        .base = undefined,
+        .width = 1280,
+        .height = 800,
+        .pitch = 5120,
+    };
+    global_fb = &fake_fb;
+    defer global_fb = null;
+
+    var child = try actor_mod.Actor.init(allocator, 5, "harness_exec", 16, 0);
+    defer child.deinit(allocator);
+    child.supervisor_id = actor_mod.GENESIS_ACTOR_ID;
+
+    try delegateInitialCaps(&child, "harness_exec", "sys_fb_draw_rect(0,0,10,10,0);");
+
+    try std.testing.expect(child.cspace.lookup(.framebuffer) != null);
+    try std.testing.expect(child.cspace.lookup(.actor_control) == null);
+    try std.testing.expect(child.cspace.lookup(.storage_device) == null);
+    try std.testing.expect(child.cspace.lookup(.network_device) == null);
 }
