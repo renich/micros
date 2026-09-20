@@ -76,6 +76,7 @@ pub const Geometry = struct {
     fat2_lba: u64,
 
     pub fn clusterToLba(self: *const Geometry, cluster: u32) u64 {
+        if (cluster < ROOT_DIR_CLUSTER) return self.first_data_sector;
         const offset = @as(u64, cluster - ROOT_DIR_CLUSTER) * SECTORS_PER_CLUSTER;
         return self.first_data_sector + offset;
     }
@@ -298,7 +299,7 @@ fn findEntryInSector(sec: *const [SECTOR_SIZE]u8, name83: ShortName) ?DirEntry {
 
 fn findDirEntry(dev: *block.BlockDevice, geom: *const Geometry, start_cluster: u32, name83: ShortName) !?DirEntry {
     var curr_cluster = start_cluster;
-    while (curr_cluster < FAT_CLUSTER_BAD) {
+    while (curr_cluster >= 2 and curr_cluster < FAT_CLUSTER_BAD) {
         const base_lba = geom.clusterToLba(curr_cluster);
         var sec_idx: usize = 0;
         while (sec_idx < SECTORS_PER_CLUSTER) : (sec_idx += 1) {
@@ -328,7 +329,7 @@ fn insertEntryInSector(sec: *[SECTOR_SIZE]u8, entry: DirEntry) bool {
 fn insertDirEntry(dev: *block.BlockDevice, geom: *const Geometry, dir_cluster: u32, entry: DirEntry) !void {
     var curr = dir_cluster;
     var last = dir_cluster;
-    while (curr < FAT_CLUSTER_BAD) {
+    while (curr >= 2 and curr < FAT_CLUSTER_BAD) {
         last = curr;
         const base_lba = geom.clusterToLba(curr);
         var sec_idx: usize = 0;
@@ -469,7 +470,7 @@ fn deleteEntryInSector(
 
 fn deleteExistingFile(dev: *block.BlockDevice, geom: *const Geometry, parent_cluster: u32, name83: ShortName) !void {
     var curr_cluster = parent_cluster;
-    while (curr_cluster < FAT_CLUSTER_BAD) {
+    while (curr_cluster >= 2 and curr_cluster < FAT_CLUSTER_BAD) {
         const base_lba = geom.clusterToLba(curr_cluster);
         var sec_idx: usize = 0;
         while (sec_idx < SECTORS_PER_CLUSTER) : (sec_idx += 1) {
@@ -583,83 +584,85 @@ test "fat32 path iterator 8.3 parsing" {
     try std.testing.expectEqual(@as(?PathComponent, null), try iter.next());
 }
 
-test "fat32 sparse block mock format and file roundtrip" {
-    const SparseBlock = struct {
-        sectors: std.AutoHashMap(u64, [SECTOR_SIZE]u8),
-        device: block.BlockDevice = undefined,
+const SparseBlock = struct {
+    sectors: std.AutoHashMap(u64, [SECTOR_SIZE]u8),
+    device: block.BlockDevice = undefined,
 
-        pub fn init(allocator: std.mem.Allocator) !@This() {
-            return .{
-                .sectors = std.AutoHashMap(u64, [SECTOR_SIZE]u8).init(allocator),
-            };
-        }
-
-        pub fn deinit(self: *@This()) void {
-            self.sectors.deinit();
-        }
-
-        pub fn blockDevice(self: *@This()) *block.BlockDevice {
-            self.device = block.BlockDevice{
-                .ptr = @ptrCast(self),
-                .vtable = &vtable,
-                .total_sectors = 614400, // 300 MiB
-            };
-            return &self.device;
-        }
-
-        const vtable = block.BlockDevice.VTable{
-            .readSector = mockReadSector,
-            .writeSector = mockWriteSector,
-            .readSectors = mockReadSectors,
-            .writeSectors = mockWriteSectors,
-            .flush = mockFlush,
+    pub fn init(allocator: std.mem.Allocator) !@This() {
+        return .{
+            .sectors = std.AutoHashMap(u64, [SECTOR_SIZE]u8).init(allocator),
         };
+    }
 
-        fn mockReadSector(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            if (self.sectors.get(lba)) |sec| {
-                @memcpy(buf, &sec);
-            } else {
-                @memset(buf, 0);
-            }
-        }
+    pub fn deinit(self: *@This()) void {
+        self.sectors.deinit();
+    }
 
-        fn mockWriteSector(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            try self.sectors.put(lba, buf.*);
-        }
+    pub fn blockDevice(self: *@This()) *block.BlockDevice {
+        self.device = block.BlockDevice{
+            .ptr = @ptrCast(self),
+            .vtable = &vtable,
+            .total_sectors = 614400, // 300 MiB
+        };
+        return &self.device;
+    }
 
-        fn readOneMockSector(self: *@This(), lba: u64, dst: []u8) void {
-            if (self.sectors.get(lba)) |sec| {
-                @memcpy(dst, &sec);
-                return;
-            }
-            @memset(dst, 0);
-        }
-
-        fn mockReadSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            for (0..count) |i| {
-                self.readOneMockSector(lba + i, buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
-            }
-        }
-
-        fn writeOneMockSector(self: *@This(), lba: u64, src: []const u8) !void {
-            var sec: [SECTOR_SIZE]u8 = undefined;
-            @memcpy(&sec, src);
-            try self.sectors.put(lba, sec);
-        }
-
-        fn mockWriteSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            for (0..count) |i| {
-                try self.writeOneMockSector(lba + i, buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
-            }
-        }
-
-        fn mockFlush(_: *anyopaque) anyerror!void {}
+    const vtable = block.BlockDevice.VTable{
+        .readSector = mockReadSector,
+        .writeSector = mockWriteSector,
+        .readSectors = mockReadSectors,
+        .writeSectors = mockWriteSectors,
+        .flush = mockFlush,
     };
 
+    fn mockReadSector(ctx: *anyopaque, lba: u64, buf: *[SECTOR_SIZE]u8) anyerror!void {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        if (self.sectors.get(lba)) |sec| {
+            @memcpy(buf, &sec);
+        } else {
+            @memset(buf, 0);
+        }
+    }
+
+    fn mockWriteSector(ctx: *anyopaque, lba: u64, buf: *const [SECTOR_SIZE]u8) anyerror!void {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        try self.sectors.put(lba, buf.*);
+    }
+
+    fn readOneMockSector(self: *@This(), lba: u64, dst: []u8) void {
+        if (self.sectors.get(lba)) |sec| {
+            @memcpy(dst, &sec);
+            return;
+        }
+        @memset(dst, 0);
+    }
+
+    fn mockReadSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []u8) anyerror!void {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        for (0..count) |i| {
+            self.readOneMockSector(lba + i, buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
+        }
+    }
+
+    fn writeOneMockSector(self: *@This(), lba: u64, src: []const u8) !void {
+        var sec: [SECTOR_SIZE]u8 = undefined;
+        @memcpy(&sec, src);
+        try self.sectors.put(lba, sec);
+    }
+
+    fn mockWriteSectors(ctx: *anyopaque, lba: u64, count: usize, buf: []const u8) anyerror!void {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        for (0..count) |i| {
+            try self.writeOneMockSector(lba + i, buf[i * SECTOR_SIZE .. (i + 1) * SECTOR_SIZE]);
+        }
+    }
+
+    fn mockFlush(_: *anyopaque) anyerror!void {
+        return;
+    }
+};
+
+test "fat32 sparse block mock format and file roundtrip" {
     var sparse = try SparseBlock.init(std.testing.allocator);
     defer sparse.deinit();
     const dev = sparse.blockDevice();
@@ -691,4 +694,20 @@ test "fat32 sparse block mock format and file roundtrip" {
     const read_populated = try readFile(dev, "/EFI/BOOT/EMPTY.DAT", std.testing.allocator);
     defer std.testing.allocator.free(read_populated);
     try std.testing.expectEqualStrings("populated_payload", read_populated);
+}
+
+test "fat32 clusterToLba underflow defense and corrupted chain termination" {
+    var mem_disk = try SparseBlock.init(std.testing.allocator);
+    defer mem_disk.deinit();
+    const dev = mem_disk.blockDevice();
+    try formatEsp(dev);
+    const geom = try calculateGeometry(dev.total_sectors);
+
+    try std.testing.expectEqual(geom.first_data_sector, geom.clusterToLba(0));
+    try std.testing.expectEqual(geom.first_data_sector, geom.clusterToLba(1));
+
+    var short_name: ShortName = [_]u8{' '} ** 11;
+    @memcpy(short_name[0..4], "TEST");
+    const entry = try findDirEntry(dev, &geom, 0, short_name);
+    try std.testing.expect(entry == null);
 }
