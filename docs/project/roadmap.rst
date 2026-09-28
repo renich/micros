@@ -72,14 +72,22 @@ Active Operational Frontier: Phase 10 (Hardening, Daemon Handoff & Virtual Clust
 
 The current operational frontier focuses on hardening, full userland service handoff, and virtual multi-node orchestration under QEMU:
 
-1. **Milestone 36: Full Userland Service Daemon Integration & Startup Handoff**:
-   - Integrate the full suite of userland daemons (``gopd``, ``storaged``, ``netd``, ``aid``, ``p2pd``, ``pkgd``) into default boot sequencing.
-   - Mediate interactive graphics, block I/O, network traffic, AI inference, and P2P communication purely across zero-copy IPC rings.
-   - Expose live daemon telemetry and peer discovery status via ``msh`` and ``harness`` shell interfaces.
-2. **Milestone 37: Virtual Multi-Node P2P Cluster Mesh under QEMU**:
-   - Implement dual-node QEMU automation (``tools/micros-cluster.bash``, ``make qemu-cluster``) linking independent instances over a shared virtual network.
-   - Demonstrate autonomous node discovery, Ed25519 handshake, live 256-bit BLAKE3 CAS replication, and remote actor dispatch over port 8080.
-3. **Milestone 38: Zero-Trust System Hardening, Self-Healing & Polish**:
+1. **Milestone 36: Full Userland Service Daemon Integration & Startup Handoff** [COMPLETE & VERIFIED]:
+   - Integrated the full fleet of 6 userland daemons (``gopd``, ``storaged``, ``netd``, ``aid``, ``p2pd``, ``pkgd``) into unified kernel boot sequencing and CSpace table initialization.
+   - Mediated all frame rendering, disk transfers, packet frames, AI inferences, P2P messages, and package queries strictly across zero-copy IPC rings.
+   - Exposed live daemon telemetry and peer discovery status via ``msh`` and ``harness`` shell interfaces.
+2. **Milestone 37: Virtual Multi-Node P2P Cluster Mesh Wire Discovery** [COMPLETE & VERIFIED]:
+   - Implemented automated dual-node QEMU cluster harness (``tools/micros-cluster.bash``, ``make qemu-cluster-verify``) linking independent instances over a private point-to-point TCP stream interconnect.
+   - Verified zero-configuration 74-byte UDP broadcast beacon discovery on port 8081 with Ed25519 node identities and capability-gated microkernel syscalls (``sys_peer_count``, ``sys_peer_info``, ``sys_p2p_status``).
+   - Integrated dynamic ``peers`` and ``status`` cluster inspection in ``lib/macros/msh.mx``.
+3. **Milestone 38: Distributed Content-Addressed Storage (CAS) Wire Replication** [ACTIVE TARGET]:
+   - Wire ``ChunkRequest`` (``0x0006``) and ``ChunkEnvelope`` (``0x0007``) protocols over TCP port 8080.
+   - Transparently replicate missing 256-bit BLAKE3 chunks across nodes upon local CAS miss.
+   - Validate live cross-node object replication across the dual-node QEMU cluster harness.
+4. **Milestone 39: Cryptographic Capability Delegation & Remote Actor Execution** [PLANNED]:
+   - Deploy 192-byte signed capability tokens with rights attenuation and gas bounds.
+   - Remote actor dispatch and result streaming over the cluster mesh.
+5. **Milestone 40: Zero-Trust System Hardening, Self-Healing & Polish** [PLANNED]:
    - Audit IPC ring bounds, wire decoders, and capability checks against malformed packet streams.
    - Verify supervisory self-healing in ``init.mx`` with automatic recovery upon actor fault.
    - Polish interactive UX, conversational prompt ergonomics, and terminal ANSI rendering in ``harness.mx``.

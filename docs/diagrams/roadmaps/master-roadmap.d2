@@ -110,11 +110,13 @@ p10: "Phase 10: Operational Hardening, Daemon Handoff & Cluster Mesh (Active Tar
     stroke-width: 2
   }
 
-  m36: "M36: Full Userland Daemon Handoff\n(gopd, storaged, netd, aid, p2pd, pkgd)" { class: active }
-  m37: "M37: Virtual P2P Cluster Mesh\n(Dual-Node QEMU, Discovery, CAS Sync)" { class: active }
-  m38: "M38: Zero-Trust Hardening & Polish\n(IPC Fuzzing, Self-Healing, Prompt UX)" { class: active }
+  m36: "M36: Full Userland Daemon Handoff\n(gopd, storaged, netd, aid, p2pd, pkgd)" { class: complete }
+  m37: "M37: Virtual P2P Cluster Mesh\n(Dual-Node QEMU, Discovery, Syscalls)" { class: complete }
+  m38: "M38: Distributed CAS Wire Replication\n(Chunk Sync, BLAKE3, Port 8080)" { class: active }
+  m39: "M39: Capability Delegation & Remote Actor\n(192-Byte Token, Gas Bounds)" { class: future }
+  m40: "M40: Zero-Trust Hardening & Polish\n(IPC Fuzzing, Self-Healing, UX)" { class: future }
 
-  m36 -> m37 -> m38
+  m36 -> m37 -> m38 -> m39 -> m40
 }
 
 p_foundations.p5 -> p6.m23a

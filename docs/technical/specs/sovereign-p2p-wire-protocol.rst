@@ -64,16 +64,40 @@ All P2P messages transmitted over the TCP stream begin with a fixed 48-byte bina
 
 3.1 Zero-Configuration UDP Beacon
 ---------------------------------
-Nodes periodically broadcast a 72-byte discovery beacon over UDP port 8081 on the local subnet (``255.255.255.255``):
+Nodes periodically broadcast a 74-byte discovery beacon over UDP port 8081 on the local subnet (``255.255.255.255``):
 * Magic (4 bytes): ``0x50325042`` (``P2PB``)
-* NodeId (32 bytes): BLAKE3 hash of Ed25519 public key
+* Version (2 bytes): Protocol version (``0x0001``)
 * ListenPort (2 bytes): TCP port (default 8080)
-* CapabilityMask (2 bytes): Advertised services (CAS storage, remote actor execution)
+* NodeId (32 bytes): BLAKE3 hash of Ed25519 public key
 * Ed25519 Public Key (32 bytes)
+* CapabilityMask (2 bytes): Advertised services (CAS storage, remote actor execution)
+* Padding (2 bytes): Zero-byte alignment padding
 
 3.2 Bounded Peer Table Management
 ---------------------------------
 The P2P daemon maintains an in-memory table of up to 64 active peers with LRU decay. Stale peers missing 3 consecutive heartbeat pings are pruned without heap fragmentation.
+
+3.3 Capability-Gated P2P Syscall Interface
+------------------------------------------
+Userland shells and supervisory daemons query mesh status via typed, capability-gated microkernel syscalls in ``src/userland/p2pd/p2p_abi.zig``, guarded strictly by ``CapType.network_device`` with ``Rights.READ``:
+
+* **sys_peer_count() -> usize** (Syscall 0x0050): Returns the active count of authenticated peers discovered on the mesh.
+* **sys_peer_info(idx: usize, out_ptr: [*]u8, out_len: usize) -> usize** (Syscall 0x0051): Copies a 72-byte serialized binary peer record (Node ID, public key, IPv4, TCP port, capability flags, and last seen timestamp) into userland memory.
+* **sys_p2p_status(out_ptr: [*]u8, out_len: usize) -> usize** (Syscall 0x0052): Renders a formatted human-readable ASCII summary of local node identity, listen port, and active cluster peer count.
+
+3.4 Shell Integration & Mesh Observability
+------------------------------------------
+The MicroShell (``lib/macros/msh.mx``) integrates real-time cluster introspection:
+
+* ``peers``: Queries ``sys_peer_count()`` and ``sys_peer_info()``, displaying a tabular view of discovered cluster nodes with shortened cryptographic IDs, IPv4 addresses, and capability masks.
+* ``status``: Displays overall system health, including active microkernel daemons and cluster peer discovery counts.
+
+3.5 Automated Dual-Node QEMU Verification Harness
+-------------------------------------------------
+Virtual multi-node cluster verification is orchestrated via ``tools/micros-cluster.bash`` and ``make qemu-cluster-verify``:
+
+* **Zero-Privilege Socket Interconnect**: Two independent QEMU virtual machines interconnect via a point-to-point TCP stream socket (``127.0.0.1:12345``), avoiding unreliable multicast and requiring zero host root privileges.
+* **Autonomous Discovery Verification**: Each node boots the identical ``boot.efi`` image, generates unique Ed25519 node identities derived from distinct virtual MAC addresses, and emits UDP broadcast beacons on port 8081. The harness captures serial console output and validates bidirectional mutual discovery in under 5 seconds.
 
 4. Verification & Traceability Matrix
 =====================================
@@ -100,3 +124,6 @@ The P2P daemon maintains an in-memory table of up to 64 active peers with LRU de
    * - REQ-P2P-005
      - [US-GEM-010]
      - Module code size strictly under 1,000 LOC with bounded function complexity.
+   * - REQ-P2P-006
+     - [US-REN-006]
+     - Automated dual-node QEMU virtual cluster verification (make qemu-cluster-verify) proving bidirectional UDP beacon discovery and capability-gated peer introspection.

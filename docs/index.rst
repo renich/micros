@@ -23,6 +23,7 @@ Welcome to the sovereign documentation repository for MicrOS (µOS) and the Macr
    project/roadmaps/phase-7-declarative-hypermedia-ui
    project/roadmaps/phase-8-p2p-federation-cas
    project/roadmaps/phase-9-self-hosting-silicon
+   project/roadmaps/phase-10-hardening-cluster-mesh
    project/roadmaps/milestone-8-sovereign-substrate
    project/roadmaps/milestone-9-sovereign-harness
    project/roadmaps/milestone-10-gemini-orchestrator
