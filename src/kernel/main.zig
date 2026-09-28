@@ -142,6 +142,12 @@ fn printMac(mac: *const [6]u8) void {
     }
 }
 
+fn printIpv4(ip: [4]u8) void {
+    var buf: [16]u8 = undefined;
+    const str = std.fmt.bufPrint(&buf, "{d}.{d}.{d}.{d}", .{ ip[0], ip[1], ip[2], ip[3] }) catch return;
+    serial.writeString(str);
+}
+
 fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo) void {
     const rx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse return;
     const tx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse return;
@@ -246,11 +252,31 @@ fn initAiDaemon(allocator: std.mem.Allocator) void {
     }
 }
 
+fn p2pBeaconBridge(ctx: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void {
+    _ = ctx;
+    if (global_p2pd) |*p2pd| {
+        if (payload.len >= 74) {
+            const beacon_slice: *const [74]u8 = payload[0..74];
+            const current_ticks = io.rdtsc() / 2_000_000;
+            const prev_count = p2pd.peerCount();
+            const handled = p2pd.handleIncomingBeacon(beacon_slice, src_ip, current_ticks) catch return;
+            if (handled and p2pd.peerCount() > prev_count) {
+                serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mp2pd\x1b[90m: \x1b[97mPeer node discovered at \x1b[0m");
+                printIpv4(src_ip);
+                serial.writeString("\n");
+            }
+        }
+    }
+}
+
 fn initP2pDaemon(allocator: std.mem.Allocator) void {
     var seed = [_]u8{0x42} ** 32;
     if (global_virtio_net) |vdev| @memcpy(seed[0..6], &vdev.mac);
     global_p2pd = p2pd_mod.P2pDaemon.init(allocator, seed, 8080) catch null;
     if (global_p2pd != null) {
+        if (global_netd) |*netd| {
+            netd.setUdpBeaconHandler(null, p2pBeaconBridge);
+        }
         serial.writeStatusOk("p2pd", "P2P mesh discovery daemon active (Noise/mTLS :8080)");
     }
 }
@@ -707,6 +733,7 @@ fn createAbiContext(genesis: *actor_mod.Actor, ipc_ring: *ipc_mod.RingBuffer) ab
         .bundle_list_fn = bundleListBridge,
         .current_actor_fn = getCurrentActorBridge,
         .net_stack = if (global_netd != null) global_netd.?.stack else null,
+        .p2pd = if (global_p2pd != null) &global_p2pd.? else null,
         .frame_info_fn = frameInfoBridge,
         .irq_ack_fn = irqAckBridge,
         .dma_pin_fn = dmaPinBridge,
@@ -802,11 +829,28 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
     haltLoop();
 }
 
+fn broadcastP2pBeacon(p2pd: *p2pd_mod.P2pDaemon) usize {
+    const netd = &(global_netd orelse return 0);
+    const st = netd.stack orelse return 0;
+    var beacon_buf: [74]u8 = undefined;
+    p2pd.formatBeacon(&beacon_buf);
+    st.sendUdpBroadcast(p2pd.port, p2pd.port, &beacon_buf) catch return 0;
+    return 1;
+}
+
 fn serviceWorker(ctx: ?*anyopaque) void {
     _ = ctx;
+    var last_beacon_cycles: u64 = 0;
     while (true) {
         var work: usize = 0;
         if (global_netd) |*netd| work += netd.poll();
+        if (global_p2pd) |*p2pd| {
+            const current_cycles = io.rdtsc();
+            if (last_beacon_cycles == 0 or current_cycles >= last_beacon_cycles + 500_000_000) {
+                last_beacon_cycles = current_cycles;
+                work += broadcastP2pBeacon(p2pd);
+            }
+        }
         if (global_aid) |*aid| work += aid.processClientIpc();
         if (global_storaged) |*strd| work += strd.processClientIpc();
         if (global_gopd) |*gopd| {

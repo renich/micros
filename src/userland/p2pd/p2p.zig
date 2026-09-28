@@ -279,6 +279,9 @@ pub const P2pDaemon = struct {
 
     pub fn handleIncomingBeacon(self: *P2pDaemon, in_buf: *const [74]u8, src_ip: [4]u8, current_ticks: u64) !bool {
         const beacon = DiscoveryBeacon.deserialize(in_buf) orelse return false;
+        if (std.mem.eql(u8, &beacon.node_id, &self.identity.node_id)) {
+            return false;
+        }
         try self.peers.upsert(.{
             .node_id = beacon.node_id,
             .pubkey = beacon.pubkey,
@@ -293,6 +296,32 @@ pub const P2pDaemon = struct {
 
     pub fn peerCount(self: *const P2pDaemon) usize {
         return self.peers.count;
+    }
+
+    pub fn getPeer(self: *const P2pDaemon, idx: usize) ?PeerEntry {
+        if (idx < self.peers.count) {
+            return self.peers.peers[idx];
+        }
+        return null;
+    }
+
+    pub fn formatPeerSummary(peer: *const PeerEntry, out_buf: []u8) []const u8 {
+        const hex_chars = "0123456789abcdef";
+        var id_short: [8]u8 = undefined;
+        for (0..4) |i| {
+            id_short[i * 2] = hex_chars[(peer.node_id[i] >> 4) & 0x0F];
+            id_short[i * 2 + 1] = hex_chars[peer.node_id[i] & 0x0F];
+        }
+        const res = std.fmt.bufPrint(out_buf, "Node {s}... at {d}.{d}.{d}.{d}:{d} (caps: 0x{x:0>4})", .{
+            id_short,
+            peer.ip[0],
+            peer.ip[1],
+            peer.ip[2],
+            peer.ip[3],
+            peer.port,
+            peer.capabilities,
+        }) catch return "";
+        return res;
     }
 
     pub fn createHandshakeInit(self: *P2pDaemon, peer_challenge: *const [NONCE_LEN]u8) !HandshakeInitPayload {
@@ -377,13 +406,31 @@ test "P2pDaemon lifecycle and beacon exchange" {
     try std.testing.expect(daemon.active);
     try std.testing.expectEqual(@as(usize, 0), daemon.peerCount());
 
-    var beacon_buf: [74]u8 = undefined;
-    daemon.formatBeacon(&beacon_buf);
+    var self_beacon: [74]u8 = undefined;
+    daemon.formatBeacon(&self_beacon);
     try std.testing.expectEqual(@as(u32, 1), daemon.beacon_sequence);
 
-    const handled = try daemon.handleIncomingBeacon(&beacon_buf, [_]u8{ 192, 168, 100, 2 }, 100);
-    try std.testing.expect(handled);
+    // Self beacon must be rejected to prevent self-looping on broadcast
+    const self_handled = try daemon.handleIncomingBeacon(&self_beacon, [_]u8{ 192, 168, 100, 1 }, 100);
+    try std.testing.expect(!self_handled);
+    try std.testing.expectEqual(@as(usize, 0), daemon.peerCount());
+
+    // Peer beacon from another node must be accepted
+    const peer_seed = [_]u8{0x88} ** 32;
+    var peer_daemon = try P2pDaemon.init(std.testing.allocator, peer_seed, 8080);
+    var peer_beacon: [74]u8 = undefined;
+    peer_daemon.formatBeacon(&peer_beacon);
+
+    const peer_handled = try daemon.handleIncomingBeacon(&peer_beacon, [_]u8{ 192, 168, 100, 2 }, 100);
+    try std.testing.expect(peer_handled);
     try std.testing.expectEqual(@as(usize, 1), daemon.peerCount());
+
+    const peer_opt = daemon.getPeer(0);
+    try std.testing.expect(peer_opt != null);
+
+    var summary_buf: [128]u8 = undefined;
+    const summary = P2pDaemon.formatPeerSummary(&peer_opt.?, &summary_buf);
+    try std.testing.expect(summary.len > 0);
 }
 
 test "P2P node identity generation and signature verification" {

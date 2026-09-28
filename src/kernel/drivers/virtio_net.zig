@@ -167,7 +167,8 @@ pub const VirtioNetDevice = struct {
 
     fn retireTx(self: *VirtioNetDevice) !void {
         var wait_iter: usize = 0;
-        while (self.tx_queue.avail.idx != self.tx_queue.used.idx and wait_iter < PAUSE_SPIN_LIMIT) : (wait_iter += 1) {
+        const SPIN_LIMIT: usize = 1_000_000;
+        while (self.tx_queue.avail.idx != self.tx_queue.used.idx and wait_iter < SPIN_LIMIT) : (wait_iter += 1) {
             io.pause();
         }
         if (self.tx_queue.avail.idx != self.tx_queue.used.idx) {

@@ -44,6 +44,17 @@ pub const NetworkStack = struct {
     syn_secret_nonce: u64 = 0x5359_4E5F_4D49_4352,
     next_conn_id: u32 = 1,
     next_listener_id: u32 = 1,
+    udp_beacon_handler: ?*const fn (ctx: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void = null,
+    udp_beacon_ctx: ?*anyopaque = null,
+
+    pub fn setUdpBeaconHandler(
+        self: *NetworkStack,
+        ctx: ?*anyopaque,
+        handler: ?*const fn (ctx: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void,
+    ) void {
+        self.udp_beacon_ctx = ctx;
+        self.udp_beacon_handler = handler;
+    }
 
     pub fn init(device: *virtio_net_mod.VirtioNetDevice) NetworkStack {
         var nonce = io.rdtsc();
@@ -89,7 +100,7 @@ pub const NetworkStack = struct {
 
         switch (ip_hdr.protocol) {
             ipv4_mod.PROTO_ICMP => self.processIcmp(ip_hdr.src_ip, payload),
-            ipv4_mod.PROTO_UDP => self.processUdp(payload),
+            ipv4_mod.PROTO_UDP => self.processUdp(ip_hdr.src_ip, payload),
             ipv4_mod.PROTO_TCP => self.processTcp(src_mac, ip_hdr.src_ip, payload),
             else => {},
         }
@@ -235,7 +246,7 @@ pub const NetworkStack = struct {
         }
     }
 
-    fn processUdp(self: *NetworkStack, payload: []const u8) void {
+    fn processUdp(self: *NetworkStack, src_ip: [4]u8, payload: []const u8) void {
         const udp_hdr = udp_mod.parseHeader(payload) orelse return;
         if (udp_hdr.dst_port == dhcp_mod.PORT_CLIENT) {
             const dhcp_data = payload[udp_mod.UDP_HEADER_LEN..];
@@ -245,6 +256,11 @@ pub const NetworkStack = struct {
             const dns_data = payload[udp_mod.UDP_HEADER_LEN..];
             if (dns_mod.parseResponse(dns_data, self.dns_xid)) |ip| {
                 self.dns_result = ip;
+            }
+        } else if (udp_hdr.dst_port == 8080 or udp_hdr.dst_port == 8081) {
+            if (self.udp_beacon_handler) |handler| {
+                const udp_data = payload[udp_mod.UDP_HEADER_LEN..];
+                handler(self.udp_beacon_ctx, src_ip, udp_data);
             }
         }
     }
@@ -300,9 +316,10 @@ pub const NetworkStack = struct {
         @memcpy(udp_buf[udp_hdr_len .. udp_hdr_len + payload.len], payload);
         const total_udp_len = udp_hdr_len + payload.len;
 
+        const src_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
         try self.sendRawIpv4(
             frame_mod.BROADCAST_MAC,
-            IP_ZERO,
+            src_ip,
             IP_BROADCAST,
             ipv4_mod.PROTO_UDP,
             udp_buf[0..total_udp_len],
@@ -810,4 +827,32 @@ test "sendChunkWithRetry restores client seq on error" {
     const res = stack.sendChunkWithRetry(&client, data);
     try std.testing.expectError(error.DeviceNotInitialized, res);
     try std.testing.expectEqual(@as(u32, 1000), client.seq);
+}
+
+var test_beacon_received: bool = false;
+var test_beacon_src_ip: [4]u8 = [_]u8{0} ** 4;
+
+fn testBeaconCallback(_: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void {
+    test_beacon_received = true;
+    test_beacon_src_ip = src_ip;
+    _ = payload;
+}
+
+test "processUdp dispatches port 8080 packets to registered udp_beacon_handler" {
+    var dummy_dev: virtio_net_mod.VirtioNetDevice = undefined;
+    dummy_dev.initialized = false;
+    var stack = NetworkStack.init(&dummy_dev);
+    stack.dhcp_config.bound = true;
+    stack.dhcp_config.ip = [_]u8{ 192, 168, 100, 1 };
+
+    test_beacon_received = false;
+    stack.setUdpBeaconHandler(null, testBeaconCallback);
+
+    var udp_packet: [16]u8 = undefined;
+    _ = try udp_mod.writeHeader(&udp_packet, 8080, 8080, 8);
+    @memcpy(udp_packet[8..16], "BEACON01");
+
+    stack.processUdp([_]u8{ 192, 168, 100, 2 }, &udp_packet);
+    try std.testing.expect(test_beacon_received);
+    try std.testing.expectEqual([_]u8{ 192, 168, 100, 2 }, test_beacon_src_ip);
 }

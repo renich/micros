@@ -83,6 +83,13 @@
       "passes": true,
       "spec_ref": "docs/technical/specs/pure-microkernel-storage.rst",
       "verification_cmd": "make check"
+    },
+    "SPEC-TECH-P2P-001": {
+      "last_checked": "2026-09-28T15:09:00.000Z",
+      "name": "Sovereign P2P Wire Protocol & Virtual Cluster Mesh",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/sovereign-p2p-wire-protocol.rst",
+      "verification_cmd": "make qemu-cluster-verify"
     }
   },
   "version": "0.3.0"

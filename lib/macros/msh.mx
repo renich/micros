@@ -71,7 +71,18 @@ fn cmd_peers() {
     console_writeln("-- P2P Virtual Cluster Mesh --------------------");
     console_writeln("* Transport : Noise/mTLS on TCP port 8080");
     console_writeln("* Discovery : UDP beacon port 8080 (Ed25519 identity)");
-    console_writeln("* Status    : Mesh online (zero-conf beacon active)");
+    count = sys_peer_count();
+    if (count <= 0) {
+        console_writeln("* Peers     : 0 connected (beacon active)");
+    } else {
+        console_writeln("* Peers     : " + int_to_str(count) + " node(s) connected");
+        i = 0;
+        while (i < count) {
+            info = sys_peer_info(i);
+            console_writeln("  [" + int_to_str(i) + "] " + info);
+            i = i + 1;
+        }
+    }
     return 0;
 }
 
@@ -120,6 +131,10 @@ fn cmd_status() {
     console_writeln("* Status    : Ready");
     console_writeln("* Actors    : " + int_to_str(sys_actor_count()) + " active");
     console_writeln("* Faults    : " + int_to_str(sys_fault_count()) + " contained");
+    pcount = sys_peer_count();
+    if (pcount > 0) {
+        console_writeln("* Mesh      : " + int_to_str(pcount) + " peer(s) online");
+    }
     st = sys_catalog_status();
     if (len(st) > 0) {
         console_writeln("* Catalog   : " + st);

@@ -35,6 +35,7 @@ pub const cap_abi = @import("cap/cap_abi.zig");
 pub const PhysFrameInfo = cap_abi.PhysFrameInfo;
 pub const console_abi = @import("ipc/console_abi.zig");
 pub const fb_abi = @import("compositor/fb_abi.zig");
+pub const p2p_abi = @import("../userland/p2pd/p2p_abi.zig");
 const cap_mod = @import("cap/capability.zig");
 const net_stack_mod = @import("net/stack.zig");
 const NetworkStack = net_stack_mod.NetworkStack;
@@ -61,6 +62,7 @@ pub const AbiContext = struct {
     bundle_list_fn: ?*const fn (prefix: []const u8, out_buf: []u8) usize = null,
     current_actor_fn: ?*const fn () ?*Actor = null,
     net_stack: ?*NetworkStack = null,
+    p2pd: ?*@import("../userland/p2pd/p2p.zig").P2pDaemon = null,
     frame_info_fn: ?*const fn (frame_idx: usize) ?u64 = null,
     irq_ack_fn: ?*const fn (irq: u8) void = null,
     dma_pin_fn: ?*const fn (virt_addr: usize, len_bytes: usize) ?u64 = null,
@@ -100,6 +102,7 @@ pub fn setContext(ctx: *AbiContext) void {
     git_abi.setCasContext(ctx.cas_put_fn, ctx.cas_get_fn);
     git_abi.setCallerAuth(checkCallerAuthority);
     cap_abi.setCapAbiContext(checkCallerAuthority, ctx.frame_info_fn, ctx.irq_ack_fn, ctx.dma_pin_fn);
+    p2p_abi.setP2pContext(ctx.p2pd, checkCallerAuthority);
 
     win_ctx = .{
         .wm = ctx.wm,
@@ -386,6 +389,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try net_abi.registerNetworkSyscalls(vm);
     try git_abi.registerGitSyscalls(vm);
     try cap_abi.registerCapSyscalls(vm);
+    try p2p_abi.registerP2pSyscalls(vm);
 }
 
 pub const registerBindings = registerSyscalls;

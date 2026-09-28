@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 MODE="interactive"
 TIMEOUT_SEC=20
-MCAST_ADDR="230.0.0.1:1234"
+CLUSTER_PORT=12345
 BUILD_DIR="build/cluster"
 OVMF_PATH="/usr/share/edk2/ovmf/OVMF_CODE.fd"
 NODE1_PID=""
@@ -24,7 +24,8 @@ Usage: $0 [options]
 Options:
   --mode [interactive|headless|verify]  Execution mode (default: interactive)
   --timeout <seconds>                   Verification timeout in seconds (default: 20)
-  --mcast <ip:port>                     Multicast address:port (default: 230.0.0.1:1234)
+  --port <port>                         Virtual mesh interconnect port (default: 12345)
+  --mcast <addr>                        Ignored (legacy compatibility)
   --help                                Show this help message
 EOF
     exit 1
@@ -34,7 +35,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --mode) MODE="$2"; shift 2 ;;
         --timeout) TIMEOUT_SEC="$2"; shift 2 ;;
-        --mcast) MCAST_ADDR="$2"; shift 2 ;;
+        --port) CLUSTER_PORT="$2"; shift 2 ;;
+        --mcast) shift 2 ;;
         --help|-h) usage ;;
         *) echo "Unknown option: $1" >&2; usage ;;
     esac
@@ -60,8 +62,16 @@ prepare_node_env() {
     local node_dir="${BUILD_DIR}/node${node_id}"
     mkdir -p "${node_dir}/esp/EFI/BOOT"
 
-    cp build/esp/EFI/BOOT/BOOTX64.EFI "${node_dir}/esp/EFI/BOOT/BOOTX64.EFI"
-    cp build/esp/genesis.mcb "${node_dir}/esp/genesis.mcb"
+    local efi_src="zig-out/bin/boot.efi"
+    if [[ ! -f "$efi_src" ]]; then
+        efi_src="build/esp/EFI/BOOT/BOOTX64.EFI"
+    fi
+    local mcb_src="src/kernel/genesis.mcb"
+    if [[ ! -f "$mcb_src" ]]; then
+        mcb_src="build/esp/genesis.mcb"
+    fi
+    cp "$efi_src" "${node_dir}/esp/EFI/BOOT/BOOTX64.EFI"
+    cp "$mcb_src" "${node_dir}/esp/genesis.mcb"
 
     if [[ ! -f "${node_dir}/disk.raw" ]]; then
         truncate -s 64M "${node_dir}/disk.raw"
@@ -87,11 +97,13 @@ run_verify() {
         -drive format=raw,file="fat:rw:${BUILD_DIR}/node1/esp" \
         -drive id=disk0,if=none,format=raw,file="${BUILD_DIR}/node1/disk.raw" \
         -device virtio-blk-pci,drive=disk0 \
-        -netdev socket,id=net0,mcast="$MCAST_ADDR" \
+        -netdev "socket,id=net0,listen=127.0.0.1:${CLUSTER_PORT}" \
         -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:01 \
         -display none \
         -serial file:"$n1_log" &
     NODE1_PID=$!
+
+    sleep 0.5
 
     echo "=> Spawning Node 2 (MAC 52:54:00:12:34:02, headless)..."
     qemu-system-x86_64 -enable-kvm -cpu host -m 512M \
@@ -99,7 +111,7 @@ run_verify() {
         -drive format=raw,file="fat:rw:${BUILD_DIR}/node2/esp" \
         -drive id=disk0,if=none,format=raw,file="${BUILD_DIR}/node2/disk.raw" \
         -device virtio-blk-pci,drive=disk0 \
-        -netdev socket,id=net0,mcast="$MCAST_ADDR" \
+        -netdev "socket,id=net0,connect=127.0.0.1:${CLUSTER_PORT}" \
         -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:02 \
         -display none \
         -serial file:"$n2_log" &
@@ -110,6 +122,8 @@ run_verify() {
     start_time=$(date +%s)
     local n1_ready=0
     local n2_ready=0
+    local n1_discovered=0
+    local n2_discovered=0
 
     while true; do
         local now
@@ -138,7 +152,21 @@ run_verify() {
             fi
         fi
 
-        if (( n1_ready == 1 && n2_ready == 1 )); then
+        if [[ -f "$n1_log" ]] && grep -q "Peer node discovered" "$n1_log" 2>/dev/null; then
+            if (( n1_discovered == 0 )); then
+                echo "  [  ok  ] Node 1: Received UDP beacon & discovered peer on virtual mesh"
+                n1_discovered=1
+            fi
+        fi
+
+        if [[ -f "$n2_log" ]] && grep -q "Peer node discovered" "$n2_log" 2>/dev/null; then
+            if (( n2_discovered == 0 )); then
+                echo "  [  ok  ] Node 2: Received UDP beacon & discovered peer on virtual mesh"
+                n2_discovered=1
+            fi
+        fi
+
+        if (( n1_ready == 1 && n2_ready == 1 && n1_discovered == 1 && n2_discovered == 1 )); then
             echo "=> Dual-node virtual P2P cluster mesh successfully established & verified!"
             return 0
         fi
@@ -158,11 +186,13 @@ run_interactive() {
         -drive format=raw,file="fat:rw:${BUILD_DIR}/node2/esp" \
         -drive id=disk0,if=none,format=raw,file="${BUILD_DIR}/node2/disk.raw" \
         -device virtio-blk-pci,drive=disk0 \
-        -netdev socket,id=net0,mcast="$MCAST_ADDR" \
+        -netdev "socket,id=net0,listen=127.0.0.1:${CLUSTER_PORT}" \
         -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:02 \
         -display none \
         -serial file:"$n2_log" &
     NODE2_PID=$!
+
+    sleep 0.5
 
     echo "=> Starting interactive Node 1 (MAC 52:54:00:12:34:01, live display & serial)..."
     qemu-system-x86_64 -enable-kvm -cpu host -m 512M \
@@ -170,7 +200,7 @@ run_interactive() {
         -drive format=raw,file="fat:rw:${BUILD_DIR}/node1/esp" \
         -drive id=disk0,if=none,format=raw,file="${BUILD_DIR}/node1/disk.raw" \
         -device virtio-blk-pci,drive=disk0 \
-        -netdev socket,id=net0,mcast="$MCAST_ADDR" \
+        -netdev "socket,id=net0,connect=127.0.0.1:${CLUSTER_PORT}" \
         -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:01 \
         -device virtio-vga,xres=1280,yres=800 \
         -display gtk,zoom-to-fit=on \

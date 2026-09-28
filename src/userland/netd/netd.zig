@@ -93,6 +93,16 @@ pub const NetDaemon = struct {
         self.client_tx_ring = tx_ring;
     }
 
+    pub fn setUdpBeaconHandler(
+        self: *NetDaemon,
+        ctx: ?*anyopaque,
+        handler: ?*const fn (ctx: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void,
+    ) void {
+        if (self.stack) |st| {
+            st.setUdpBeaconHandler(ctx, handler);
+        }
+    }
+
     pub fn startDhcp(self: *NetDaemon) !bool {
         if (self.stack == null) return false;
         self.state = .dhcp_discovering;
