@@ -139,7 +139,7 @@ pub fn nativeSysWindowDrawString(vm_ptr: *anyopaque, args: []Value) anyerror!Val
     return Value{ .nil = {} };
 }
 
-pub fn nativeSysCompositorFlush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+pub fn nativeSysWindowCommit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (!checkAuth(.framebuffer, cap_mod.Rights.WRITE)) return error.PermissionDenied;
@@ -152,6 +152,10 @@ pub fn nativeSysCompositorFlush(vm_ptr: *anyopaque, args: []Value) anyerror!Valu
         canvas.flush(fb);
     }
     return Value{ .boolean = true };
+}
+
+pub fn nativeSysCompositorFlush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    return nativeSysWindowCommit(vm_ptr, args);
 }
 
 pub fn nativeSysPointerRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

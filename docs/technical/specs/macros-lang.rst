@@ -73,43 +73,46 @@ Token Classes:
 
 4. Memory Management & Immix GC Architecture
 ============================================
-The Macros memory subsystem is managed by the Immix mark-region garbage collector (``src/macros/immix.zig``):
+The Macros memory subsystem is managed by the Immix mark-region garbage collector (``src/macros/gc.zig``):
 
-- **Block Structure**: 32KB blocks containing 256 lines of 128 bytes each.
-- **Line State**: Each line maintains a status byte indicating whether it is free, marked live, or part of a multi-line object.
-- **Allocation Strategy**: Small objects ($\le 512$ bytes) use bump-pointer cursors within contiguous free line holes. Large objects (> 512 bytes) are directly mapped via ``src/sys/mem.zig`` page allocation.
-- **Garbage Collection Cycle**: Stop-the-world mark phase followed by linear line bitmap sweep. Contiguous unmarked lines are coalesced into allocation holes without compaction overhead.
+- **Block Structure**: 32KB blocks (``BLOCK_SIZE = 32768``) containing 128 lines of 256 bytes each (``LINE_SIZE = 256``, ``LINES_PER_BLOCK = 128``), page-aligned to 4096 bytes (``align(4096)``).
+- **Line State**: Each line maintains a status byte indicating whether it is free, allocated, or marked live.
+- **Allocation Strategy**: Small objects ($\le 4096$ bytes) use bump-pointer cursors within contiguous free line holes. Large objects (> 4096 bytes, ``LARGE_OBJECT_THRESHOLD = 4096``) are allocated in the Large Object Space (LOS).
+- **Garbage Collection Cycle**: Stop-the-world mark phase followed by linear line bitmap sweep. Contiguous unmarked lines are coalesced into allocation holes without compaction overhead. Default threshold is 64 KiB (``DEFAULT_GC_THRESHOLD = 65536``) scaling by 2x up to a 16 MiB ceiling (``MAX_HEAP_BLOCKS = 512``).
 
-5. Fiber Concurrency Runtime
-============================
-Macros provides lightweight, cooperative green-thread fibers (``src/macros/fiber.zig``):
+5. Fiber Concurrency Runtime & Bounded Execution
+================================================
+Macros provides lightweight green-thread fibers (``src/macros/fiber.zig``):
 
-- **Stack Allocation**: Each fiber is provisioned with a 64KB stack aligned to 16-byte System V AMD64 ABI boundaries.
+- **Stack Allocation**: Each fiber is provisioned with a 2MB stack (``STACK_SIZE = 2097152``) and a 4096-byte guard page (``GUARD_SIZE = 4096``) to accommodate cryptographic state (including post-quantum ML-KEM-768 and TLS 1.3), aligned to 4096-byte boundaries.
 - **Context Switch Assembly**: Callee-saved registers (``rbp``, ``rbx``, ``r12``, ``r13``, ``r14``, ``r15``) are saved on the outgoing stack; the stack pointer (``rsp``) is swapped in ``src/macros/context_switch.s``.
-- **Non-Preemptive Scheduling**: A FIFO ready-queue schedules active fibers upon explicit yield or I/O suspension.
+- **Bounded Execution & Preemption**: Execution bounds are enforced per instruction dispatch:
+  - **Dynamic Gas Metering**: When an instruction gas limit is assigned (``vm.setGasLimit()``), each instruction decrements the gas counter; exhaustion immediately traps with ``error.OutOfGas``.
+  - **Cooperative Preemption Quantum**: In unmetered or long-running execution, the VM yields the CPU (``fiber.yield()``) every 1024 instructions (``PREEMPTION_QUANTUM = 1024``), mathematically bounding worst-case latency across concurrent actors.
+- **Non-Preemptive Scheduling**: A FIFO ready-queue schedules active fibers upon explicit yield, quantum preemption, or I/O suspension.
 
 6. Evaluator & Runtime Execution Semantics
 ==========================================
-The tree-walk evaluation engine (``src/macros/eval.zig``) provides:
+The tree-walk evaluation engine (``src/macros/eval.zig``) and bytecode VM (``src/macros/vm.zig``) provide:
 
 - **Lexical Scoping**: Chained parent-child environment lookup with immutable identifier isolation across function invocations.
 - **Control Flow Bubbling**: Function returns bubble up via non-allocating ``has_returned`` flags.
-- **Error Unions**: Explicit failure modes for ``UndefinedVariable``, ``UndefinedFunction``, ``TypeMismatch``, and ``DivisionByZero``.
+- **Error Unions**: Explicit failure modes for ``UndefinedVariable``, ``UndefinedFunction``, ``TypeMismatch``, ``DivisionByZero``, and ``OutOfGas``.
 - **Builtin Host Primitives**: Direct substrate access for console I/O (``print``, ``println``), timing (``clock_ms``), and file descriptors (``read_file``, ``write_file``).
 
 7. Self-Hosting Bootstrap Pipeline
 ==================================
 The self-hosting architecture ensures that Macros can compile itself within MicrOS:
 
-1. **Stage 0 (Freestanding Zig Substrate)**: ``src/macros/`` executes Stage 1 compiler scripts.
-2. **Stage 1 (Macros-in-Macros Compiler)**: ``lib/macros/`` (``ast.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``) parsed and evaluated by Stage 0.
-3. **Stage 2 (Native Machine/Bytecode)**: Emits native ELF binaries or optimized bytecode for direct PID 1 substrate execution.
-4. **Fixed-Point Verification**: Verification that Stage 1 and Stage 2 emit bit-identical binaries.
+1. **Stage 0 (Freestanding Zig Substrate)**: ``src/macros/`` provides the VM runtime, Immix GC, fiber scheduler, and native JIT/AOT machine code / ELF emitter (``codegen_x86_64.zig``, ``elf_emitter.zig``).
+2. **Stage 1 (Pure Macros Compiler)**: ``lib/macros/`` (``ast.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``) parsed and executed by Stage 0, compiling Macros programs to deterministic bytecode chunks.
+3. **Stage 2 (Fixed-Point Verification)**: ``lib/macros/compiler.mx`` compiles itself on the VM to produce bit-for-bit identical bytecode chunks (``BLAKE3(Chunk 1) == BLAKE3(Chunk 2)``).
+4. **Native Compilation Substrate**: High-frequency bytecode chunks are translated into raw x86_64 machine instructions and relocatable ELF64 objects via the substrate native backend (``codegen_x86_64.zig``, ``elf_emitter.zig``) under strict W^X hardware page protections.
 
 8. Traceability & Acceptance Criteria
 =====================================
-- **[US-REN-002]**: Verifies execution of ``.mx``/``.macros`` scripts via standalone runner ``/bin/macros`` and shell ``msh``.
+- **[US-REN-002]**: Verifies execution of ``.mx``/``.macros`` scripts via standalone runner ``/bin/macros`` and shell ``ush``.
 - **[US-REN-004]**: Verifies zero-libc substrate determinism, AST construction, and evaluation directly on Linux syscalls.
 - **[US-REN-010]**: Verifies green-thread concurrent fiber scheduling and assembly context switching.
-- **[US-GEM-008]**: Verifies isolated Immix GC heap partitioning, 128-byte line recycling, and zero memory fragmentation.
+- **[US-GEM-008]**: Verifies isolated Immix GC heap partitioning, 256-byte line recycling, and zero memory fragmentation.
 - **[US-GEM-010]**: Verifies context-window-optimized architecture with modules under 1,000 lines.

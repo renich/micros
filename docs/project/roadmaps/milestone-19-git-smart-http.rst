@@ -3,7 +3,7 @@ Milestone 19: Git Smart HTTP Transport & CAS Packfile Ingestion
 
 :Objective: Implement a freestanding, zero-libc Git Smart HTTP transport and content-addressed ingestion engine for MicrOS (µOS). Enable standard ``git push`` operations directly from external developer workstations over TCP port 8080 into running MicrOS nodes without SSH daemons, POSIX filesystems, or external Git runtimes.
 :Status: Complete & Verified
-:Specification: SPEC-TECH-NET-003
+:Specification: SPEC-TECH-NET-003 (Excised in Milestone 38 per zero-strings sovereign mesh architecture)
 
 Milestones & Deliverables
 -------------------------

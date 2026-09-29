@@ -22,11 +22,14 @@ Traditional networking requires centralized DNS and X.509 PKI hierarchies. In Mi
 
 2.1 Frame Header Layout
 -----------------------
-All P2P messages transmitted over the TCP stream begin with a fixed 48-byte binary frame header:
+All P2P messages transmitted over the stream begin with a fixed 80-byte binary frame header (Protocol Version 2):
 
 .. code-block:: zig
 
    pub const P2P_MAGIC: u32 = 0x50325031; // 'P2P1'
+   pub const PROTOCOL_VERSION: u16 = 2;
+   pub const MAC_LEN: usize = 32;
+   pub const KEY_LEN: usize = 32;
 
    pub const MessageType = enum(u16) {
        handshake_init = 1,
@@ -38,6 +41,8 @@ All P2P messages transmitted over the TCP stream begin with a fixed 48-byte bina
        chunk_response = 7,
        actor_dispatch = 8,
        actor_result = 9,
+       merkle_sync_request = 10,
+       merkle_sync_response = 11,
    };
 
    pub const FrameHeader = extern struct {
@@ -47,17 +52,17 @@ All P2P messages transmitted over the TCP stream begin with a fixed 48-byte bina
        payload_len: u32 align(1),
        source_id: [32]u8 align(1),
        sequence: u32 align(1),
-       checksum: u32 align(1),
+       mac: [32]u8 align(1), // 256-bit BLAKE3 Keyed MAC
    };
 
-2.2 Handshake Sequence
-----------------------
-1. **Initiator -> Responder (HandshakeInit)**:
-   Transmits 32-byte ephemeral public key, 32-byte static Ed25519 public key, and a 64-byte signature over a 32-byte random challenge nonce.
-2. **Responder -> Initiator (HandshakeResp)**:
-   Verifies initiator signature against ``source_id = BLAKE3(pubkey)``. Returns responder's Ed25519 public key, response nonce, and signature.
-3. **Session Key Derivation**:
-   Both peers derive symmetric 256-bit ChaCha20-Poly1305 encryption keys. Subsequent frame payloads are encrypted in-place.
+2.2 Keyed MAC Verification & Replay Defense
+-------------------------------------------
+1. **Frame Authentication**: Every frame is protected by a 256-bit BLAKE3 keyed MAC (``computeMac``). The MAC authenticates both the header authentication fields (first 48 bytes: magic, version, msg_type, payload_len, source_id, sequence) and the payload bytes using the peer's negotiated symmetric session key. Constant-time verification (``timing_safe.eql``) rejects any tampered or unauthenticated bytes.
+2. **Monotonic Anti-Replay Enforcement**: The P2P daemon tracks ``last_seen_sequence`` per authenticated peer. Any inbound frame with ``sequence <= last_seen_sequence`` is strictly rejected (``error.ReplayDetected``) and dropped without system panic.
+3. **Handshake Sequence & Role Binding**:
+   - **Initiator -> Responder (HandshakeInit)**: Initiator transmits static Ed25519 public key, 32-byte challenge nonce, and Ed25519 signature over ``BLAKE3("MicrOS-P2P-v2:init:" || init_pubkey || resp_pubkey || nonce)``.
+   - **Responder -> Initiator (HandshakeResp)**: Responder validates initiator signature and single-use challenge nonce. Returns responder's Ed25519 public key, response nonce, and signature over ``BLAKE3("MicrOS-P2P-v2:resp:" || resp_pubkey || init_pubkey || nonce)``.
+   - **Session Key Derivation**: Both peers derive a shared 256-bit symmetric session key via ``BLAKE3("MicrOS-P2P-v2:session:" || init_pubkey || resp_pubkey || challenge_a || challenge_b)`` for subsequent frame authentication. Single-use nonces are recorded in bounded anti-replay memory.
 
 3. Local Mesh Discovery & Peer Table
 ====================================
@@ -87,7 +92,7 @@ Userland shells and supervisory daemons query mesh status via typed, capability-
 
 3.4 Shell Integration & Mesh Observability
 ------------------------------------------
-The MicroShell (``lib/macros/msh.mx``) integrates real-time cluster introspection:
+The µShell (``lib/macros/ush.mx``) integrates real-time cluster introspection:
 
 * ``peers``: Queries ``sys_peer_count()`` and ``sys_peer_info()``, displaying a tabular view of discovered cluster nodes with shortened cryptographic IDs, IPv4 addresses, and capability masks.
 * ``status``: Displays overall system health, including active microkernel daemons and cluster peer discovery counts.

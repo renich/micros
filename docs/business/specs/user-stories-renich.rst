@@ -6,7 +6,7 @@ User Stories: Rénich (Human Persona)
 :Persona: Rénich Bon Ćirić (Principal Infrastructure Architect)
 :Traceability: `[US-REN-001]` to `[US-REN-010]`
 
-This document specifies the end-to-end user stories representing human interaction with MicrOS (µOS), MicroShell (`msh`), and the Macros programming language.
+This document specifies the end-to-end user stories representing human interaction with MicrOS (µOS), µShell (`ush`), and the Macros programming language.
 
 .. contents:: Table of Contents
    :depth: 2
@@ -18,14 +18,14 @@ This document specifies the end-to-end user stories representing human interacti
 * **So that** I never have to write brittle regexes, `awk`, `sed`, or handle whitespace-splitting bugs in my administrative workflows.
 
 **Acceptance Criteria**:
-* MicroShell (`msh`) passes structured objects between commands natively.
+* µShell (`ush`) passes structured objects between commands natively.
 * Shell variables retain strong types (`integer`, `boolean`, `string`, `struct`).
 * Piped filters execute with zero string serialization overhead.
 
 [US-REN-002] Unified Shell & Application Scripting
 ==================================================
 * **As a** developer and DevOps maintainer,
-* **I want** all administrative automation scripts to use the native Macros language (`#!/bin/msh` or `#!/bin/macros`),
+* **I want** all administrative automation scripts to use the native Macros language (`#!/bin/ush` or `#!/bin/macros`),
 * **So that** I don't maintain a separate, second-class shell language with different syntax, scoping rules, and error handling.
 
 **Acceptance Criteria**:

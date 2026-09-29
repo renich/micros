@@ -23,14 +23,17 @@ BINARIES := \
 	$(BIN_DIR)/micros-lint \
 	$(BIN_DIR)/micros-sym \
 	$(BIN_DIR)/micros-telem \
-	$(BIN_DIR)/micros-virtio-bench
+	$(BIN_DIR)/micros-virtio-bench \
+	$(BIN_DIR)/micros-fiber-bench \
+	$(BIN_DIR)/micros-arch-gate
 
 # Shell scripts
 SCRIPTS := \
 	micros-inspect.bash \
 	micros-runner.bash \
 	micros-spec-trace.bash \
-	micros-cluster.bash
+	micros-cluster.bash \
+	micros-rfc-gate.bash
 
 # Symlink launchers
 SYMLINKS := \
@@ -45,7 +48,10 @@ SYMLINKS := \
 	micros-sym \
 	micros-addr2line \
 	micros-telem \
-	micros-virtio-bench
+	micros-virtio-bench \
+	micros-fiber-bench \
+	micros-rfc-gate \
+	micros-arch-gate
 
 # Default goal
 .DEFAULT_GOAL := all
@@ -67,6 +73,14 @@ $(BIN_DIR)/micros-fb-verify: $(SRC_DIR)/fb_verify.zig | $(BIN_DIR)
 	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
 
 $(BIN_DIR)/micros-virtio-bench: $(SRC_DIR)/virtio_bench.zig | $(BIN_DIR)
+	@echo "=> Compiling $@..."
+	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
+
+$(BIN_DIR)/micros-fiber-bench: $(SRC_DIR)/fiber_bench.zig | $(BIN_DIR)
+	@echo "=> Compiling $@..."
+	$(ZIG) build-exe ../src/macros/context_switch.s $(ZIGFLAGS) --dep macros -Mroot=$< -Mmacros=../src/macros.zig -femit-bin=$@ --cache-dir $(CACHE_DIR)
+
+$(BIN_DIR)/micros-arch-gate: $(SRC_DIR)/arch_gate.zig | $(BIN_DIR)
 	@echo "=> Compiling $@..."
 	$(ZIG) build-exe $< $(ZIGFLAGS) -femit-bin=$@ --cache-dir $(CACHE_DIR)
 
@@ -93,6 +107,9 @@ micros-spec-trace: micros-spec-trace.bash
 micros-cluster: micros-cluster.bash
 	ln -sf $< $@
 
+micros-rfc-gate: micros-rfc-gate.bash
+	ln -sf $< $@
+
 micros-fb-verify: $(BIN_DIR)/micros-fb-verify
 	ln -sf $< $@
 
@@ -109,6 +126,9 @@ micros-telem: $(BIN_DIR)/micros-telem
 	ln -sf $< $@
 
 micros-virtio-bench: $(BIN_DIR)/micros-virtio-bench
+	ln -sf $< $@
+
+micros-arch-gate: $(BIN_DIR)/micros-arch-gate
 	ln -sf $< $@
 
 ## test: Execute unit and integration tests for tools

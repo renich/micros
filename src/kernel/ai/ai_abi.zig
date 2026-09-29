@@ -11,6 +11,7 @@ const ai_mod = @import("../ai.zig");
 const cap_mod = @import("../cap/capability.zig");
 const actor_mod = @import("../actor.zig");
 const serial = @import("../serial.zig");
+const aid_mod = @import("../../userland/aid/aid.zig");
 
 pub const AiContext = struct {
     ai_inference_fn: ?*const fn (prompt_ptr: [*]const u8, prompt_len: usize, out_ptr: [*]u8, out_len: usize) callconv(.c) usize = null,
@@ -28,7 +29,6 @@ pub const AiContext = struct {
 
 var active_ai_ctx: ?*AiContext = null;
 var ai_prompt_resp_buf: [16384]u8 = undefined;
-var ai_extract_buf: [8192]u8 = undefined;
 var ai_tool_scratch: [8192]u8 = undefined;
 var ai_tool_res_buf: [16384]u8 = undefined;
 var ai_tool_storage_buf: [16384]u8 = undefined;
@@ -52,19 +52,14 @@ pub fn nativeSysAiPrompt(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const prompt = args[0].string;
     const len = infer_fn(prompt.ptr, prompt.len, &ai_prompt_resp_buf, ai_prompt_resp_buf.len);
     if (len == 0) return Value{ .string = "" };
-    const duped = try vm.gcAllocator().dupe(u8, ai_prompt_resp_buf[0..len]);
-    return Value{ .string = duped };
-}
 
-pub fn nativeSysAiExtractCode(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
-    const resp = args[0].string;
-    if (ai_mod.client.AiClient.extractCodeBlock(resp, &ai_extract_buf)) |len| {
-        const duped = try vm.gcAllocator().dupe(u8, ai_extract_buf[0..len]);
+    if (aid_mod.extractCodeBlock(ai_prompt_resp_buf[0..len], &ai_tool_scratch)) |code_len| {
+        const duped = try vm.gcAllocator().dupe(u8, ai_tool_scratch[0..code_len]);
         return Value{ .string = duped };
     }
-    return Value{ .string = "" };
+
+    const duped = try vm.gcAllocator().dupe(u8, ai_prompt_resp_buf[0..len]);
+    return Value{ .string = duped };
 }
 
 pub fn nativeSysAiToolCall(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

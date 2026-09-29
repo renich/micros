@@ -1,0 +1,8 @@
+{
+  "ns_per_switch": 5086.2,
+  "method": "median-of-3 micros-fiber-bench Latency/Switch",
+  "measured_at": "2026-09-29T08:10:00Z",
+  "measured_by": "Muse Code (checker-implemented S4-F1 baseline)",
+  "machine": "dev host (shared/sandboxed CPUs; re-measure per machine)",
+  "note": "G-perf compares candidate median-of-3 against this value. Refresh deliberately (never silently) and record the reason in the committing report."
+}

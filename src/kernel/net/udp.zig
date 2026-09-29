@@ -18,7 +18,7 @@ pub fn parseHeader(data: []const u8) ?UdpHeader {
     if (data.len < UDP_HEADER_LEN) return null;
 
     const length = (@as(u16, data[4]) << 8) | @as(u16, data[5]);
-    if (data.len < length) return null;
+    if (length < UDP_HEADER_LEN or data.len < length) return null;
 
     return UdpHeader{
         .src_port = (@as(u16, data[0]) << 8) | @as(u16, data[1]),
@@ -34,7 +34,9 @@ pub fn writeHeader(
     dst_port: u16,
     payload_len: u16,
 ) !usize {
-    const total_len = UDP_HEADER_LEN + payload_len;
+    const total_len_u32 = @as(u32, UDP_HEADER_LEN) + @as(u32, payload_len);
+    if (total_len_u32 > 0xFFFF) return error.PayloadTooLarge;
+    const total_len: u16 = @intCast(total_len_u32);
     if (out_buf.len < total_len) return error.BufferTooSmall;
 
     out_buf[0] = @intCast((src_port >> 8) & 0xFF);
@@ -50,22 +52,22 @@ pub fn writeHeader(
 }
 
 pub fn calculateChecksum(src_ip: [4]u8, dst_ip: [4]u8, udp_packet: []const u8) u16 {
-    var sum: u32 = 0;
+    var sum: u64 = 0;
     // Pseudo-header: src_ip (4) + dst_ip (4) + zero (1) + proto (1) + udp_len (2)
-    sum += ((@as(u32, src_ip[0]) << 8) | src_ip[1]);
-    sum += ((@as(u32, src_ip[2]) << 8) | src_ip[3]);
-    sum += ((@as(u32, dst_ip[0]) << 8) | dst_ip[1]);
-    sum += ((@as(u32, dst_ip[2]) << 8) | dst_ip[3]);
+    sum += ((@as(u64, src_ip[0]) << 8) | src_ip[1]);
+    sum += ((@as(u64, src_ip[2]) << 8) | src_ip[3]);
+    sum += ((@as(u64, dst_ip[0]) << 8) | dst_ip[1]);
+    sum += ((@as(u64, dst_ip[2]) << 8) | dst_ip[3]);
     sum += PROTO_UDP;
-    sum += @as(u32, @intCast(udp_packet.len));
+    sum += @as(u64, @intCast(udp_packet.len));
 
     var i: usize = 0;
     while (i + 1 < udp_packet.len) : (i += 2) {
-        const word = (@as(u32, udp_packet[i]) << 8) | @as(u32, udp_packet[i + 1]);
+        const word = (@as(u64, udp_packet[i]) << 8) | @as(u64, udp_packet[i + 1]);
         sum += word;
     }
     if (i < udp_packet.len) {
-        sum += @as(u32, udp_packet[i]) << 8;
+        sum += @as(u64, udp_packet[i]) << 8;
     }
 
     while ((sum >> 16) != 0) {
@@ -84,4 +86,24 @@ test "udp header parse and serialize" {
     try std.testing.expectEqual(@as(u16, 68), parsed.src_port);
     try std.testing.expectEqual(@as(u16, 67), parsed.dst_port);
     try std.testing.expectEqual(@as(u16, 18), parsed.length);
+}
+
+test "udp truncated packet and invalid length rejected" {
+    var buf: [32]u8 = undefined;
+    _ = try writeHeader(&buf, 68, 67, 10);
+
+    // Truncated buffer
+    try std.testing.expect(parseHeader(buf[0..6]) == null);
+    try std.testing.expect(parseHeader(buf[0..17]) == null);
+
+    // Declared length smaller than UDP_HEADER_LEN
+    buf[4] = 0x00;
+    buf[5] = 0x05; // length = 5 (< 8)
+    try std.testing.expect(parseHeader(buf[0..18]) == null);
+}
+
+test "udp writeHeader rejects payload overflow" {
+    var buf: [32]u8 = undefined;
+    const res = writeHeader(&buf, 68, 67, 65530);
+    try std.testing.expectError(error.PayloadTooLarge, res);
 }

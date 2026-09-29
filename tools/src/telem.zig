@@ -15,7 +15,7 @@ pub const Subsystem = enum(u16) {
     scheduler = 0x0004,
     ipc = 0x0005,
     macros = 0x0006,
-    msh = 0x0007,
+    ush = 0x0007,
     _,
 };
 

@@ -106,7 +106,7 @@ When an NVMe submission queue stalls, times out (> 5000ms), or ``storaged`` cras
 
 5.1 Request & Response Envelopes
 --------------------------------
-Communication between client actors (such as MicroShell, compiler, or AI daemon) and ``storaged`` occurs exclusively over lock-free SPSC / MPSC ring buffers using strongly typed binary commands:
+Communication between client actors (such as µShell, compiler, or AI daemon) and ``storaged`` occurs exclusively over lock-free SPSC / MPSC ring buffers using strongly typed binary commands:
 
 .. code-block:: zig
 

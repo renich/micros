@@ -8,24 +8,21 @@ Formal Microkernel Minimality Audit & Silicon Validation
 
 1. Architectural Axioms & Minimality Criterion
 ==============================================
-This specification formalizes the architectural purity audit and bare-metal hardware validation for MicrOS (µOS), establishing that the Ring 0 microkernel core has achieved true seL4-class minimality following the complete excision of device drivers, filesystems, and display rendering into isolated Ring 3 userland service actors.
+This specification formalizes the architectural composition audit and bare-metal hardware validation for MicrOS (µOS), establishing the baseline footprint of the Ring 0 microkernel core (21,103 LOC) and defining the phased path toward seL4-class minimality. See Architecture Decision Record ``docs/project/audits/2026-09-28-kernel-boundary-and-daemon-residency.rst``.
 
 1.1 The seL4 Minimality Axiom: Mechanism vs Policy
 --------------------------------------------------
 A true microkernel implements only mechanism, never policy. In MicrOS:
 
-* **Ring 0 Microkernel Core**: Implements strictly 5 fundamental mechanisms:
+* **Ring 0 Microkernel Core (Mechanism Target: < 2,000 LOC, Milestone 41)**:
   1. **Physical Memory Management (PMM)**: Bitmap-backed allocation and freeing of 4096-byte physical page frames.
   2. **Virtual Memory Management (VMM)**: Per-actor 4-level CR3 page table directory creation, mapping, unmapping, and TLB invalidation.
   3. **Capability Space (CSpace)**: Token-based access control, attenuation, and unforgeable authority verification with zero ambient authority.
   4. **Preemptive SMP Scheduling**: Local APIC 1000Hz timer preemption, per-core runqueues, and lock-free work-stealing across multicore CPUs.
   5. **Hardware Trap & IPC Redirection**: Interrupt Descriptor Table (IDT) fault containment and lock-free SPSC / MPSC ring buffer signaling.
 
-* **Ring 3 Isolated Userland Daemons**: All complex subsystems operate outside supervisor privilege in isolated virtual address spaces:
-  - ``netd`` (``src/userland/netd/netd.zig``): VirtIO-Net 1.0 packet management, ARP, IPv4, DHCP, and Fast-Path TCP.
-  - ``aid`` (``src/userland/aid/aid.zig``): Post-quantum TLS 1.3, HTTP/1.1 REST client framing, and cognitive LLM prompt synthesis.
-  - ``gopd`` (``src/userland/gopd/gopd.zig``): GOP framebuffer canvas rasterization, double-buffering, AABB dirty rectangle damage tracking, and PS/2 input decoding.
-  - ``storaged`` (``src/userland/storaged/storaged.zig``): PCIe NVMe 1.4, VirtIO-Blk split-virtqueues, GPT partition parsing, FAT32 ESP handling, and BLAKE3 CAS.
+* **Substrate Bringup Reality & Userland Daemons (Strict Ring 0 Freeze)**:
+  During Milestones 0-26, hardware drivers, network stacks, storage CAS, and display rendering are compiled in Ring 0 (21,103 LOC total) to enable rapid bare-metal silicon bringup without cross-space debugging overhead. Capability ABIs strictly govern entry into each subsystem. Userland daemon modules (``src/userland/netd/``, ``src/userland/storaged/``, ``src/userland/gopd/``, ``src/userland/aid/``, ``src/userland/p2pd/``, ``src/userland/pkgd/``) define the service abstractions and will isolate each subsystem behind out-of-process IPC boundaries in Milestone 41.
 
 1.2 Quantitative Purity Boundaries
 ----------------------------------
@@ -93,4 +90,4 @@ Physical silicon qualification validates execution across diverse microarchitect
 1. **100% Bidirectional Specification Traceability**: Verified via ``./tools/micros-spec-trace --check`` across all business user stories, technical blueprints, and implementation modules.
 2. **AST Linting Compliance**: Verified via ``./tools/micros-lint src/`` with zero rule violations.
 3. **Deterministic Unit Testing**: 100% pass rate across the full test suite with explicit allocators and zero memory leaks.
-4. **Live Boot Sentinel Proof**: Verified live execution to the interactive MicroShell prompt under QEMU and bare-metal UEFI harnesses.
+4. **Live Boot Sentinel Proof**: Verified live execution to the interactive µShell prompt under QEMU and bare-metal UEFI harnesses.

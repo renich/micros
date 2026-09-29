@@ -11,6 +11,7 @@ const capability_mod = @import("cap/capability.zig");
 const Capability = capability_mod.Capability;
 const CapType = capability_mod.CapType;
 const Rights = capability_mod.Rights;
+const provenance_mod = @import("provenance.zig");
 
 pub const GENESIS_ACTOR_ID: u32 = 0;
 pub const MAX_ACTORS: usize = 64;
@@ -45,6 +46,15 @@ pub const Actor = struct {
     fiber_ctx: ?*anyopaque,
     source: ?[]const u8 = null,
     ref_count: std.atomic.Value(u32),
+    gas_budget: u64 = 0,
+    gas_used: u64 = 0,
+    provenance: provenance_mod.ProvenanceType = .genesis,
+    author_pubkey: [32]u8 = [_]u8{0} ** 32,
+    signature: [64]u8 = [_]u8{0} ** 64,
+
+    pub fn getBadgeText(self: *const Actor) []const u8 {
+        return self.provenance.getBadgeText();
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -160,6 +170,14 @@ pub const Actor = struct {
         return self.cspace.hasCap(cap_type, required_rights);
     }
 
+    pub fn lookupCap(self: *const Actor, cap_type: CapType) ?Capability {
+        return self.cspace.lookup(cap_type);
+    }
+
+    pub fn lookupCapWithRights(self: *const Actor, cap_type: CapType, required_rights: u16) ?Capability {
+        return self.cspace.lookupWithRights(cap_type, required_rights);
+    }
+
     pub fn authorizesPhysicalExtent(self: *const Actor, phys: u64, size: u64, required_rights: u16) bool {
         if (self.id == GENESIS_ACTOR_ID) return true;
         return self.cspace.authorizesPhysicalExtent(phys, size, required_rights);
@@ -239,6 +257,10 @@ pub const ActorRegistry = struct {
             page_table_base,
         );
         errdefer actor.deinit(allocator);
+
+        if (supervisor_id < MAX_ACTORS and self.actors[supervisor_id] != null) {
+            actor.gas_budget = self.actors[supervisor_id].?.gas_budget;
+        }
 
         if (self.actors[id] != null) return ActorError.RegistryFull;
         self.actors[id] = actor;
@@ -439,4 +461,22 @@ test "Actor release destroys page tables only on final refcount drop" {
 
     actor.release();
     try std.testing.expectEqual(@as(u64, 0x5000), destroyed_pt);
+}
+
+test "live-synth: G7 provenance badge tagging" {
+    const allocator = std.testing.allocator;
+    var actor_ai = try Actor.init(allocator, 11, "ai_synth", 16, 0);
+    defer actor_ai.deinit(allocator);
+    actor_ai.provenance = .ai;
+    try std.testing.expectEqualStrings("[ai]", actor_ai.getBadgeText());
+
+    var actor_peer = try Actor.init(allocator, 12, "peer_mesh", 16, 0);
+    defer actor_peer.deinit(allocator);
+    actor_peer.provenance = .peer;
+    try std.testing.expectEqualStrings("[peer]", actor_peer.getBadgeText());
+
+    var actor_gen = try Actor.init(allocator, 13, "gen_root", 16, 0);
+    defer actor_gen.deinit(allocator);
+    actor_gen.provenance = .genesis;
+    try std.testing.expectEqualStrings("[gen]", actor_gen.getBadgeText());
 }

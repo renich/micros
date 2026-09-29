@@ -136,7 +136,8 @@ Test the operating system in full x86_64 UEFI emulation via QEMU:
    tools/micros-runner.bash --mode uefi --timeout 20
 
    # 3. Boot live with Resident AI provider (Gemini, OpenAI, Anthropic, or Local)
-   zig build -Dai-provider=gemini -Dai-api-key="<YOUR_API_KEY>"
+   export GEMINI_API_KEY="<YOUR_API_KEY>"  # never pass secrets on argv
+   zig build -Dai-provider=gemini
    tools/micros-runner.bash --mode uefi --timeout 30
 
    # 4. Verify two-stage cold reboot storage persistence across VirtIO-Blk & CAS

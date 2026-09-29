@@ -128,6 +128,14 @@ pub fn writeHex(val: u64) void {
     }
 }
 
+pub fn writeBytesHex(bytes: []const u8) void {
+    const hex_chars = "0123456789abcdef";
+    for (bytes) |b| {
+        writeChar(hex_chars[b >> 4]);
+        writeChar(hex_chars[b & 0x0F]);
+    }
+}
+
 // ANSI escape sequences for modern, sleek terminal telemetry
 pub const ANSI_RESET: []const u8 = "\x1b[0m";
 pub const ANSI_BOLD: []const u8 = "\x1b[1m";

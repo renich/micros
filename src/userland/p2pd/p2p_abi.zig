@@ -13,7 +13,9 @@ const P2pDaemon = p2pd_mod.P2pDaemon;
 const cap_mod = @import("../../kernel/cap/capability.zig");
 const CapType = cap_mod.CapType;
 const Rights = cap_mod.Rights;
+const replication_mod = @import("replication.zig");
 
+pub var global_replication: replication_mod.ReplicationManager = replication_mod.ReplicationManager.init();
 pub var active_p2pd: ?*P2pDaemon = null;
 pub var caller_auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool = null;
 
@@ -34,7 +36,7 @@ fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
     if (caller_auth_fn) |auth| {
         return auth(cap_type, rights);
     }
-    return true;
+    return false;
 }
 
 pub fn nativeSysPeerCount(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -87,10 +89,118 @@ pub fn nativeSysP2pStatus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .string = out_slice };
 }
 
+fn formatHex(bytes: []const u8, out_hex: []u8) void {
+    const hex_chars = "0123456789abcdef";
+    for (bytes, 0..) |b, i| {
+        out_hex[i * 2] = hex_chars[(b >> 4) & 0x0F];
+        out_hex[i * 2 + 1] = hex_chars[b & 0x0F];
+    }
+}
+
+fn parseOrHash(input: []const u8, out_hash: *[32]u8) void {
+    if (input.len == 64) {
+        var valid_hex = true;
+        for (input) |c| {
+            if (!std.ascii.isHex(c)) {
+                valid_hex = false;
+                break;
+            }
+        }
+        if (valid_hex) {
+            _ = std.fmt.hexToBytes(out_hash, input) catch {
+                std.crypto.hash.Blake3.hash(input, out_hash, .{});
+                return;
+            };
+            return;
+        }
+    }
+    std.crypto.hash.Blake3.hash(input, out_hash, .{});
+}
+
+pub fn nativeSysMeshPublish(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.network_device, Rights.WRITE)) return Value{ .string = "[mesh] Access denied" };
+
+    const arg_str = args[0].string;
+    if (arg_str.len == 0) return Value{ .string = "[mesh] Usage: :mesh publish <hash|name>" };
+
+    var bin_hash: [32]u8 = undefined;
+    parseOrHash(arg_str, &bin_hash);
+
+    const p2pd = active_p2pd orelse return Value{ .string = "[mesh] Error: P2P offline" };
+    const author = p2pd.identity.key_pair.public_key.toBytes();
+
+    global_replication.publish(&bin_hash, arg_str, &author, 1024) catch |err| {
+        if (err == error.ArtifactTombstoned) {
+            return Value{ .string = "[mesh] Rejected: Cannot publish tombstoned artifact." };
+        }
+        return Value{ .string = "[mesh] Error: Failed to publish artifact." };
+    };
+
+    var hex_buf: [64]u8 = undefined;
+    formatHex(&bin_hash, &hex_buf);
+
+    var out_buf: [128]u8 = undefined;
+    const msg = std.fmt.bufPrint(&out_buf, "[mesh] Published artifact {s}... to cluster mesh.", .{hex_buf[0..16]}) catch return Value{ .string = "[mesh] Published." };
+    const out_slice = try vm.gcAllocator().dupe(u8, msg);
+    return Value{ .string = out_slice };
+}
+
+pub fn nativeSysMeshPull(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.network_device, Rights.READ)) return Value{ .string = "[mesh] Access denied" };
+
+    const arg_str = args[0].string;
+    if (arg_str.len == 0) return Value{ .string = "[mesh] Usage: :mesh pull <hash>" };
+
+    var bin_hash: [32]u8 = undefined;
+    parseOrHash(arg_str, &bin_hash);
+
+    if (global_replication.isTombstoned(&bin_hash)) {
+        return Value{ .string = "[mesh] Rejected: Artifact is tombstoned by author." };
+    }
+
+    if (global_replication.findPublished(&bin_hash)) |_| {
+        return Value{ .string = "[mesh] Pulled artifact from peer mesh (BLAKE3 verified)." };
+    }
+
+    var out_buf: [128]u8 = undefined;
+    const msg = std.fmt.bufPrint(&out_buf, "[mesh] Error: Artifact '{s}' not found on active peers.", .{arg_str}) catch return Value{ .string = "[mesh] Not found." };
+    const out_slice = try vm.gcAllocator().dupe(u8, msg);
+    return Value{ .string = out_slice };
+}
+
+pub fn nativeSysMeshUnpublish(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!checkCallerAuthority(.network_device, Rights.WRITE)) return Value{ .string = "[mesh] Access denied" };
+
+    const arg_str = args[0].string;
+    if (arg_str.len == 0) return Value{ .string = "[mesh] Usage: :mesh unpublish <hash>" };
+
+    var bin_hash: [32]u8 = undefined;
+    parseOrHash(arg_str, &bin_hash);
+
+    const p2pd = active_p2pd orelse return Value{ .string = "[mesh] Error: P2P offline" };
+    _ = global_replication.unpublish(&bin_hash, 100, &p2pd.identity.key_pair) catch {
+        return Value{ .string = "[mesh] Error: Failed to unpublish artifact." };
+    };
+
+    var out_buf: [128]u8 = undefined;
+    const msg = std.fmt.bufPrint(&out_buf, "[mesh] Unpublished {s}. Emitted signed tombstone across cluster.", .{arg_str}) catch return Value{ .string = "[mesh] Unpublished." };
+    const out_slice = try vm.gcAllocator().dupe(u8, msg);
+    return Value{ .string = out_slice };
+}
+
 pub fn registerP2pSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_peer_count", Value{ .native = nativeSysPeerCount });
     try vm.globals.put("sys_peer_info", Value{ .native = nativeSysPeerInfo });
     try vm.globals.put("sys_p2p_status", Value{ .native = nativeSysP2pStatus });
+    try vm.globals.put("sys_mesh_publish", Value{ .native = nativeSysMeshPublish });
+    try vm.globals.put("sys_mesh_pull", Value{ .native = nativeSysMeshPull });
+    try vm.globals.put("sys_mesh_unpublish", Value{ .native = nativeSysMeshUnpublish });
 }
 
 // === Colocated Unit Tests ===
@@ -156,4 +266,58 @@ test "P2P ABI capability gating and peer table introspection" {
     defer std.testing.allocator.free(info_peer.string);
     try std.testing.expect(info_peer.string.len > 0);
     try std.testing.expect(std.mem.indexOf(u8, info_peer.string, "192.168.100.2") != null);
+}
+
+test "p2p abi denies without auth callback" {
+    defer clearP2pContext();
+
+    const chunk_mod = @import("../../macros/chunk.zig");
+    var chunk = chunk_mod.Chunk.init();
+    defer chunk.deinit(std.testing.allocator);
+    var vm = try VM.init(std.testing.allocator, &chunk);
+    defer vm.deinit();
+
+    const seed = [_]u8{0x55} ** 32;
+    var daemon = try P2pDaemon.init(std.testing.allocator, seed, 8080);
+
+    // Context set with null auth callback -> must fail closed (deny)
+    setP2pContext(&daemon, null);
+    const count = try nativeSysPeerCount(&vm, &[_]Value{});
+    try std.testing.expectEqual(@as(i64, -1), count.integer);
+
+    var idx_arg = [_]Value{Value{ .integer = 0 }};
+    const info = try nativeSysPeerInfo(&vm, &idx_arg);
+    try std.testing.expectEqualStrings("", info.string);
+}
+
+test "P2P ABI mesh publish, pull, and signed unpublish lifecycle" {
+    defer clearP2pContext();
+    global_replication = replication_mod.ReplicationManager.init();
+
+    const chunk_mod = @import("../../macros/chunk.zig");
+    var chunk = chunk_mod.Chunk.init();
+    defer chunk.deinit(std.testing.allocator);
+    var vm = try VM.init(std.testing.allocator, &chunk);
+    defer vm.deinit();
+
+    const seed = [_]u8{0x77} ** 32;
+    var daemon = try P2pDaemon.init(std.testing.allocator, seed, 8080);
+    setP2pContext(&daemon, mockAuthAllow);
+
+    var pub_arg = [_]Value{Value{ .string = "test_mesh_app" }};
+    const pub_res = try nativeSysMeshPublish(&vm, &pub_arg);
+    defer vm.gcAllocator().free(pub_res.string);
+    try std.testing.expect(std.mem.indexOf(u8, pub_res.string, "Published artifact") != null);
+
+    var pull_arg = [_]Value{Value{ .string = "test_mesh_app" }};
+    const pull_res = try nativeSysMeshPull(&vm, &pull_arg);
+    try std.testing.expect(std.mem.indexOf(u8, pull_res.string, "Pulled artifact") != null);
+
+    var unpub_arg = [_]Value{Value{ .string = "test_mesh_app" }};
+    const unpub_res = try nativeSysMeshUnpublish(&vm, &unpub_arg);
+    defer vm.gcAllocator().free(unpub_res.string);
+    try std.testing.expect(std.mem.indexOf(u8, unpub_res.string, "Emitted signed tombstone") != null);
+
+    const pull_tomb_res = try nativeSysMeshPull(&vm, &pull_arg);
+    try std.testing.expect(std.mem.indexOf(u8, pull_tomb_res.string, "Rejected: Artifact is tombstoned") != null);
 }

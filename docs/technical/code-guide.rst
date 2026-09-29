@@ -23,7 +23,7 @@ The codebase is cleanly bifurcated into two cooperating layers:
    Residing in ``src/sys/`` and ``src/kernel/``, Tier 0 is written in freestanding Zig without any external C standard library (zero libc). It interacts directly with x86_64 hardware structures and devices. Tier 0 manages the Global Descriptor Table (GDT), Interrupt Descriptor Table (IDT), physical page frames (PMM), 4-level virtual memory paging (VMM), VirtIO network and block storage drivers, Capability Space (CSpace) security tokens, lockless shared-memory ring buffers, and the Immix mark-region bytecode virtual machine.
 
 2. **Tier 1: Sovereign Userland Applications (Macros)**:
-   Residing in ``lib/macros/`` and written in the Macros language (``.mx``, ``.macros``), Tier 1 embodies the system personality. It contains the system supervisor (``init.mx``), the interactive MicroShell (``msh.mx``), autonomous execution harnesses, and self-hosting compiler pipelines. Tier 1 programs execute as isolated actors scheduled on cooperative green-thread fibers and communicate via typed shared-memory ring buffers and explicit CSpace capability tokens.
+   Residing in ``lib/macros/`` and written in the Macros language (``.mx``, ``.macros``), Tier 1 embodies the system personality. It contains the system supervisor (``init.mx``), the interactive µShell (``ush.mx``), autonomous execution harnesses, and self-hosting compiler pipelines. Tier 1 programs execute as isolated actors scheduled on cooperative green-thread fibers and communicate via typed shared-memory ring buffers and explicit CSpace capability tokens.
 
 Eliminating Legacy POSIX Baggage:
 ---------------------------------
@@ -42,7 +42,7 @@ The codebase is architected to compile and run across two complementary executio
    The primary operating environment. Boots via UEFI firmware (OVMF in QEMU or real hardware) through ``src/boot/uefi_main.zig``. The microkernel directly initializes CPU tables, memory paging, PCI devices, VirtIO storage and networking, mounts CAS, initializes the double-buffered 1280x800 GOP vector canvas, and launches the Genesis application bundle inside cooperative fibers.
 
 * **Linux Direct-Syscall Sandbox (Fast TDD/CI Target)**:
-   For rapid development and continuous integration, ``src/main.zig`` compiles into a freestanding binary (``zig-out/bin/micros-init``) that acts as PID 1 inside an isolated Linux sandbox or container. It communicates with the host Linux kernel via raw syscalls in ``src/sys/linux.zig``, executes substrate self-tests, runs MicroShell commands, and triggers clean ACPI S5 poweroff in milliseconds.
+   For rapid development and continuous integration, ``src/main.zig`` compiles into a freestanding binary (``zig-out/bin/micros-init``) that acts as PID 1 inside an isolated Linux sandbox or container. It communicates with the host Linux kernel via raw syscalls in ``src/sys/linux.zig``, executes substrate self-tests, runs µShell commands, and triggers clean ACPI S5 poweroff in milliseconds.
 
 System Entry Points & Boot Sequence
 ===================================
@@ -75,8 +75,8 @@ Execution enters the microkernel at ``pub export fn kmain(boot_info: *const Boot
 ---------------------------------------------------
 The first userland code executed inside the Genesis VM runs as Actor 0 (PID 1):
 
-* **App 0 Deployment**: Reads ``msh.mx`` from the Genesis bundle via ``sys_bundle_read("msh.mx")``.
-* **Actor Spawning**: Spawns the MicroShell child actor via ``sys_actor_spawn_code("msh", msh_src)``.
+* **App 0 Deployment**: Reads ``ush.mx`` from the Genesis bundle via ``sys_bundle_read("ush.mx")``.
+* **Actor Spawning**: Spawns the µShell child actor via ``sys_actor_spawn_code("ush", ush_src)``.
 * **Supervision Loop**: Enters ``supervisor_loop``, polling child actor states (``sys_actor_state``), automatically respawning faulted actors, and cooperatively yielding CPU cycles via ``sys_yield()``.
 
 4. Linux Direct-Syscall Sandbox (src/main.zig):
@@ -85,13 +85,13 @@ When running in sandbox mode, execution begins at ``pub fn main() !void``:
 
 * **Direct Syscall Banner**: Emits early boot diagnostics directly to file descriptor 1 via ``src/sys/io.zig``.
 * **Substrate Verification**: Runs a self-test by parsing, compiling, and running ``boot_check = 20 + 22`` in an isolated Macros VM, validating that the result equals 42.
-* **MicroShell Execution**: Initializes ``msh.Shell`` attached to standard input/output descriptors.
+* **µShell Execution**: Initializes ``ush.Shell`` attached to standard input/output descriptors.
 * **Clean Shutdown**: Calls ``sys.process.poweroff()`` to trigger an ACPI S5 shutdown via raw reboot syscall magic (``0x4321fedc``).
 
 5. Standalone Host Runners:
 ---------------------------
 * ``src/macros_main.zig``: Host CLI utility to compile and execute standalone ``.mx`` files directly.
-* ``src/msh_main.zig``: Host interactive CLI providing the MicroShell REPL for terminal testing.
+* ``src/ush_main.zig``: Host interactive CLI providing the µShell REPL for terminal testing.
 
 Repository Anatomy: What Is Where
 =================================
@@ -116,7 +116,7 @@ The core engine written in freestanding Zig:
    * ``abi.zig``: Microkernel ABI bindings exposed to the Macros VM.
    * ``main.zig``: Microkernel root entry point (``kmain``).
 * ``src/sys/``: Freestanding Linux syscall and hardware abstraction library (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``, ``hal.zig``).
-* ``src/msh/``: Host MicroShell implementation (``shell.zig`` with built-in commands).
+* ``src/ush/``: Host µShell implementation (``shell.zig`` with built-in commands).
 
 Language Engine & Runtime (src/macros/):
 ----------------------------------------
@@ -127,7 +127,7 @@ The Stage 0 Macros implementation in Zig:
 * ``compiler.zig`` & ``chunk.zig``: Compiles AST nodes into serialized bytecode chunks.
 * ``vm.zig``: Stack-based virtual machine executing bytecode instructions.
 * ``eval.zig``: Tree-walk interpreter used during early bootstrap stages.
-* ``gc.zig`` & ``immix.zig``: Immix mark-region garbage collector (32 KiB blocks, line mark bitmaps, recyclable hole allocation).
+* ``gc.zig``: Immix mark-region garbage collector (32 KiB blocks, line mark bitmaps, recyclable hole allocation).
 * ``fiber.zig`` & ``context_switch.s``: Userspace cooperative green threads and assembly context switching.
 * ``codegen_x86_64.zig``: Direct machine code generator with W^X page protection.
 * ``module.zig`` & ``serializer.zig``: Content-addressed module resolver (``b3:...`` and ``bundle:...``) and canonical serialization.
@@ -137,7 +137,7 @@ Self-Hosting Applications (lib/macros/):
 The Stage 1 Macros implementation written entirely in pure Macros:
 
 * ``init.mx``: System supervisor and Actor 0 root init script.
-* ``msh.mx``: Sovereign MicroShell implementation written in pure Macros.
+* ``ush.mx``: Sovereign µShell implementation written in pure Macros.
 * ``harness.mx``: Autonomous test runner and verification suite.
 * ``ast.mx``, ``lexer.mx``, ``parser.mx``: Self-hosting compiler frontend.
 * ``compiler.mx``, ``compiler_main.mx``: Self-hosting bytecode compiler emitting runnable chunks.
@@ -175,7 +175,7 @@ The microkernel exposes hardware capabilities to Macros through ``src/kernel/abi
        try vm.globals.put("sys_window_create", Value{ .native = nativeSysWindowCreate });
    }
 
-When a Macros script executes ``sys_bundle_read("msh.mx")``, the VM pauses interpreted bytecode, marshals arguments from the VM operand stack, invokes the native Zig function, and pushes the resulting ``eval.Value`` back onto the stack without memory leakage.
+When a Macros script executes ``sys_bundle_read("ush.mx")``, the VM pauses interpreted bytecode, marshals arguments from the VM operand stack, invokes the native Zig function, and pushes the resulting ``eval.Value`` back onto the stack without memory leakage.
 
 Memory Architecture & Immix Mark-Region GC:
 -------------------------------------------
@@ -224,7 +224,7 @@ MicrOS is designed to compile itself, establishing computational independence fr
 Build-Time Packaging Flow:
 --------------------------
 1. **Compilation of Tools**: Host utilities (including ``micros-bundle``) are compiled via ``make tools``.
-2. **Bundle Serialization**: ``tools/micros-bundle`` reads Stage 1 source files from ``lib/macros/`` (``init.mx``, ``msh.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) and serializes them into ``src/kernel/genesis.mcb``.
+2. **Bundle Serialization**: ``tools/micros-bundle`` reads Stage 1 source files from ``lib/macros/`` (``init.mx``, ``ush.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) and serializes them into ``src/kernel/genesis.mcb``.
 3. **Kernel Ingestion**: The kernel source (``src/kernel/main.zig``) embeds this binary archive using ``@embedFile("genesis.mcb")``. When the microkernel boots on bare silicon, all essential userland source code is already present in memory without requiring a functional disk driver.
 
 Fixed-Point Bootstrap Verification:
@@ -245,7 +245,7 @@ Adding a New Microkernel Syscall or Capability:
 #. **Register in Syscalls**: Add the mapping inside ``registerSyscalls`` in ``src/kernel/abi.zig``:
    ``try vm.globals.put("sys_my_feature", Value{ .native = nativeSysMyFeature });``
 #. **Implement Kernel Logic**: If accessing a hardware driver or memory subsystem, invoke the appropriate domain module in ``src/kernel/``, validating the calling actor's CSpace capability.
-#. **Expose to Userland**: Call the new primitive in ``lib/macros/init.mx`` or ``lib/macros/msh.mx``.
+#. **Expose to Userland**: Call the new primitive in ``lib/macros/init.mx`` or ``lib/macros/ush.mx``.
 
 Adding a New Primitive or Opcode to Macros:
 -------------------------------------------

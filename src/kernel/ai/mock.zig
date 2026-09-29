@@ -8,12 +8,12 @@ pub const MOCK_RESPONSE: []const u8 =
     "Operating system parameters verified in air-gapped mode.\n\n" ++
     "```macros\n" ++
     "sys_serial_write(\"[MockAi] System ready.\\n\");\n" ++
-    "sys_fb_draw_string(50, 50, \"MICROS OFFLINE HARNESS\", 65280, 0);\n" ++
+    "sys_yield();\n" ++
     "```\n";
 
 pub const MOCK_TOOL_RESPONSE: []const u8 =
     "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"spawn_actor\"," ++
-    "\"args\":{\"name\":\"mock_actor\",\"source\":\"sys_actor_count();\"}}}]}}]}";
+    "\"args\":{\"name\":\"mock_actor\",\"source\":\"sys_yield();\"}}}]}}]}";
 
 pub const MOCK_LIST_DIR_RESPONSE: []const u8 =
     "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"list_dir\"," ++
@@ -28,11 +28,19 @@ pub const MOCK_TOOL_FOLLOWUP_RESPONSE: []const u8 =
 
 pub const MOCK_DIR_FOLLOWUP_RESPONSE: []const u8 =
     "Workspace files retrieved:\n" ++
-    "  init.mx, msh.mx, harness.mx, installer.mx, lexer.mx, parser.mx, compiler.mx, bundle.mx, rebuild.mx\n" ++
+    "  init.mx, ush.mx, lexer.mx, parser.mx, compiler.mx, compiler_main.mx, bundle.mx, rebuild.mx, ast.mx, eval_shim.mx\n" ++
     "All genesis modules are verified and ready.";
 
+pub const MOCK_SYNTHESIS_RESPONSE: []const u8 =
+    "Status: MOCK-0001 (offline synthesis fallback)\n\n" ++
+    "```macros\n" ++
+    "print(\"[mock] Offline actor synthesized.\");\n" ++
+    "```\n";
+
 pub fn generateResponse(user_prompt: []const u8, out_buf: []u8) !usize {
-    const resp = if (std.mem.indexOf(u8, user_prompt, "dir_listed") != null)
+    const resp = if (std.mem.indexOf(u8, user_prompt, "script") != null or std.mem.indexOf(u8, user_prompt, "actor") != null)
+        MOCK_SYNTHESIS_RESPONSE
+    else if (std.mem.indexOf(u8, user_prompt, "dir_listed") != null)
         MOCK_DIR_FOLLOWUP_RESPONSE
     else if (std.mem.indexOf(u8, user_prompt, "Tool result:") != null)
         MOCK_TOOL_FOLLOWUP_RESPONSE

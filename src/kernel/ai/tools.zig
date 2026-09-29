@@ -137,7 +137,7 @@ pub fn toolTypeName(tt: ToolType) []const u8 {
 
 pub const GEMINI_TOOLS_JSON: []const u8 =
     "[{\"functionDeclarations\":[" ++
-    "{\"name\":\"run_command\",\"description\":\"Execute MicroShell command or Macros code snippet immediately as an actor\",\"parameters\":{\"type\":\"OBJECT\",\"properties\":{\"command\":{\"type\":\"STRING\",\"description\":\"Command or Macros code to execute\"}},\"required\":[\"command\"]}}," ++
+    "{\"name\":\"run_command\",\"description\":\"Execute µShell command or Macros code snippet immediately as an actor\",\"parameters\":{\"type\":\"OBJECT\",\"properties\":{\"command\":{\"type\":\"STRING\",\"description\":\"Command or Macros code to execute\"}},\"required\":[\"command\"]}}," ++
     "{\"name\":\"view_file\",\"description\":\"View file contents in the sovereign workspace or bundle\",\"parameters\":{\"type\":\"OBJECT\",\"properties\":{\"path\":{\"type\":\"STRING\",\"description\":\"Path to file\"}},\"required\":[\"path\"]}}," ++
     "{\"name\":\"write_to_file\",\"description\":\"Create or overwrite a file in the sovereign workspace\",\"parameters\":{\"type\":\"OBJECT\",\"properties\":{\"path\":{\"type\":\"STRING\",\"description\":\"Target file path\"},\"content\":{\"type\":\"STRING\",\"description\":\"File content to write\"}},\"required\":[\"path\",\"content\"]}}," ++
     "{\"name\":\"replace_file_content\",\"description\":\"Replace target text with replacement text in a workspace file\",\"parameters\":{\"type\":\"OBJECT\",\"properties\":{\"path\":{\"type\":\"STRING\",\"description\":\"File path\"},\"target\":{\"type\":\"STRING\",\"description\":\"Exact text to replace\"},\"replacement\":{\"type\":\"STRING\",\"description\":\"Replacement text\"}},\"required\":[\"path\",\"target\",\"replacement\"]}}," ++
@@ -152,7 +152,7 @@ pub const GEMINI_TOOLS_JSON: []const u8 =
 
 pub const OPENAI_TOOLS_JSON: []const u8 =
     "[" ++
-    "{\"type\":\"function\",\"function\":{\"name\":\"run_command\",\"description\":\"Execute MicroShell command or Macros code snippet immediately as an actor\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}}," ++
+    "{\"type\":\"function\",\"function\":{\"name\":\"run_command\",\"description\":\"Execute µShell command or Macros code snippet immediately as an actor\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}}," ++
     "{\"type\":\"function\",\"function\":{\"name\":\"view_file\",\"description\":\"View file contents in the sovereign workspace or bundle\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}," ++
     "{\"type\":\"function\",\"function\":{\"name\":\"write_to_file\",\"description\":\"Create or overwrite a file in the sovereign workspace\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}}}," ++
     "{\"type\":\"function\",\"function\":{\"name\":\"replace_file_content\",\"description\":\"Replace target text with replacement text in a workspace file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"target\":{\"type\":\"string\"},\"replacement\":{\"type\":\"string\"}},\"required\":[\"path\",\"target\",\"replacement\"]}}}," ++

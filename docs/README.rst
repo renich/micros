@@ -38,11 +38,14 @@ Technical Specifications
 * `Sovereign Storage Substrate & Content-Addressed B-Tree <technical/specs/sovereign-storage-substrate.rst>`_
 * `Sovereign Interactive Studio & Co-Creation Engine <technical/specs/sovereign-interactive-harness.rst>`_
 * `Sovereign Network & Gemini Orchestrator <technical/specs/sovereign-gemini-orchestrator.rst>`_
-* `Sovereign Actor Harness & Supervisor Protocol <technical/specs/sovereign-harness-protocol.rst>`_
+* `Sovereign Conversational Shell Substrate <technical/specs/sovereign-shell.rst>`_
+* `Sovereign Hypermedia Workspace & Canvas Substrate <technical/specs/sovereign-workspace.rst>`_
+* `P2P Content-Addressed Artifact Replication <technical/specs/p2p-artifact-replication.rst>`_
+* `Autonomous Driver Synthesis & Device Probe <technical/specs/driver-synthesis.rst>`_
 * `Sovereign Capability Substrate & CSpace <technical/specs/sovereign-capability-substrate.rst>`_
 * `Macros Language Specification <technical/specs/macros-lang.rst>`_
 * `Macros Runtime & Immix GC <technical/specs/macros-runtime.rst>`_
 * `Self-Hosting Macros Compiler <technical/specs/self-hosting-macros.rst>`_
-* `MicroShell (msh) Architecture <technical/specs/microshell-msh.rst>`_
+* `µShell (ush) Architecture <technical/specs/ushell-ush.rst>`_
 * `Substrate Direct-Syscall ABI <technical/specs/substrate-sys.rst>`_
 * `Deterministic Toolchain Standards <technical/specs/toolchain.rst>`_

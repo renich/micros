@@ -48,6 +48,7 @@ pub fn actorYieldCheck(vm: *vm_mod.VM) anyerror!void {
 }
 
 fn cleanupActorThread(act_ctx: *ActorThreadContext, vm: *vm_mod.VM, actor: *actor_mod.Actor) void {
+    if (actor.state == .paused) return;
     if (vm.gc_heap) |h| {
         h.deinit();
         act_ctx.allocator.destroy(h);
@@ -100,6 +101,11 @@ pub fn actorThread(ctx: ?*anyopaque) void {
     if (actor.state == .terminated or actor.state == .faulted) return;
     actor.transitionTo(.running) catch return;
     vm.run(0) catch |err| {
+        if (err == vm_mod.InterpretError.OutOfGas) {
+            actor.state = .paused;
+            serial.writeString("[kernel] Actor parked on OutOfGas\n");
+            return;
+        }
         logActorCrash(actor, vm, err);
         return;
     };
@@ -163,6 +169,9 @@ pub fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chun
     }
 
     try abi_mod.registerSyscalls(child_vm);
+    if (child.gas_budget > 0) {
+        child_vm.setGasLimit(child.gas_budget);
+    }
     child_vm.user_data = child;
     child_vm.yield_hook = actorYieldCheck;
     const act_ctx = try allocator.create(ActorThreadContext);
@@ -183,7 +192,7 @@ pub fn attachActorVm(allocator: std.mem.Allocator, child: *actor_mod.Actor, chun
 
 pub fn isVerifiedSystemScript(name: []const u8, source: []const u8) bool {
     const base = if (std.mem.endsWith(u8, name, ".mx")) name[0 .. name.len - 3] else name;
-    const sys_names = [_][]const u8{ "msh", "harness", "installer", "rebuild", "httpd", "web", "vedit", "desk" };
+    const sys_names = [_][]const u8{ "ush", "harness", "installer", "rebuild", "httpd", "web", "vedit", "desk" };
     var is_sys = false;
     for (sys_names) |sname| {
         if (std.mem.eql(u8, base, sname)) {
@@ -214,8 +223,22 @@ pub fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []
             .data_size = @sizeOf(fb_mod.Framebuffer),
         });
     }
-    if (!isVerifiedSystemScript(name, source)) return;
+    const is_ush = std.mem.eql(u8, name, "ush") or std.mem.eql(u8, name, "ush.mx");
+    if (!is_ush and !isVerifiedSystemScript(name, source)) {
+        // G3: Attenuated set for dynamic / AI-spawned actors:
+        // Window/FB granted above (READ | WRITE).
+        // CAS storage granted with restricted READ-only rights; no network, no actor control.
+        _ = try child.insertCap(.{
+            .cap_type = .storage_device,
+            .rights = cap_mod.Rights.READ,
+            .object_id = 5,
+            .data_addr = 0,
+            .data_size = 0,
+        });
+        return;
+    }
     _ = try child.insertCap(.{ .cap_type = .actor_control, .rights = cap_mod.Rights.ALL, .object_id = 6, .data_addr = 0, .data_size = 0 });
+    // S3-F5: Explicit Genesis grant of storage_device (READ | WRITE) to ush at spawn
     _ = try child.insertCap(.{ .cap_type = .storage_device, .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE, .object_id = 5, .data_addr = 0, .data_size = 0 });
     _ = try child.insertCap(.{ .cap_type = .network_device, .rights = cap_mod.Rights.ALL, .object_id = 4, .data_addr = 0, .data_size = 0 });
 }
@@ -255,23 +278,56 @@ pub fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source
 
 test "delegateInitialCaps attenuates capabilities for dynamic actors" {
     const allocator = std.testing.allocator;
+    var fake_buf = [_]u8{0} ** 4096;
     var fake_fb = fb_mod.Framebuffer{
-        .base = undefined,
-        .width = 1280,
-        .height = 800,
-        .pitch = 5120,
+        .base = fake_buf[0..].ptr,
+        .size_bytes = fake_buf.len,
+        .width = 32,
+        .height = 32,
+        .stride = 32,
+        .format = .bgr_888,
     };
     global_fb = &fake_fb;
     defer global_fb = null;
 
-    var child = try actor_mod.Actor.init(allocator, 5, "harness_exec", 16, 0);
+    const child = try actor_mod.Actor.init(allocator, 5, "harness_exec", 16, 0);
     defer child.deinit(allocator);
     child.supervisor_id = actor_mod.GENESIS_ACTOR_ID;
 
-    try delegateInitialCaps(&child, "harness_exec", "sys_fb_draw_rect(0,0,10,10,0);");
+    try delegateInitialCaps(child, "harness_exec", "sys_window_draw_rect(1,0,0,10,10,0);");
 
+    // Framebuffer has READ | WRITE
     try std.testing.expect(child.cspace.lookup(.framebuffer) != null);
+    try std.testing.expect(child.cspace.lookupWithRights(.framebuffer, cap_mod.Rights.READ | cap_mod.Rights.WRITE) != null);
+
+    // Storage is attenuated to READ-only
+    try std.testing.expect(child.cspace.lookup(.storage_device) != null);
+    try std.testing.expect(child.cspace.lookupWithRights(.storage_device, cap_mod.Rights.READ) != null);
+    try std.testing.expect(child.cspace.lookupWithRights(.storage_device, cap_mod.Rights.WRITE) == null);
+
+    // Network and Actor Control are strictly denied
     try std.testing.expect(child.cspace.lookup(.actor_control) == null);
-    try std.testing.expect(child.cspace.lookup(.storage_device) == null);
     try std.testing.expect(child.cspace.lookup(.network_device) == null);
+}
+
+test "live-synth: G4 budget containment" {
+    const allocator = std.testing.allocator;
+    const actor = try actor_mod.Actor.init(allocator, 10, "loop_synth", 16, 0);
+    defer actor.deinit(allocator);
+
+    const source = "while (true) { x = 1; }";
+    const chunk = try compileActorScript(allocator, "loop_synth", source);
+    defer {
+        chunk.deinit(allocator);
+        allocator.destroy(chunk);
+    }
+
+    actor.gas_budget = 500;
+
+    var vm = try vm_mod.VM.init(allocator, chunk);
+    defer vm.deinit();
+    vm.setGasLimit(actor.gas_budget);
+
+    const run_res = vm.run(0);
+    try std.testing.expectError(vm_mod.InterpretError.OutOfGas, run_res);
 }

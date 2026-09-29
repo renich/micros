@@ -5,7 +5,7 @@
 const std = @import("std");
 
 pub const DEFAULT_QUEUE_SIZE: u16 = 256;
-pub const PAUSE_SPIN_LIMIT: usize = 100_000;
+pub const PAUSE_SPIN_LIMIT: usize = 10_000_000;
 
 // Legacy VirtIO PCI I/O register offsets
 pub const REG_DEVICE_FEATURES: u16 = 0x00;

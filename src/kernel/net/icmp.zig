@@ -18,14 +18,14 @@ pub const IcmpEcho = struct {
 };
 
 pub fn calculateChecksum(bytes: []const u8) u16 {
-    var sum: u32 = 0;
+    var sum: u64 = 0;
     var i: usize = 0;
     while (i + 1 < bytes.len) : (i += 2) {
-        const word = (@as(u32, bytes[i]) << 8) | @as(u32, bytes[i + 1]);
+        const word = (@as(u64, bytes[i]) << 8) | @as(u64, bytes[i + 1]);
         sum += word;
     }
     if (i < bytes.len) {
-        sum += @as(u32, bytes[i]) << 8;
+        sum += @as(u64, bytes[i]) << 8;
     }
     while ((sum >> 16) != 0) {
         sum = (sum & 0xFFFF) + (sum >> 16);
@@ -35,6 +35,9 @@ pub fn calculateChecksum(bytes: []const u8) u16 {
 
 pub fn parseEcho(data: []const u8) ?IcmpEcho {
     if (data.len < ICMP_HEADER_LEN) return null;
+
+    // Environmental noise defense: validate ICMP checksum
+    if (calculateChecksum(data) != 0) return null;
 
     const icmp_type = data[0];
     if (icmp_type != ICMP_TYPE_ECHO_REQUEST and icmp_type != ICMP_TYPE_ECHO_REPLY) {

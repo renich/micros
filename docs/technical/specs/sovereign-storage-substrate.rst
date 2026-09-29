@@ -1,6 +1,6 @@
-==========================================================
-Sovereign Storage Substrate & Content-Addressed Store Spec
-==========================================================
+========================================================================
+Sovereign Content-Addressed Storage & Merkle Artifact Substrate (µOS)
+========================================================================
 
 :Document ID: SPEC-TECH-STORAGE-001
 :Status: Approved

@@ -306,7 +306,7 @@ test "tool dispatcher spawn and telemetry" {
     const dispatcher = ToolDispatcher.init(cspace, allocator, ctx, &storage_buf);
 
     const unauth = dispatcher.dispatch(tools.ToolCall{
-        .spawn_actor = .{ .name = "t", .source = "sys_actor_count();" },
+        .spawn_actor = .{ .name = "t", .source = "sys_yield();" },
     });
     try std.testing.expect(std.mem.indexOf(u8, unauth.error_msg, "PermissionDenied") != null);
 
@@ -319,7 +319,7 @@ test "tool dispatcher spawn and telemetry" {
     });
 
     const auth = dispatcher.dispatch(tools.ToolCall{
-        .spawn_actor = .{ .name = "t", .source = "sys_actor_count();" },
+        .spawn_actor = .{ .name = "t", .source = "sys_yield();" },
     });
     try std.testing.expectEqual(@as(u32, 42), auth.actor_spawned);
 

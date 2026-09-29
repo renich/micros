@@ -19,10 +19,10 @@ This project-local skill governs the architecture, grammar, memory management, a
 ├──────────────────────────────┬──────────────────────────────┬───────────────┤
 │ STAGE 0 (SUBSTRATE RUNTIME)  │ STAGE 1 (SELF-HOSTING SOURCE)│ RUNTIME CORE  │
 ├──────────────────────────────┼──────────────────────────────┼───────────────┤
-│ • src/macros/lexer.zig       │ • lib/macros/lexer.mc        │ • Immix GC    │
-│ • src/macros/parser.zig      │ • lib/macros/parser.mc       │ • Fibers (M:N)│
-│ • src/macros/ast.zig         │ • lib/macros/ast.mc          │ • Direct I/O  │
-│ • src/macros/eval.zig        │ • lib/macros/compiler.mc     │ • Zero Libc   │
+│ • src/macros/lexer.zig       │ • lib/macros/lexer.mx        │ • Immix GC    │
+│ • src/macros/parser.zig      │ • lib/macros/parser.mx       │ • Fibers (M:N)│
+│ • src/macros/ast.zig         │ • lib/macros/ast.mx          │ • Direct I/O  │
+│ • src/macros/eval.zig        │ • lib/macros/compiler.mx     │ • Zero Libc   │
 └──────────────────────────────┴──────────────────────────────┴───────────────┘
 ```
 
@@ -33,8 +33,8 @@ This project-local skill governs the architecture, grammar, memory management, a
 Macros is an expression-oriented language designed for high-speed systems scripting and autonomous AI code generation.
 
 ### 1.1. Canonical File Extensions
-* ``.mx``/``.macros``: Primary canonical extensions for Macros source scripts.
-* ``.mc``: Legacy extension supported by the runner and compiler.
+* ``.mx``: Primary canonical extension for Macros source scripts.
+* ``.macros``: Accepted alias extension.
 
 ### 1.2. Functions & Control Flow
 ```macros
@@ -61,7 +61,7 @@ fn count_to(limit) {
 
 ## 2. Memory Model & Immix GC
 
-All runtime allocations in Macros operate on the **Immix Mark-Region** collector ([`src/macros/immix.zig`](file:///home/renich/Projects/zig/micros/src/macros/immix.zig)):
+All runtime allocations in Macros operate on the **Immix Mark-Region** collector ([`src/macros/gc.zig`](file:///home/renich/Projects/zig/micros/src/macros/gc.zig)):
 * **Block Geometry**: 32KB blocks containing 256 lines of 128 bytes.
 * **Hole Allocation**: Fast bump pointer into recyclable line spans without memory fragmentation.
 * **Large Objects**: Direct page mapping via `sys.mem.map` for objects $> 512$ bytes.
@@ -71,7 +71,7 @@ All runtime allocations in Macros operate on the **Immix Mark-Region** collector
 ## 3. Cooperative Green Threads (Fibers)
 
 Fibers ([`src/macros/fiber.zig`](file:///home/renich/Projects/zig/micros/src/macros/fiber.zig)) provide userspace M:N concurrency:
-* 64KB page-aligned stack per fiber.
+* 2MB page-aligned stack per fiber (accommodates TLS 1.3 ML-KEM-768 cryptographic state).
 * Callee-saved context switching in pure x86_64 assembly ([`src/macros/context_switch.s`](file:///home/renich/Projects/zig/micros/src/macros/context_switch.s)).
 * Non-preemptive queue-based `Scheduler`.
 
@@ -81,8 +81,9 @@ Fibers ([`src/macros/fiber.zig`](file:///home/renich/Projects/zig/micros/src/mac
 
 To maintain computational sovereignty within MicrOS:
 1. **Stage 0**: Freestanding Zig engine in `src/macros/` interprets the Stage 1 compiler in `lib/macros/`.
-2. **Stage 1**: Macros compiler written in Macros (`lib/macros/compiler.mc`) emits runnable machine code/bytecode.
+2. **Stage 1**: Macros compiler written in Macros (`lib/macros/compiler.mx`) emits runnable machine code/bytecode.
 3. **Stage 2**: Fixed-point verification proving bit-for-bit reproducibility.
+
 
 ---
 

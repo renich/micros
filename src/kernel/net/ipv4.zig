@@ -27,14 +27,15 @@ pub const Ipv4Header = struct {
 };
 
 pub fn calculateChecksum(bytes: []const u8) u16 {
-    var sum: u32 = 0;
+    // 64-bit accumulator mathematically prevents overflow for any buffer length <= 2^32 bytes
+    var sum: u64 = 0;
     var i: usize = 0;
     while (i + 1 < bytes.len) : (i += 2) {
-        const word = (@as(u32, bytes[i]) << 8) | @as(u32, bytes[i + 1]);
+        const word = (@as(u64, bytes[i]) << 8) | @as(u64, bytes[i + 1]);
         sum += word;
     }
     if (i < bytes.len) {
-        sum += @as(u32, bytes[i]) << 8;
+        sum += @as(u64, bytes[i]) << 8;
     }
     while ((sum >> 16) != 0) {
         sum = (sum & 0xFFFF) + (sum >> 16);
@@ -53,6 +54,12 @@ pub fn parseHeader(packet: []const u8) ?Ipv4Header {
     const header_len = @as(usize, ihl) * 4;
     if (packet.len < header_len) return null;
 
+    // Environmental noise defense: validate IPv4 header checksum; drop if corrupted
+    if (calculateChecksum(packet[0..header_len]) != 0) return null;
+
+    const total_len = (@as(u16, packet[2]) << 8) | @as(u16, packet[3]);
+    if (total_len < header_len) return null;
+
     var src: [4]u8 = undefined;
     var dst: [4]u8 = undefined;
     @memcpy(&src, packet[12..16]);
@@ -62,7 +69,7 @@ pub fn parseHeader(packet: []const u8) ?Ipv4Header {
         .version = version,
         .ihl = ihl,
         .tos = packet[1],
-        .total_len = (@as(u16, packet[2]) << 8) | @as(u16, packet[3]),
+        .total_len = total_len,
         .id = (@as(u16, packet[4]) << 8) | @as(u16, packet[5]),
         .flags_frag = (@as(u16, packet[6]) << 8) | @as(u16, packet[7]),
         .ttl = packet[8],
@@ -83,7 +90,10 @@ pub fn writeHeader(
 ) !usize {
     if (out_buf.len < IPV4_MIN_HEADER_LEN) return error.BufferTooSmall;
 
-    const total_len: u16 = @intCast(IPV4_MIN_HEADER_LEN + payload_len);
+    const total_len_u32 = @as(u32, IPV4_MIN_HEADER_LEN) + @as(u32, payload_len);
+    if (total_len_u32 > 0xFFFF) return error.PayloadTooLarge;
+    const total_len: u16 = @intCast(total_len_u32);
+
     out_buf[0] = 0x45; // Version 4, IHL 5 (20 bytes)
     out_buf[1] = 0x00; // DSCP/ECN
     out_buf[2] = @intCast((total_len >> 8) & 0xFF);
@@ -134,4 +144,35 @@ test "ipv4 write and parse header roundtrip" {
     try std.testing.expectEqual(PROTO_ICMP, parsed.protocol);
     try std.testing.expectEqualSlices(u8, &src, &parsed.src_ip);
     try std.testing.expectEqualSlices(u8, &dst, &parsed.dst_ip);
+}
+
+test "ipv4 corrupted checksum and truncated packet rejected" {
+    var buf: [64]u8 = undefined;
+    const src = [_]u8{ 10, 0, 2, 15 };
+    const dst = [_]u8{ 10, 0, 2, 2 };
+
+    const hdr_len = try writeHeader(&buf, src, dst, PROTO_ICMP, 10, 0x5678);
+
+    // Corrupt a byte in the header -> checksum failure -> parseHeader returns null
+    var corrupted_buf = buf;
+    corrupted_buf[0] ^= 0x01; // corrupt version/ihl
+    try std.testing.expect(parseHeader(corrupted_buf[0..hdr_len]) == null);
+
+    var corrupted_csum = buf;
+    corrupted_csum[10] ^= 0xFF; // corrupt checksum field
+    try std.testing.expect(parseHeader(corrupted_csum[0..hdr_len]) == null);
+
+    // Truncated packet (length shorter than total_len declared)
+    try std.testing.expect(parseHeader(buf[0 .. hdr_len - 1]) == null);
+    try std.testing.expect(parseHeader(buf[0..15]) == null);
+}
+
+test "ipv4 writeHeader rejects payload overflow" {
+    var buf: [64]u8 = undefined;
+    const src = [_]u8{ 10, 0, 2, 15 };
+    const dst = [_]u8{ 10, 0, 2, 2 };
+
+    // Payload length that would cause total_len to overflow u16
+    const res = writeHeader(&buf, src, dst, PROTO_TCP, 65530, 0x1111);
+    try std.testing.expectError(error.PayloadTooLarge, res);
 }

@@ -19,11 +19,11 @@ Your display illuminates instantly into a high-DPI, 144Hz vector canvas. Keystro
 
 Welcome to MicrOS (µOS).
 
-The Anatomy of the 15,000-Line Microkernel
-==========================================
+The Anatomy of the Sovereign Microkernel Substrate
+===================================================
 Modern operating systems are drowning in accidental complexity. The Linux kernel contains over 35 million lines of code; no single engineer can hold its state machine in their mind.
 
-MicrOS’s microkernel is under 15,000 lines of pure, auditable Zig.
+MicrOS's substrate is ~21,000 lines of pure, auditable Zig, operating under a strict Ring 0 freeze on its path to a sub-2,000 line mechanism-only microkernel (Milestone 41).
 
 The kernel does not enforce policy, does not parse network packets, does not contain device drivers, and does not understand filesystems. It provides four primitive mechanisms with mathematical rigor:
 
@@ -62,12 +62,12 @@ The Typed Shell: Memory Over Text Streams
 =========================================
 Unix introduced the pipe, but Unix pipes pass unstructured byte streams. Developers spend their careers writing brittle regular expressions and wrestling with ``awk``, ``sed``, and ``grep`` to parse text that breaks on whitespace.
 
-In MicrOS’s **MicroShell** (``msh/ush``), pipes are lock-free shared-memory ring buffers, serving as both the interactive command shell and the scripting execution mode for the Macros runtime:
+In MicrOS’s **µShell** (``ush``), pipes are lock-free shared-memory ring buffers, serving as both the interactive command shell and the scripting execution mode for the Macros runtime:
 
 * **Zero Serialization Overhead**: Data streams are typed binary structures, not ASCII characters.
 * **Structural Pipelining**: When running a process filter pipeline, typed process descriptor structs pass directly through memory-mapped FIFO rings without serialization or string allocation.
 * **Immunity to Injection**: Because commands operate on typed memory representations rather than parsed strings, an entire class of command-injection vulnerabilities is eradicated at the architectural level.
-* **Unified Scripting**: Shell scripts and automation routines are native Macros scripts (``#!/bin/msh``), enjoying full type inference, sub-millisecond startup, and green-fiber concurrency without an ad-hoc secondary scripting language.
+* **Unified Scripting**: Shell scripts and automation routines are native Macros scripts (``#!/bin/ush``), enjoying full type inference, sub-millisecond startup, and green-fiber concurrency without an ad-hoc secondary scripting language.
 
 Macros: The Application Experience
 ======================================

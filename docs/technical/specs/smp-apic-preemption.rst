@@ -16,7 +16,7 @@ This specification establishes preemptive scheduling and multi-core symmetric mu
 --------------------
 In a pure microkernel architecture hosting untrusted Ring 3 userland daemons and actors, cooperative scheduling is an unacceptable failure mode:
 
-* **Starvation Immunity**: A malfunctioning or adversarial actor executing an unbounded loop (``while (true) {}``) cannot starve peer actors, the compositor (``gopd``), or the MicroShell (``msh``).
+* **Starvation Immunity**: A malfunctioning or adversarial actor executing an unbounded loop (``while (true) {}``) cannot starve peer actors, the compositor (``gopd``), or the µShell (``ush``).
 * **Hardware Quantum Enforcement**: The Local Advanced Programmable Interrupt Controller (LAPIC) timer generates periodic hardware interrupts at 1000Hz (1ms quantum) via IDT Vector ``0x20``.
 * **Atomic Preemption Trapping**: The CPU hardware automatically clears the Interrupt Flag (``RFLAGS.IF = 0``), saves the user execution frame (``RIP``, ``CS``, ``RFLAGS``, ``RSP``, ``SS``), and switches to the per-core trusted kernel stack (``TSS.RSP0``).
 
@@ -201,7 +201,7 @@ The ``MpscRingBuffer`` provides high-throughput concurrent message submission:
 
 7. Verification & Fault Containment Strategy
 ============================================
-1. **Preemption Starvation Test**: Spawn an actor executing an infinite CPU loop (``while (true) {}``) in Ring 3. Verify that the 1000Hz APIC timer reliably interrupts execution and switches to the MicroShell actor within 2 milliseconds.
+1. **Preemption Starvation Test**: Spawn an actor executing an infinite CPU loop (``while (true) {}``) in Ring 3. Verify that the 1000Hz APIC timer reliably interrupts execution and switches to the µShell actor within 2 milliseconds.
 2. **Multi-Core Boot Validation**: Verify in QEMU SMP mode (``qemu-system-x86_64 -smp 4``) that all 4 cores successfully complete the INIT-SIPI-SIPI handshake, report online status over serial, and register into the SMP scheduler.
 3. **MPSC Concurrency Stress**: Run concurrent multi-core message emission loops from 4 cores targeting a single receiver ring; verify zero dropped, corrupted, or out-of-order packets.
 4. **Traceability Compliance**: Audited via ``./tools/micros-spec-trace.bash --check``.

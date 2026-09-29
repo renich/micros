@@ -9,6 +9,24 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 [Unreleased]
 ============
 
+- **Milestone 41 (Sovereign OS Stage 4: Self-Rebuilding Loop, Watchdog Trial Boot & Boundary Enforcement - SPEC-TECH-REBUILD-001)**:
+  - **Power-Cut Immune Slot Descriptor**: Implemented 512-byte sector-aligned ``BootSlotDescriptor`` and ``SlotManager`` in ``src/kernel/storage/slot.zig`` with compile-time sector bounds (``@sizeOf == 512``), monotonic forward generation counters, and dual-slot candidate staging.
+  - **Empirical Regression & Tail Latency Gates**: Engineered ``tools/micros-rfc-gate.bash`` and G-tail load generator in ``tools/src/fiber_bench.zig``, enforcing non-regression bounds across G-perf (Δ median-of-3 vs committed baseline), G-fault (zero tolerated test failures), and G-tail ($p99 \le 50.0\,\mu\text{s}$). Added time-bounded (24h) human thaw token issuance.
+  - **Watchdog Trial Boot Harness**: Built ``tools/micros-trial.bash`` featuring calibrated hardware deadlines, canary state tracking (``TRIAL.DAT``), candidate EFI preservation, and automated rollback upon induced ``#UD`` instruction faults or watchdog expiration.
+  - **Cryptographic Provenance Sealing**: Implemented 256-byte sector-aligned ``ArtifactProvenanceSeal`` in ``src/kernel/provenance.zig`` using Ed25519 signatures over BLAKE3 digest sets, wired ``.prov`` PE section validation in ``src/kernel/storage/kernel_synthesizer.zig``, and allocated ``CapType.rebuild_control = 0x000A``.
+  - **Architectural Boundary Enforcement & Package Decoupling**: Implemented ``tools/src/arch_gate.zig`` enforcing microkernel tier isolation (827 edges, 0 violations); decoupled userland package manager via capability-gated ``pkg_abi`` in ``src/userland/pkgd/pkg_abi.zig``; authored Milestone 42 Ring-3 hardware activation roadmap (``docs/project/roadmaps/m42-ring3-activation.rst``).
+
+- **Milestone 40 (Sovereign OS Stage 3: Zero-Trust Hardware Hardening & Peripheral Confinement - SPEC-TECH-CAP-003)**:
+  - **Hardware Sandbox & Probe Ladder**: Implemented staged device authorization in ``src/kernel/drivers/probe_ladder.zig`` (``STG_0`` through ``STG_5``) with Token Triad DMA confinement (``rx_ring``, ``tx_ring``, ``rx_buf``, ``tx_buf``); proved live hardware quarantine of unauthorized writes in ``AUDIT_RO`` sandboxes with CAS cryptographic audit logging.
+  - **Freestanding TLS 1.3 SPKI Pinning**: Implemented Subject Public Key Info pinning in ``src/kernel/net/spki.zig`` and hardened TLS client framing in ``src/kernel/net/tls_client.zig`` for tamper-proof outbound AI inference.
+
+- **Milestone 39 (Sovereign OS Stage 2: Capability Delegation & Interactive Consent Substrate - SPEC-TECH-CAP-002)**:
+  - **Delegated Authority & Interactive Consent**: Implemented interactive capability delegation in ``src/kernel/cap/consent.zig``, providing attenuated rights masks, single-use invocation tokens, parent revocability, and structured audit journals.
+
+- **Milestone 38 (Sovereign OS Stage 1: P2P Content-Addressed Wire Replication & Federation - SPEC-TECH-P2P-002)**:
+  - **Deterministic CAS Wire Replication**: Implemented distributed object synchronization in ``src/userland/p2pd/replication.zig`` using BLAKE3 Merkle DAG verification, signed cryptographic tombstones, and Bloom filter delta exchange.
+  - **Sovereign Package Registry (SPK1)**: Implemented decentralized package federation in ``src/userland/pkgd/package.zig`` with content-addressed dependency verification and depth-bound recursion limits.
+
 - **Milestone 25 (Pure Microkernel Storage Decoupling & DMA Pinning - SPEC-TECH-STORAGE-002)**:
   - **Isolated Userland Storage Service Actor (storaged)**: Implemented freestanding ``StorageDaemon`` in ``src/userland/storaged/storaged.zig`` encapsulating block cache management, BLAKE3 Content-Addressed Storage, and block device access in userland.
   - **Kernel DMA Buffer Pinning (sys_dma_pin)**: Implemented capability syscall in ``src/kernel/cap/cap_abi.zig`` validating caller-supplied virtual memory spans, verifying lower-half userland isolation, enforcing 4096-byte page and 512-byte sector alignment, and preventing hardware DMA over kernel page tables or code.
@@ -279,7 +297,7 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
   - Macros lexer, AST, parser, evaluator, and self-hosted Stage 1 compiler (``lib/macros/``).
   - MicroShell (``msh/ush``) with streaming pipeline execution and REPL.
   - Headless QEMU/KVM test harness with sub-second milestone sentinel matching and ACPI S5 poweroff.
-  - Immix Mark-Region Garbage Collector (``src/macros/immix.zig``) with 32KB blocks and 128-byte line marks.
+  - Immix Mark-Region Garbage Collector (``src/macros/gc.zig``) with 32KB blocks and 256-byte line marks.
   - Cooperative Green-Thread Fiber Runtime and Scheduler (``src/macros/fiber.zig``, ``src/macros/context_switch.s``).
   - Bare-metal x86_64 Long Mode UEFI bootloader (``boot.efi``), PMM bitmap allocator, and 4-level VMM paging.
   - Master specifications, user personas, and 20 bidirectional user stories.

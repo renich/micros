@@ -6,7 +6,7 @@ Sovereign Catalog Broker & Semantic Workspace Substrate (µOS)
 :Status: Approved
 :Traced Stories: [US-REN-001], [US-REN-006], [US-REN-008], [US-GEM-001], [US-GEM-009], [US-GEM-010]
 :Parent Architecture: `SPEC-TECH-STORAGE-001`, `SPEC-TECH-CAP-001`, `SPEC-TECH-NET-003`
-:Module Targets: ``src/kernel/storage/manifest.zig``, ``src/kernel/storage/catalog_abi.zig``, ``lib/macros/msh.mx``, ``lib/macros/vedit.mx``
+:Module Targets: ``src/kernel/storage/manifest.zig``, ``src/kernel/storage/catalog_abi.zig``, ``lib/macros/ush.mx``, ``lib/macros/vedit.mx``
 
 1. Architectural Axioms & Purpose
 =================================
@@ -73,34 +73,29 @@ Entries within a manifest are strictly maintained in ascending lexicographical o
 ===============================
 The catalog broker exposes six native primitives to the Macros virtual machine:
 
-* **``sys_catalog_write(path: string, content: string) -> string``**: Computes the BLAKE3 digest of ``content``, persists the payload chunk to CAS, inserts or updates the entry in the active catalog manifest, and returns the 64-character hexadecimal hash.
-* **``sys_catalog_read(path: string) -> string``**: Resolves ``path`` against the active catalog, retrieves the underlying blob from CAS, and returns the byte payload as a string. Returns empty string if not found.
-* **``sys_catalog_list(prefix: string) -> string``**: Formats all active entries matching ``prefix`` into a tab-delimited listing: ``<path>\t<size>\t<hash>\n``.
-* **``sys_catalog_delete(path: string) -> bool``**: Removes the specified entry from the catalog manifest and updates aggregate statistics.
+* **``sys_catalog_write(path: string, content: string) -> string``**: Binds a human-legible tag or file path (e.g. ``home.notes``, ``app.desk``) to ``content``. Computes the BLAKE3 digest of ``content``, persists the payload chunk to CAS, inserts or updates the tag entry in the active catalog manifest, monotonically advances the generation counter, and returns the 64-character hexadecimal hash.
+* **``sys_catalog_read(path: string) -> string``**: Resolves ``path`` or tag against the active catalog, retrieves the underlying blob from CAS, and returns the byte payload as a string. Returns empty string if not found.
+* **``sys_catalog_list(prefix: string) -> string``**: Formats all active entries matching ``prefix`` into a tab-delimited listing: ``<path>\t<size>\t<hash>\n``. Defaults to current generation or accepts pinned generation index.
+* **``sys_catalog_delete(path: string) -> bool``**: Tombstones the specified tag or path in the catalog manifest, advances the generation counter, and updates aggregate statistics.
 * **``sys_catalog_commit(msg: string) -> string``**: Serializes the manifest into a ``ChunkType.workspace_manifest`` (type 6) chunk, stores it to CAS, advances the generation counter, and returns the new manifest root hash.
 * **``sys_catalog_status() -> string``**: Returns a JSON-formatted summary of generation counter, active entry count, total byte footprint, and active root hash prefix.
 
-4. MicroShell Integration & Sovereign Visual Editor
-===================================================
+4. Sovereign Shell Integration & G5 Catalog Tags
+================================================
 
-4.1 MicroShell Workspace Commands
----------------------------------
-``msh.mx`` exposes stream-oriented workspace commands:
+4.1 G5 Catalog Tags Architecture
+--------------------------------
+The catalog broker functions as the sovereign name-to-hash binding layer:
 
-* ``ls [prefix]``: Lists catalog entries with size and truncated BLAKE3 hash.
-* ``cat <path>``: Prints file contents to console and framebuffer.
-* ``write <path> <text>``: Writes text to named workspace path and updates catalog.
-* ``rm <path>``: Deletes named file from catalog.
-* ``commit [msg]``: Creates an OCC snapshot of the catalog in CAS.
-* ``workspace``: Displays current catalog generation, entry count, and root.
-* ``edit <path>``: Launches the full-screen visual editor (``vedit.mx``).
+* **Human-Legible Namespaces**: Applications, notes, and configuration states are tagged with dot-separated keys (``home.notes``, ``app.desk``, ``system.config``).
+* **Generational Advance**: Every write and tombstone delete monotonically increments ``WorkspaceManifest.generation``, providing verifiable state tracking and auditability.
+* **Tombstone Semantics**: Deletions mark entries as tombstoned rather than silently erasing them, preserving generational Merkle provenance.
 
-4.2 Sovereign Visual Text Editor (vedit)
----------------------------------------
-``lib/macros/vedit.mx`` provides an interactive full-screen text editor rendering directly to the 1280x800 GOP compositor framebuffer with simultaneous serial ANSI console support:
+4.2 Sovereign Shell (ush) Verbs Integration
+-------------------------------------------
+``ush.mx`` interfaces with the catalog substrate via lean native verbs:
 
-* **Header Status Bar**: Displays active filename, modification state (``[CLEAN]`` / ``[MODIFIED]``), cursor coordinate (``Ln R, Col C``), and command shortcuts.
-* **Line Number Gutter**: Formats 4-character right-aligned line numbers in slate gray (``CLR_MUTED``).
-* **Viewport Scrolling**: Displays up to 45 lines of text with horizontal and vertical cursor tracking.
-* **Dual Key Navigation**: Normalizes PS/2 scancodes and serial ANSI escape sequences (``\x1b[A`` .. ``\x1b[D``) for arrow keys, backspace, and line splits.
-* **Atomic CAS Persistence**: Pressing ``Ctrl+S`` (code 19) serializes editor lines, invokes ``sys_catalog_write``, commits the workspace snapshot via ``sys_catalog_commit``, and updates status without exiting. Pressing ``Ctrl+Q`` (code 17) terminates the editor session and returns control to MicroShell.
+* **``:show <tag|path|hash>``**: Reads content via ``sys_catalog_read`` or ``sys_cas_get`` and displays the artifact preview on the sovereign canvas.
+* **``:run <tag|name>``**: Spawns an actor for the tagged application. On cache miss, synthesizes the script via AI, writes it to catalog/CAS, and caches for instant subsequent loads.
+* **``:undo``**: Rolls back workspace state to the previous consistent generation using Merkle OCC generation pointers.
+* **``:mesh [subcommand]``**: Replicates catalog artifacts and CAS chunks across peer cluster nodes over Noise/mTLS.

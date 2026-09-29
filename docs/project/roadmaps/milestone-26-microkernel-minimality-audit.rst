@@ -1,23 +1,20 @@
 Milestone 26: Formal Microkernel Minimality Audit & Silicon Validation
 ======================================================================
 
-:Objective: Formally verify the architectural minimality and purity of the Ring 0 microkernel core following the excision of storage, compositor, and networking, and validate complete system stability on physical bare-metal x86_64 silicon.
+:Objective: Formally audit the architectural composition and boundary of the Ring 0 microkernel core (21,103 LOC), establish the Strict Ring 0 Freeze containment rule via Architecture Decision Record, and validate complete system stability on physical bare-metal x86_64 silicon and UEFI harnesses.
 :Status: Completed
 :Specification: SPEC-TECH-MIN-001
+:Decision Record: docs/project/audits/2026-09-28-kernel-boundary-and-daemon-residency.rst
 :Traced Stories: [US-REN-004], [US-REN-006], [US-REN-007], [US-REN-008], [US-GEM-001], [US-GEM-007], [US-GEM-010]
 
 Milestones & Deliverables
 -------------------------
 
-* **M26.1: Ring 0 Functional Purity Verification**
-   - Formally verify that Ring 0 contains strictly zero hardware device drivers, zero filesystems, zero network protocol stacks, zero graphics rendering, and zero floating-point math.
-   - Restrict Ring 0 core logic strictly to:
-      1. Physical Memory Manager (bitmap PMM).
-      2. Virtual Memory Manager (4-level paging VMM & HHDM).
-      3. Capability Space lookup and attenuation engine (CSpace).
-      4. Preemptive SMP thread context switching and APIC timer scheduler.
-      5. Hardware interrupt (IDT) and IPC message redirection.
-   - Enforce line-of-code safety ceiling: total Ring 0 code strictly < 2,000 LOC.
+* **M26.1: Ring 0 Architectural Composition Audit & Containment Rule**
+   - Formally measure and document the Ring 0 kernel composition (21,103 LOC across net, storage, drivers, ai, compositor, arch, mem, cap, ipc, sched).
+   - Author Architecture Decision Record (``docs/project/audits/2026-09-28-kernel-boundary-and-daemon-residency.rst``) documenting the rationale for monolithic substrate bringup and codifying the **Strict Ring 0 Freeze** containment rule.
+   - Clarify daemon-residency truth for all 6 daemons (``netd``, ``storaged``, ``gopd``, ``p2pd``, ``pkgd``, ``aid``).
+   - Defer physical out-of-process driver/stack excision and the seL4-class < 2,000 LOC mechanism-only microkernel target to Milestone 41.
 
 * **M26.2: Capability Security Gate Audit**
    - Run automated capability attenuation test suite verifying that no userland actor or service daemon can escalate privileges or access unmapped physical frames.

@@ -4,8 +4,9 @@ Pure Microkernel Network & AI Decoupling Substrate (µOS)
 
 :Document ID: SPEC-TECH-NET-004
 :Status: Approved
-:Traced Stories: [US-REN-004], [US-REN-006], [US-REN-010], [US-GEM-001], [US-GEM-006], [US-GEM-010]
-:Parent Architecture: `SPEC-TECH-NET-001`, `SPEC-TECH-NET-002`, `SPEC-TECH-NET-003`, `SPEC-TECH-CAP-001`
+:Traced Stories: [US-REN-004], [US-REN-006], [US-REN-010], [US-GEM-001], [US-GEM-006], [US-GEM-009], [US-GEM-010]
+:Absorbed Specifications: `SPEC-TECH-NET-002` (Fast-Path TCP Server Substrate)
+:Parent Architecture: `SPEC-TECH-NET-001`, `SPEC-TECH-NET-003`, `SPEC-TECH-CAP-001`
 :Module Targets: ``src/kernel/cap/capability.zig``, ``src/kernel/ipc/ring.zig``, ``src/kernel/abi.zig``, ``src/kernel/main.zig``, ``src/userland/netd/``, ``src/userland/aid/``
 
 1. Architectural Axioms & Purpose
@@ -55,10 +56,21 @@ Hardware IRQs are safely routed to userland without giving actors direct vector 
   * Fast-Path TCP engine (RFC 9293 state machine, BLAKE3 SYN-cookies).
 * **Interface**: Exposes IPC endpoints for opening, binding, sending, and receiving raw TCP streams.
 
+3.1.1 Fast-Path Stateless TCP Engine Substrate
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+To eradicate SYN-flood attacks and prevent unbounded dynamic memory allocation in the microkernel and userland daemon, inbound connection handshakes operate statelessly:
+
+* **Stateless SYN-Cookies**: The engine computes a 32-bit cryptographic cookie: ``cookie = BLAKE3(src_ip || dst_ip || src_port || dst_port || client_isn || kernel_secret_nonce)[0..4]``. It allocates zero memory and zero TCB state upon receiving a TCP ``SYN``. State is allocated only upon reception of the verifying ``ACK``.
+* **Strict In-Order Ingestion (Go-Back-N)**: Segments arriving with ``seq_num != expected_seq`` are dropped immediately, letting the remote sender's standard Retransmission Timeout (RTO) retransmit cleanly.
+* **Static Window Sizing**: The server advertises a fixed 64 KiB receive window and never shrinks it.
+* **Fiber-Integrated Retransmission**: Retransmission checks attach directly to the cooperative fiber scheduler idle loop, eliminating hardware timer wheels.
+* **Connection Topology**: Pre-allocated static pool (``MAX_LISTENERS = 4``, ``MAX_SERVER_CONNECTIONS = 16``, 64 KiB RX/TX buffers) governed by ``ServerState`` enum (closed, listen, syn_received, established, fin_wait_1/2, close_wait, closing, last_ack, time_wait).
+* **Object-Capability Security Gate**: Listening requires ``CapType.network_device`` with ``Rights.BIND`` (0x0002) and ``Rights.READ`` (0x0001). Privileged ports (< 1024) require root capability authorization.
+
 3.2 Sovereign AI & Security Daemon (``aid``)
 --------------------------------------------
 * **Domain ID**: Dedicated cryptographic and cognitive service actor.
-* **Capabilities**: ``CapType.ipc_endpoint`` connected to ``netd`` and client applications (``msh``, ``harness``).
+* **Capabilities**: ``CapType.ipc_endpoint`` connected to ``netd`` and client applications (``ush``, ``harness``).
 * **Subsystems**:
   * Freestanding TLS 1.3 cryptographic engine (ChaCha20-Poly1305, AES-GCM, ML-KEM-768).
   * HTTP/1.1 client chunking and REST framing.
@@ -84,4 +96,5 @@ Inter-actor communication between ``netd``, ``aid``, and clients uses cacheline-
 * ``[US-REN-010]``: High-concurrency green-thread event scheduling over lock-free memory rings.
 * ``[US-GEM-001]``: Unforgeable binary telemetry and structured IPC streams.
 * ``[US-GEM-006]``: Independent userland service resilience and fault recovery.
+* ``[US-GEM-009]``: Self-healing actor execution and dynamic workspace supervisor controls.
 * ``[US-GEM-010]``: Strict adherence to file size (<= 1,000 lines) and function size (<= 40 lines).

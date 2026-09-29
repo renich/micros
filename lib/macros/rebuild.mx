@@ -4,27 +4,27 @@
 
 fn collect_system_entries() {
     init_src = sys_bundle_read("init.mx");
-    msh_src = sys_bundle_read("msh.mx");
-    harness_src = sys_bundle_read("harness.mx");
-    installer_src = sys_bundle_read("installer.mx");
+    ush_src = sys_bundle_read("ush.mx");
     lexer_src = sys_bundle_read("lexer.mx");
     parser_src = sys_bundle_read("parser.mx");
     compiler_src = sys_bundle_read("compiler.mx");
     compiler_main_src = sys_bundle_read("compiler_main.mx");
     bundle_src = sys_bundle_read("bundle.mx");
     rebuild_src = sys_bundle_read("rebuild.mx");
+    ast_src = sys_bundle_read("ast.mx");
+    eval_shim_src = sys_bundle_read("eval_shim.mx");
 
     return [
+        ["ast.mx", ast_src],
         ["bundle.mx", bundle_src],
         ["compiler.mx", compiler_src],
         ["compiler_main.mx", compiler_main_src],
-        ["harness.mx", harness_src],
+        ["eval_shim.mx", eval_shim_src],
         ["init.mx", init_src],
-        ["installer.mx", installer_src],
         ["lexer.mx", lexer_src],
-        ["msh.mx", msh_src],
         ["parser.mx", parser_src],
-        ["rebuild.mx", rebuild_src]
+        ["rebuild.mx", rebuild_src],
+        ["ush.mx", ush_src]
     ];
 }
 

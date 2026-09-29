@@ -1,5 +1,5 @@
-// MicrOS (µOS) Sovereign Package & Module Federation Registry (package.zig)
-// SPEC-TECH-PKG-001: Decentralized package manifests, Ed25519 author signing, and dependency resolution.
+// MicrOS (µOS) Sovereign Package & P2P Artifact Registry (package.zig)
+// SPEC-TECH-P2P-002: Decentralized artifact manifests, Ed25519 author signing, and dependency resolution.
 // Zero libc, freestanding, capability-safe, bounded execution.
 
 const std = @import("std");

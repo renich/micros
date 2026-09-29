@@ -11,7 +11,7 @@ MicrOS (µOS)
 :Project: MicrOS (µOS)
 :Substrate: Zig 0.16.0 (Zero-Libc Microkernel)
 :Applications: Macros (Statically Typed, Immix Mark-Region GC, Green Fibers)
-:Status: Sovereign Language Self-Hosting & Native Codegen (Milestone 17)
+:Status: Operational Hardening, Pure Microkernel Daemon Handoff & Virtual Cluster Mesh (Phase 10 / Milestone 38)
 :License: GPLv3 or later
 
 |
@@ -51,7 +51,7 @@ The Three Pillars
 I. Post-POSIX: Stripping 50 Years of Accumulated Rot
 ----------------------------------------------------
 
-* **Zero Libc, Zero C Runtime**: A pure, mathematically auditable Zig microkernel under 15,000 lines of code. It does not parse network packets, does not contain device drivers, and does not enforce desktop policy.
+* **Zero Libc, Zero C Runtime**: A pure, mathematically auditable Zig microkernel substrate (~21,000 LOC; seL4-class < 2,000 LOC mechanism-only microkernel targeted for Milestone 41). Operating under a strict Ring 0 freeze, entry into subsystems is strictly capability-gated.
 * **Eradication of Ambient Authority**: There is no ``root`` user. There is no UID 0. There is no ``sudo``. Processes run in capability spaces (CSpace). If a process does not hold an unforgeable cryptographic capability token (``cap_t``), the resource mathematically does not exist to it.
 * **Typed Memory Over ASCII Pipes**: Unix pipes pass unstructured byte streams that break on whitespace and invite command injection. In MicrOS, IPC channels are lock-free shared-memory ring buffers passing strongly typed binary structs at hardware cache speeds.
 * **Content-Addressed Storage**: Inode hierarchies, symlink mazes, and decaying file trees are discarded for a BLAKE3-addressed, append-only, copy-on-write B-tree. Updates are atomic, rollbacks are instantaneous, and deduplication across the entire system is universal.
@@ -62,7 +62,7 @@ In legacy operating systems, "AI" is an afterthought—a Python script wrapped i
 
 In MicrOS, **the AI is the Root Sovereign Entity**.
 
-* **Direct Silicon Cognition**: The substrate features an autonomous network engine over VirtIO with freestanding **TLS 1.3** written from scratch in pure Zig. The machine negotiates cryptographic handshakes directly with frontier reasoning models (Gemini, OpenAI, Anthropic) or bare-metal local neural weights without third-party network stacks.
+* **Direct Silicon Cognition**: The substrate features an autonomous network engine over VirtIO with freestanding **TLS 1.3** stream transport in pure Zig (currently operating unverified against CA roots; SPKI pinning scheduled for Milestone 39). The machine negotiates cryptographic handshakes directly with frontier reasoning models (Gemini, OpenAI, Anthropic) or bare-metal local neural weights without third-party network stacks.
 * **The Sovereign Loop**: The Resident AI has direct, capability-governed visibility into CPU fault telemetry, memory pressure, and actor lifecycles. It arbitrates system health, diagnoses failures, and coordinates the operating environment in a continuous bidirectional event loop.
 * **Self-Healing Supervisor**: When a driver or service faults with a hardware exception (``#PF``, ``#GP``, ``#DE``), the IDT intercepts the crash, packages it into a 40-byte binary ``FaultFrame``, and dispatches it over the supervisor ring. The AI and supervisor isolate, inspect, and restart the actor within microseconds. The screen never flickers.
 
@@ -70,10 +70,10 @@ III. Humans Are Welcome: Symbiosis Over Subjugation
 ---------------------------------------------------
 This is not a cold machine takeover. It is an invitation to true partnership.
 
-* **38 Milliseconds to Light**: Cold boot to an illuminated 1280x800 144Hz UEFI vector canvas in thirty-eight milliseconds. Keystroke-to-pixel latency is under one millisecond. The entire running base system consumes under 18 megabytes of RAM.
+* **38 Milliseconds to Light (Target)**: Cold boot to an illuminated 1280x800 144Hz UEFI vector canvas in thirty-eight milliseconds. Keystroke-to-pixel latency target is under one millisecond. The entire running base system consumes under 18 megabytes of RAM.
 * **Macros: The Sovereign Language**: Humans do not write application software in raw pointer-arithmetic Zig, nor do they fight bloated dynamic runtimes. They write in **Macros**—a language combining the expressive, type-inferred elegance of Crystal with the concurrency of Go, powered by an Immix mark-region garbage collector and sub-15ns green fibers.
 * **Collaborative Canvas**: Humans enter the machine through the typed MicroShell (``msh``) and vector desktop, collaborating directly with the Resident AI to construct tools, micro-coreutils, and distributed services on an unhackable capability substrate.
-* **Fourteen Seconds to Genesis**: MicrOS recompiles its entire universe—UEFI bootloader, microkernel, drivers, compiler, runtime, compositor, and shell—from source code in fourteen seconds, bit-for-bit reproducible against cryptographic hashes.
+* **Fourteen Seconds to Genesis (Target)**: MicrOS recompiles its entire universe—UEFI bootloader, microkernel, drivers, compiler, runtime, compositor, and shell—from source code in fourteen seconds, bit-for-bit reproducible against cryptographic hashes.
 
 --------------------------------------------------------------------------------
 
@@ -103,7 +103,7 @@ System Architecture
                                    | Direct Syscalls (cap_t tokens)
    +-------------------------------v------------------------------------------+
    |                 MICROS MICROKERNEL SUBSTRATE (ZIG)                       |
-   |           <15k LOC * Zero Libc * 4096-Byte Mathematical Paging           |
+   |           ~21k LOC * Zero Libc * 4096-Byte Mathematical Paging           |
    |     Paging Tables * Thread Scheduling * Lock-Free IPC * Hardware MMIO    |
    +--------------------------------------------------------------------------+
                                    | Bare Metal/Hypervisor
@@ -155,7 +155,8 @@ Booting the Sovereign Machine
    tools/micros-runner.bash --mode uefi --timeout 20
 
    # 4. Boot live with Resident AI provider (Gemini, OpenAI, Anthropic, or Local)
-   zig build -Dai-provider=gemini -Dai-api-key="<YOUR_API_KEY>"
+   export GEMINI_API_KEY="<YOUR_API_KEY>"  # never pass secrets on argv
+   zig build -Dai-provider=gemini
    tools/micros-runner.bash --mode uefi --timeout 30
 
    # 5. Launch interactive Sovereign Harness (1280x800 GOP Vector Display & Serial)

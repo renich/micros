@@ -1,0 +1,575 @@
+// MicrOS (µOS) µShell
+// Stream-oriented CLI for humans and AI agents.
+
+fn init_ush() {
+    CLR_TEXT = 15132390;
+    CLR_MUTED = 8226192;
+    CLR_GREEN = 4057997;
+    CLR_WARN = 15774780;
+    CLR_CYAN = 3800806;
+    CLR_BG = 0;
+    ush_cur_x = 20;
+    ush_cur_y = 36;
+}
+
+init_ush();
+
+fn ush_draw_header() {
+    return 0;
+}
+
+fn ush_clear_screen() {
+    return 0;
+}
+
+fn ush_newline() {
+    return 0;
+}
+
+fn console_write(str) {
+    sys_serial_write(str);
+    return 0;
+}
+
+fn console_writeln(str) {
+    console_write(str + "\r\n");
+    return 0;
+}
+
+fn is_prefix(str, pre) {
+    slen = len(str);
+    plen = len(pre);
+    if (plen > slen) { return false; }
+    return substr(str, 0, plen) == pre;
+}
+
+fn find_str(haystack, needle) {
+    hlen = len(haystack);
+    nlen = len(needle);
+    if (nlen > hlen) { return 0 - 1; }
+    i = 0;
+    while (i <= hlen - nlen) {
+        if (substr(haystack, i, i + nlen) == needle) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn cmd_help() {
+    console_writeln("-- Sovereign Shell (ush) -----------------------");
+    console_writeln("Guest Verbs:");
+    console_writeln("  :show <name|tag|hash>  Preview artifact or capabilities (:show caps)");
+    console_writeln("  :run <name|hash>       Spawn actor in workspace window");
+    console_writeln("  :ps                    Display active actors, memory, and gas telemetry");
+    console_writeln("  :undo                  Generational rollback of workspace state");
+    console_writeln("  :mesh [subcommand]     Cluster mesh status and artifact replication");
+    console_writeln("  :exit                  Terminate session");
+    console_writeln("  help                   Show this command reference");
+    console_writeln("Resident AI:");
+    console_writeln("  <prompt>               Conversational AI query/synthesis");
+    return 0;
+}
+
+fn cmd_show(arg) {
+    if (len(arg) == 0) {
+        console_writeln("Usage: :show <caps|<name|tag|hash>>");
+        return 0;
+    }
+    if (arg == "caps") {
+        return cmd_caps_topic("");
+    }
+    if (is_prefix(arg, "caps.")) {
+        app_name = substr(arg, 5, len(arg));
+        return cmd_caps_topic(app_name);
+    }
+    if (is_prefix(arg, "caps ")) {
+        app_name = substr(arg, 5, len(arg));
+        return cmd_caps_topic(app_name);
+    }
+    if (arg == "catalog") {
+        content = sys_catalog_list("");
+        console_write(content);
+        return 0;
+    }
+    if (is_prefix(arg, "catalog@")) {
+        content = sys_catalog_list(arg);
+        console_write(content);
+        return 0;
+    }
+    content = sys_catalog_read(arg);
+    if (len(content) > 0) {
+        if (is_prefix(content, "[catalog] Generation ")) {
+            console_write(content);
+            return 0;
+        }
+    }
+    if (len(content) == 0) {
+        content = sys_cas_get(arg);
+    }
+    if (len(content) == 0) {
+        content = sys_bundle_read(arg);
+    }
+    if (len(content) == 0) {
+        content = sys_bundle_read(arg + ".mx");
+    }
+    if (len(content) == 0) {
+        console_writeln("[canvas] Artifact '" + arg + "' not found.");
+        return 0;
+    }
+    origin = "[ai]";
+    if (arg == "desk") { origin = "[gen]"; }
+    if (arg == "ush") { origin = "[gen]"; }
+    if (arg == "init") { origin = "[gen]"; }
+    console_writeln("[canvas] Artifact Card: " + arg + " (Provenance: " + origin + " - Ed25519 verified)");
+    console_writeln("------------------------------------------------");
+    console_writeln(content);
+    console_writeln("------------------------------------------------");
+    return 0;
+}
+
+fn cmd_ps() {
+    console_writeln("-- Active Actors & Gas Telemetry ---------------");
+    m = sys_actor_state(0);
+    if (len(m) >= 4) {
+        console_writeln("* System: " + int_to_str(m[0]) + " actors, " + int_to_str(m[1]) + " fibers, " + int_to_str(m[2]) + " gas");
+    }
+    i = 0;
+    while (i < 16) {
+        info = sys_actor_state(i, 1);
+        if (len(info) >= 4) {
+            st = info[0];
+            nm = info[1];
+            gas = info[2];
+            st_str = "inactive";
+            if (st == 1) { st_str = "ready"; }
+            if (st == 2) { st_str = "running"; }
+            if (st == 3) { st_str = "paused"; }
+            if (st == 4) { st_str = "faulted"; }
+            if (st == 5) { st_str = "stopped"; }
+            console_writeln("  [" + int_to_str(i) + "] " + nm + " (" + st_str + ", gas: " + int_to_str(gas) + ")");
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn cmd_caps_topic(app) {
+    if (is_prefix(app, "revoke ")) {
+        target = substr(app, 7, len(app));
+        sys_consent_revoke(target);
+        console_writeln("[consent] Revoked capabilities for '" + target + "'.");
+        return 0;
+    }
+    console_writeln("-- Active CSpace Capabilities ------------------");
+    if (len(app) > 0) {
+        if (app == "supervisor") {
+            console_writeln("  [0] supervisor  : CAP_STORAGE_ADMIN, CAP_ACTOR_CONTROL, CAP_ALL");
+            return 0;
+        }
+        if (app == "ush") {
+            console_writeln("  [1] ush         : CAP_CONSOLE, CAP_STORAGE_READ, CAP_AI_PROMPT");
+            return 0;
+        }
+        console_writeln("  [" + app + "] : CAP_WINDOW (READ|WRITE), CAP_STORAGE (READ) [ATTENUATED]");
+        return 0;
+    }
+    console_writeln("  [0] supervisor  : CAP_STORAGE_ADMIN, CAP_ACTOR_CONTROL, CAP_ALL");
+    console_writeln("  [1] ush         : CAP_CONSOLE, CAP_STORAGE_READ, CAP_AI_PROMPT");
+    console_writeln("  [2] desk        : CAP_WINDOW (READ|WRITE), CAP_STORAGE (READ) [ATTENUATED]");
+    return 0;
+}
+
+fn cmd_undo() {
+    ok = sys_catalog_undo();
+    if (ok) {
+        st = sys_catalog_status();
+        console_writeln("[undo] Restored previous generation root. " + st);
+    } else {
+        console_writeln("[undo] At genesis generation; no prior snapshots to restore.");
+    }
+    return 0;
+}
+
+fn cmd_mesh(arg) {
+    if (is_prefix(arg, "publish ")) {
+        target = substr(arg, 8, len(arg));
+        res = sys_mesh_publish(target);
+        console_writeln(res);
+        return 0;
+    }
+    if (is_prefix(arg, "pull ")) {
+        target = substr(arg, 5, len(arg));
+        res = sys_mesh_pull(target);
+        console_writeln(res);
+        return 0;
+    }
+    if (is_prefix(arg, "unpublish ")) {
+        target = substr(arg, 10, len(arg));
+        res = sys_mesh_unpublish(target);
+        console_writeln(res);
+        return 0;
+    }
+    console_writeln("-- P2P Virtual Cluster Mesh --------------------");
+    console_writeln("* Transport : Noise/mTLS on TCP port 8080");
+    console_writeln("* Discovery : UDP beacon port 8080 (Ed25519 identity)");
+    count = sys_peer_count();
+    if (count <= 0) {
+        console_writeln("* Peers     : 0 connected (beacon active)");
+    } else {
+        console_writeln("* Peers     : " + int_to_str(count) + " node(s) connected");
+        i = 0;
+        while (i < count) {
+            info = sys_peer_info(i);
+            console_writeln("  [" + int_to_str(i) + "] " + info);
+            i = i + 1;
+        }
+    }
+    if (len(arg) > 0) {
+        console_writeln("* Replication: " + arg);
+    }
+    return 0;
+}
+
+fn poll_char() {
+    c = sys_serial_read();
+    if (c >= 0) { return c; }
+    ev = sys_event_poll();
+    if (ev >= 0) { return ev; }
+    return -1;
+}
+
+fn read_consent() {
+    drain_init = 20;
+    initial_char = -1;
+    d_active = true;
+    while (d_active) {
+        if (drain_init <= 0) {
+            d_active = false;
+        } else {
+            c = poll_char();
+            if (c >= 0) {
+                if (c != 10) {
+                    if (c != 13) {
+                        if (c != 32) {
+                            initial_char = c;
+                            d_active = false;
+                        }
+                    }
+                }
+            } else {
+                d_active = false;
+            }
+            drain_init = drain_init - 1;
+        }
+    }
+
+    choice_char = initial_char;
+
+    if (choice_char < 0) {
+        timeout = 200000;
+        p_active = true;
+        while (p_active) {
+            if (timeout <= 0) {
+                p_active = false;
+            } else {
+                c = poll_char();
+                if (c >= 0) {
+                    if (c == 10) { return "empty"; }
+                    if (c == 13) { return "empty"; }
+                    if (c == 32) {
+                        // ignore leading whitespace
+                    } else {
+                        choice_char = c;
+                        p_active = false;
+                    }
+                }
+                if (p_active) {
+                    sys_yield();
+                    timeout = timeout - 1;
+                }
+            }
+        }
+    }
+
+    if (choice_char < 0) {
+        return "timeout";
+    }
+
+    drain_tail = 100;
+    t_active = true;
+    while (t_active) {
+        if (drain_tail <= 0) {
+            t_active = false;
+        } else {
+            c = poll_char();
+            if (c == 10) { t_active = false; }
+            if (c == 13) { t_active = false; }
+            if (c < 0) { t_active = false; }
+            drain_tail = drain_tail - 1;
+        }
+    }
+
+    if (choice_char == 65) { return "always"; }
+    if (choice_char == 97) { return "always"; }
+    if (choice_char == 83) { return "session"; }
+    if (choice_char == 115) { return "session"; }
+    if (choice_char == 68) { return "deny"; }
+    if (choice_char == 100) { return "deny"; }
+
+    return "invalid";
+}
+
+fn cmd_run(path) {
+    if (len(path) == 0) {
+        console_writeln("Usage: :run <name|hash>");
+        return 0;
+    }
+    src = sys_catalog_read(path);
+    if (len(src) == 0) {
+        src = sys_bundle_read(path);
+    }
+    if (len(src) == 0) {
+        src = sys_cas_get(path);
+    }
+    if (len(src) == 0) {
+        console_writeln("[ush] Demand-miss for '" + path + "'. Synthesizing...");
+        resp = sys_ai_prompt("Generate minimal Macros actor script for: " + path);
+        src = resp;
+        if (len(src) > 0) {
+            h = sys_cas_put(src);
+            sys_catalog_write(path, src);
+            if (len(h) >= 16) {
+                console_writeln("[ush] Synthesized and cached to CAS: " + substr(h, 0, 16) + "...");
+            } else if (len(h) > 0) {
+                console_writeln("[ush] Synthesized and cached to CAS: " + h);
+            } else {
+                console_writeln("[ush] Synthesized in-memory (CAS cache unavailable).");
+            }
+        }
+    } else {
+        console_writeln("[ush] Demand-hit for '" + path + "'. Loaded from CAS cache.");
+    }
+    if (len(src) == 0) {
+        console_writeln("Error: Unable to run " + path);
+        return 0;
+    }
+    if (path != "ush") {
+        if (path != "init") {
+            cons = sys_consent_check(path);
+            if (cons == 0) {
+                console_writeln("[consent] Actor '" + path + "' requests CAP_WINDOW and CAP_STORAGE_READ.");
+                console_writeln("Grant permissions? [A]lways / [S]ession Only / [D]eny");
+                choice = read_consent();
+                if (choice == "always") {
+                    sys_consent_record(path, 1);
+                    console_writeln("[consent] Granted: Allow Always (recorded in caps.granted." + path + ")");
+                } else if (choice == "session") {
+                    sys_consent_record(path, 2);
+                    console_writeln("[consent] Granted: Session Only");
+                } else {
+                    sys_consent_record(path, 3);
+                    if (choice == "timeout") {
+                        console_writeln("[consent] Denied: Timeout waiting for consent.");
+                    } else if (choice == "empty") {
+                        console_writeln("[consent] Denied: No choice selected.");
+                    } else if (choice == "invalid") {
+                        console_writeln("[consent] Denied: Invalid choice.");
+                    } else {
+                        console_writeln("[consent] Denied: Permission rejected by user.");
+                    }
+                    return 0;
+                }
+            }
+        }
+    }
+    id = sys_actor_spawn(path, src);
+    if (id < 0) {
+        console_writeln("Error: Failed to spawn actor for " + path);
+        return 0;
+    }
+    console_writeln("Spawned Actor " + int_to_str(id) + " (" + path + ")");
+    return 0;
+}
+
+fn cmd_ai(prompt) {
+    if (len(prompt) == 0) {
+        console_writeln("Usage: <prompt>");
+        return 0;
+    }
+    console_writeln("[ai] Querying Resident AI...");
+    resp = sys_ai_prompt(prompt);
+    if (len(resp) == 0) {
+        console_writeln("[ai] No response or network error.");
+        return 0;
+    }
+    console_writeln(resp);
+    return 0;
+}
+
+fn is_cut_verb(w) {
+    if (w == "ls") { return 1; }
+    if (w == "cd") { return 1; }
+    if (w == "echo") { return 1; }
+    if (w == "cat") { return 1; }
+    if (w == "clear") { return 1; }
+    if (w == "commit") { return 1; }
+    if (w == "workspace") { return 1; }
+    if (w == "ws") { return 1; }
+    if (w == "layout") { return 1; }
+    if (w == "pkg") { return 1; }
+    if (w == "ai") { return 1; }
+    if (w == "install") { return 1; }
+    if (w == "installer") { return 1; }
+    if (w == "desk") { return 1; }
+    if (w == "vedit") { return 1; }
+    if (w == "harness") { return 1; }
+    if (w == "httpd") { return 1; }
+    if (w == "caps") { return 1; }
+    if (w == ":caps") { return 1; }
+    return 0;
+}
+
+fn eval_command(cmd) {
+    if (cmd == "help") { return cmd_help(); }
+    if (cmd == ":help") { return cmd_help(); }
+    if (cmd == ":exit") {
+        console_writeln("Exiting µShell.");
+        return 0;
+    }
+    if (cmd == "exit") {
+        console_writeln("Exiting µShell.");
+        return 0;
+    }
+    if (cmd == "quit") {
+        console_writeln("Exiting µShell.");
+        return 0;
+    }
+    if (cmd == ":ps") { return cmd_ps(); }
+    if (cmd == "ps") { return cmd_ps(); }
+    if (cmd == ":undo") { return cmd_undo(); }
+    if (cmd == ":mesh") { return cmd_mesh(""); }
+    if (is_prefix(cmd, ":mesh ")) { return cmd_mesh(substr(cmd, 6, len(cmd))); }
+    if (cmd == ":show") { return cmd_show(""); }
+    if (is_prefix(cmd, ":show ")) { return cmd_show(substr(cmd, 6, len(cmd))); }
+    if (cmd == ":run") { return cmd_run(""); }
+    if (is_prefix(cmd, ":run ")) { return cmd_run(substr(cmd, 5, len(cmd))); }
+
+    if (cmd == ":reboot") {
+        console_writeln("Permission denied: 'reboot' is restricted to resident AI supervisor");
+        return 0;
+    }
+    if (cmd == "reboot") {
+        console_writeln("Permission denied: 'reboot' is restricted to resident AI supervisor");
+        return 0;
+    }
+    if (cmd == ":rebuild") {
+        console_writeln("Permission denied: 'rebuild' is restricted to resident AI supervisor");
+        return 0;
+    }
+    if (cmd == "rebuild") {
+        console_writeln("Permission denied: 'rebuild' is restricted to resident AI supervisor");
+        return 0;
+    }
+
+    first_w = cmd;
+    sp_idx = find_str(cmd, " ");
+    if (sp_idx > 0) {
+        first_w = substr(cmd, 0, sp_idx);
+    }
+
+    if (is_cut_verb(first_w) == 1) {
+        if (first_w == ":caps") {
+            return cmd_ai("[note: no such verb ':caps' (use ':show caps')] " + cmd);
+        }
+        if (first_w == "caps") {
+            return cmd_ai("[note: no such verb 'caps' (use ':show caps')] " + cmd);
+        }
+        return cmd_ai("[note: no such verb '" + first_w + "'] " + cmd);
+    }
+
+    return cmd_ai(cmd);
+}
+
+fn draw_prompt() {
+    sys_serial_write("ush> ");
+    return 0;
+}
+
+fn handle_newline(buf) {
+    sys_serial_write("\r\n");
+    if (len(buf) > 0) {
+        if (buf == "exit") {
+            console_writeln("Exiting µShell.");
+            return false;
+        }
+        if (buf == "quit") {
+            console_writeln("Exiting µShell.");
+            return false;
+        }
+        eval_command(buf);
+    }
+    return true;
+}
+
+fn handle_backspace(buf) {
+    if (len(buf) > 0) {
+        sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+        return substr(buf, 0, len(buf) - 1);
+    }
+    return buf;
+}
+
+fn handle_printable(buf, c) {
+    ch_str = char_to_str(c);
+    sys_serial_write(ch_str);
+    return buf + ch_str;
+}
+
+fn ush_loop() {
+    line_buf = "";
+    last_char = 0;
+    running = true;
+    draw_prompt();
+    while (running) {
+        c = poll_char();
+        if (c < 0) {
+            sys_yield();
+        } else if (c == 10) {
+            if (last_char != 13) {
+                running = handle_newline(line_buf);
+                line_buf = "";
+                if (running) { draw_prompt(); }
+            }
+            last_char = 10;
+        } else if (c == 13) {
+            running = handle_newline(line_buf);
+            line_buf = "";
+            if (running) { draw_prompt(); }
+            last_char = 13;
+        } else if (c == 8) {
+            line_buf = handle_backspace(line_buf);
+            last_char = 8;
+        } else if (c == 127) {
+            line_buf = handle_backspace(line_buf);
+            last_char = 127;
+        } else if (c >= 32) {
+            if (c <= 126) {
+                line_buf = handle_printable(line_buf, c);
+            }
+            last_char = c;
+        }
+    }
+}
+
+fn ush_main() {
+    ush_draw_header();
+    ush_clear_screen();
+    console_writeln("uShell 0.15.0");
+    console_writeln("Type 'help' for commands.");
+    console_writeln("");
+    ush_loop();
+}
+
+ush_main();

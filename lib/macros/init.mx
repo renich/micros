@@ -1,6 +1,6 @@
 // MicrOS (µOS) System Supervisor (Actor 0 / PID 1)
 // Runs as the root genesis actor under CSpace 0.
-// Initializes system environment and launches msh.mx.
+// Initializes system environment and launches ush.mx.
 
 print("uOS 0.15.0: System supervisor online.");
 
@@ -12,33 +12,29 @@ fn supervisor_loop(child_id) {
         }
         if (st == 5) {
             print("[init] Shell exited. Respawning...");
-            msh_src = sys_bundle_read("msh.mx");
-            child_id = sys_actor_spawn_code("msh", msh_src);
+            ush_src = sys_bundle_read("ush.mx");
+            child_id = sys_actor_spawn("ush", ush_src);
         } else if (st == 4) {
             print("[init] Shell faulted! Respawning...");
-            msh_src = sys_bundle_read("msh.mx");
-            child_id = sys_actor_spawn_code("msh", msh_src);
+            ush_src = sys_bundle_read("ush.mx");
+            child_id = sys_actor_spawn("ush", ush_src);
         } else if (st < 0) {
             print("[init] Shell missing. Respawning...");
-            msh_src = sys_bundle_read("msh.mx");
-            child_id = sys_actor_spawn_code("msh", msh_src);
+            ush_src = sys_bundle_read("ush.mx");
+            child_id = sys_actor_spawn("ush", ush_src);
         }
         sys_yield();
     }
 }
 
 fn boot_init() {
-    // Set ES-LATAM as personal default for the user
-    // The kernel global default remains US-QWERTY
-    sys_kbd_layout(1);
-    
-    msh_src = sys_bundle_read("msh.mx");
-    if (len(msh_src) == 0) {
-        print("[init] Fatal: msh.mx not found in genesis bundle.");
+    ush_src = sys_bundle_read("ush.mx");
+    if (len(ush_src) == 0) {
+        print("[init] Fatal: ush.mx not found in genesis bundle.");
         return 0;
     }
-    msh_id = sys_actor_spawn_code("msh", msh_src);
-    if (msh_id < 0) {
+    ush_id = sys_actor_spawn("ush", ush_src);
+    if (ush_id < 0) {
         print("[init] Fatal: Failed to spawn shell.");
         return 0;
     }
@@ -46,7 +42,7 @@ fn boot_init() {
     if (confirmed) {
         print("[init] Trial generation confirmed. Promoted to STABLE.");
     }
-    supervisor_loop(msh_id);
+    supervisor_loop(ush_id);
     return 0;
 }
 

@@ -21,6 +21,7 @@ pub const InterpretError = error{
     CircularDependency,
     ModuleNotFound,
     InvalidHexHash,
+    OutOfGas,
 };
 
 pub const builtins = @import("builtins.zig");
@@ -59,6 +60,7 @@ pub const VM = struct {
     current_exports: ?*std.ArrayList(eval.Dict.Entry) = null,
     gc_heap: ?*gc.Heap = null,
     user_data: ?*anyopaque = null,
+    gas_remaining: ?u64 = null,
 
     pub fn initInPlace(self: *VM, allocator: std.mem.Allocator, ch: *chunk_mod.Chunk) !void {
         self.allocator = allocator;
@@ -77,7 +79,20 @@ pub const VM = struct {
         self.current_exports = null;
         self.gc_heap = null;
         self.user_data = null;
+        self.gas_remaining = null;
         try builtins.registerBuiltins(self);
+    }
+
+    pub fn setGasLimit(self: *VM, gas: u64) void {
+        self.gas_remaining = gas;
+    }
+
+    pub fn refillGas(self: *VM, gas: u64) void {
+        if (self.gas_remaining) |*r| r.* +|= gas else self.gas_remaining = gas;
+    }
+
+    pub fn getGasRemaining(self: *const VM) ?u64 {
+        return self.gas_remaining;
     }
 
     pub fn setModuleResolver(self: *VM, resolver: ?*module_mod.ModuleResolver) void {
@@ -332,6 +347,10 @@ pub const VM = struct {
     }
 
     fn checkPreemption(self: *VM) !void {
+        if (self.gas_remaining) |*gas| {
+            if (gas.* == 0) return InterpretError.OutOfGas;
+            gas.* -= 1;
+        }
         self.instruction_count +%= 1;
         if (self.instruction_count < PREEMPTION_QUANTUM) return;
         self.instruction_count = 0;
@@ -765,21 +784,19 @@ pub const VM = struct {
     }
 };
 
+fn writeTestConst(chunk: *Chunk, alloc: std.mem.Allocator, val: Value) !void {
+    const c = try chunk.addConstant(alloc, val);
+    try chunk.writeChunk(alloc, @intFromEnum(OpCode.constant));
+    try chunk.writeChunk(alloc, @intCast((c >> 8) & 0xFF));
+    try chunk.writeChunk(alloc, @intCast(c & 0xFF));
+}
+
 test "vm basic math" {
     var chunk = Chunk.init();
     defer chunk.deinit(std.testing.allocator);
 
-    const idx1 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 10 });
-    const idx2 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 20 });
-
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((idx1 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(idx1 & 0xFF));
-
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((idx2 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(idx2 & 0xFF));
-
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 10 });
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 20 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.add));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
 
@@ -844,16 +861,11 @@ test "vm dynamic chunk lifecycle and cross-chunk execution" {
     defer vm.deinit();
 
     var code_vals = [_]Value{
-        .{ .integer = @intFromEnum(OpCode.constant) },
-        .{ .integer = 0 },
-        .{ .integer = 0 },
-        .{ .integer = @intFromEnum(OpCode.return_op) },
+        .{ .integer = @intFromEnum(OpCode.constant) }, .{ .integer = 0 },
+        .{ .integer = 0 },                             .{ .integer = @intFromEnum(OpCode.return_op) },
     };
     var const_vals = [_]Value{.{ .integer = 99 }};
-    var args = [_]Value{
-        .{ .array = &code_vals },
-        .{ .array = &const_vals },
-    };
+    var args = [_]Value{ .{ .array = &code_vals }, .{ .array = &const_vals } };
     _ = try nativeExecChunk(&vm, &args);
 
     try std.testing.expectEqual(@as(usize, 1), vm.dynamic_chunks.items.len);
@@ -884,28 +896,16 @@ test "vm arithmetic completeness: mul, div, mod, div-by-zero" {
     defer chunk.deinit(std.testing.allocator);
 
     // 10 * 4 = 40
-    const c10 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 10 });
-    const c4 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 4 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c10 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c10 & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c4 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c4 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 10 });
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 4 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.multiply));
 
     // 40 / 3 = 13
-    const c3 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 3 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c3 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c3 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 3 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.divide));
 
     // 13 % 5 = 3
-    const c5 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 5 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c5 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c5 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 5 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.modulo));
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
 
@@ -921,14 +921,8 @@ test "vm division by zero error handling" {
     var chunk = Chunk.init();
     defer chunk.deinit(std.testing.allocator);
 
-    const c10 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 10 });
-    const c0 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 0 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c10 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c10 & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c0 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c0 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 10 });
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 0 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.divide));
 
     var vm = try VM.init(std.testing.allocator, &chunk);
@@ -941,26 +935,14 @@ test "vm bitwise and unary operators: and, or, xor, shl, shr, neg, not" {
     defer chunk.deinit(std.testing.allocator);
 
     // 1 << 4 = 16
-    const c1 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 1 });
-    const c4 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 4 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c1 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c1 & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c4 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c4 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 1 });
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 4 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.shift_left));
     // 16 | 7 = 23
-    const c7 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 7 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c7 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c7 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 7 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.bitwise_or));
     // 23 & 15 = 7
-    const c15 = try chunk.addConstant(std.testing.allocator, Value{ .integer = 15 });
-    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.constant));
-    try chunk.writeChunk(std.testing.allocator, @intCast((c15 >> 8) & 0xFF));
-    try chunk.writeChunk(std.testing.allocator, @intCast(c15 & 0xFF));
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 15 });
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.bitwise_and));
     // negate: -7
     try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.negate));
@@ -972,4 +954,44 @@ test "vm bitwise and unary operators: and, or, xor, shl, shr, neg, not" {
 
     const result = try vm.pop();
     try std.testing.expectEqual(Value{ .integer = -7 }, result);
+}
+
+test "vm gas metering traps infinite loop with OutOfGas" {
+    var chunk = Chunk.init();
+    defer chunk.deinit(std.testing.allocator);
+
+    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.loop));
+    try chunk.writeChunk(std.testing.allocator, 0);
+    try chunk.writeChunk(std.testing.allocator, 3);
+
+    var vm = try VM.init(std.testing.allocator, &chunk);
+    defer vm.deinit();
+
+    vm.setGasLimit(50);
+    try std.testing.expectEqual(@as(?u64, 50), vm.getGasRemaining());
+    try std.testing.expectError(InterpretError.OutOfGas, vm.run(0));
+    try std.testing.expectEqual(@as(?u64, 0), vm.getGasRemaining());
+}
+
+test "vm gas metering allows bounded execution and refills" {
+    var chunk = Chunk.init();
+    defer chunk.deinit(std.testing.allocator);
+
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 15 });
+    try writeTestConst(&chunk, std.testing.allocator, Value{ .integer = 25 });
+    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.add));
+    try chunk.writeChunk(std.testing.allocator, @intFromEnum(OpCode.return_op));
+
+    var vm = try VM.init(std.testing.allocator, &chunk);
+    defer vm.deinit();
+
+    vm.setGasLimit(100);
+    try vm.run(0);
+
+    const result = try vm.pop();
+    try std.testing.expectEqual(Value{ .integer = 40 }, result);
+    try std.testing.expect(vm.getGasRemaining().? < 100);
+
+    vm.refillGas(50);
+    try std.testing.expect(vm.getGasRemaining().? >= 50);
 }

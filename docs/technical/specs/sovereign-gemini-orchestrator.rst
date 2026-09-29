@@ -6,6 +6,13 @@ Sovereign Network Substrate & Gemini Orchestrator Spec
 :Status: Active
 :Traced Stories: [US-REN-004], [US-REN-006], [US-GEM-001], [US-GEM-007], [US-GEM-010]
 
+0. Charter & Non-Overlapping Scope Boundary
+===========================================
+This specification governs the Sovereign Network Substrate & Gemini Orchestrator:
+- **Scope**: Upstream AI cognitive link, zero-libc TCP/TLS 1.3 client engine, SPKI certificate pinning, HTTP/1.1 REST and SSE framing, prompt formatting, tool call dispatch, and dynamic actor code synthesis.
+- **Non-Overlapping Boundary with µShell REPL (`ushell-ush.rst`)**: This orchestrator does NOT handle terminal command syntax, prompt line buffering, or userland REPL builtins; those human-facing interaction mechanics belong strictly to `ushell-ush.rst`.
+- **Non-Overlapping Boundary with Sovereign Shell Substrate (`sovereign-shell.rst`)**: This orchestrator does NOT manage kernel actor scheduling, CSpace capability attenuation, session isolation, or window chrome/canvas binding; those substrate invariants belong strictly to `sovereign-shell.rst`.
+
 1. Architectural Axioms: Gemini as Root Sovereign Entity
 ==========================================================
 MicrOS (µOS) is designed from scratch as the sovereign home for artificial intelligence. By eradicating legacy Unix assumptions, POSIX filesystems, ambient authority, and hardcoded human policies, µOS establishes a pure separation between **Mechanism** and **Policy**:
@@ -60,11 +67,11 @@ Gemini Flash interacts with µOS through bidirectional structured tool calling. 
   - Sliding window flow control, packet reassembly, and sequence tracking.
   - Retransmission timeout (RTO) calibrated via APIC timer ticks.
   - Connection teardown: FIN, FIN-ACK, ACK.
-* **Freestanding TLS 1.3 Client**:
-  - Leverages ``std.crypto.tls.Client`` from Zig 0.16.0 standard library over abstract ``std.Io.Reader`` and ``std.Io.Writer`` interfaces.
+* **Freestanding TLS 1.3 Client & SPKI Pinning (Milestone 39)**:
+  - Freestanding pure-Zig TLS 1.3 client implementation (`src/kernel/net/tls_client.zig`) over abstract stream adapters.
   - SNI extension set to `generativelanguage.googleapis.com`.
-  - X25519 elliptic-curve key exchange, HKDF key derivation, and AES-GCM/ChaCha20-Poly1305 record encryption.
-  - Root trust verified against embedded Google Trust Services (GTS) Root CA certificate.
+  - X25519 elliptic-curve key exchange, HKDF key derivation, and AES-128-GCM / ChaCha20-Poly1305 record encryption.
+  - **Compile-Time Genesis SPKI Pinning**: Direct Subject Public Key Info (SPKI) SHA-256 pin verification against immutable compile-time Genesis pins (`src/kernel/net/spki.zig`). Provisioned with Google Trust Services (GTS Root R1/R2), GlobalSign (Root R2/R3), and local offline test roots. Pins are validated using constant-time `std.crypto.timing_safe.eql` during Certificate handshake, cryptographically rejecting untrusted or intercepted connections without requiring filesystem CA bundles. Boot banner reports: ``[ ok ] tls : TLS 1.3 SPKI pinning active (5 pins provisioned)``.
 
 3. Cognitive Actor & Gemini Flash Protocol
 ==========================================

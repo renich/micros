@@ -17,6 +17,9 @@ tools/micros-addr2line
 tools/micros-telem
 tools/micros-virtio-bench
 tools/micros-cluster
+tools/micros-fiber-bench
+tools/micros-rfc-gate
+tools/micros-arch-gate
 tools/.zig-cache/
 esp/
 docs/_build/

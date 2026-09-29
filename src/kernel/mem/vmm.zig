@@ -58,6 +58,7 @@ pub fn mapPage(pml4_phys: u64, virt: u64, phys: u64, flags: u64) bool {
     const pt = getOrCreateSubtable(pd, (virt >> 21) & 0x1FF, eff_flags) orelse return false;
 
     pt.entries[(virt >> 12) & 0x1FF] = (phys & 0x000F_FFFF_FFFF_F000) | eff_flags;
+    invalidateTlb(virt);
     return true;
 }
 
@@ -68,21 +69,26 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     const pt_idx = (virt >> 12) & 0x1FF;
 
     const pml4: *PageTable = @ptrFromInt(pml4_phys + hhdm_base);
-    if ((pml4.entries[pml4_idx] & PAGE_PRESENT) == 0) return false;
+    const pml4_entry = pml4.entries[pml4_idx];
+    if ((pml4_entry & PAGE_PRESENT) == 0) return true;
 
-    const pdpt: *PageTable = @ptrFromInt((pml4.entries[pml4_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
-    if ((pdpt.entries[pdpt_idx] & PAGE_PRESENT) == 0) return false;
+    const pdpt: *PageTable = @ptrFromInt((pml4_entry & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pdpt_entry = pdpt.entries[pdpt_idx];
+    if ((pdpt_entry & PAGE_PRESENT) == 0) return true;
+    if ((pdpt_entry & PAGE_HUGE) != 0) return true;
 
-    const pd: *PageTable = @ptrFromInt((pdpt.entries[pdpt_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
-    if ((pd.entries[pd_idx] & PAGE_PRESENT) == 0) return false;
+    const pd: *PageTable = @ptrFromInt((pdpt_entry & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pd_entry = pd.entries[pd_idx];
+    if ((pd_entry & PAGE_PRESENT) == 0) return true;
+    if ((pd_entry & PAGE_HUGE) != 0) return true;
 
-    const pt: *PageTable = @ptrFromInt((pd.entries[pd_idx] & 0x000F_FFFF_FFFF_F000) + hhdm_base);
-    if ((pt.entries[pt_idx] & PAGE_PRESENT) == 0) return false;
+    const pt: *PageTable = @ptrFromInt((pd_entry & 0x000F_FFFF_FFFF_F000) + hhdm_base);
+    const pt_entry = pt.entries[pt_idx];
+    if ((pt_entry & PAGE_PRESENT) == 0) return true;
 
-    const pte = pt.entries[pt_idx];
-    if ((pte & PAGE_PINNED) != 0) return false;
-    if ((pte & PAGE_ANON) != 0 and (pte & PAGE_MMIO) == 0) {
-        pmm.freePage(pte & 0x000F_FFFF_FFFF_F000);
+    if ((pt_entry & PAGE_PINNED) != 0) return false;
+    if ((pt_entry & PAGE_ANON) != 0 and (pt_entry & PAGE_MMIO) == 0) {
+        pmm.freePage(pt_entry & 0x000F_FFFF_FFFF_F000);
     }
 
     pt.entries[pt_idx] = 0;
@@ -90,14 +96,30 @@ pub fn unmapPage(pml4_phys: u64, virt: u64) bool {
     return true;
 }
 
+pub const MAX_UNMAP_PAGES: usize = 1 << 36;
+
 pub fn unmapExtent(virt: u64, size: usize) bool {
     const cr3 = readCr3();
     const pml4 = if (cr3 != 0) cr3 else kernel_pml4_phys;
     if (pml4 == 0 or size == 0) return true;
-    var offset: usize = 0;
+
+    const size_u64: u64 = std.math.cast(u64, size) orelse return false;
+    const add_res = @addWithOverflow(virt, size_u64);
+    if (add_res[1] != 0) return false;
+
+    const end_byte = virt + size_u64 - 1;
+    const start_page = virt >> 12;
+    const end_page = end_byte >> 12;
+
+    const num_pages_u64 = (end_page - start_page) + 1;
+    if (num_pages_u64 > MAX_UNMAP_PAGES) return false;
+    const num_pages: usize = @intCast(num_pages_u64);
+
     var all_unmapped = true;
-    while (offset < size) : (offset += 4096) {
-        if (!unmapPage(pml4, virt + offset)) {
+    var p: usize = 0;
+    while (p < num_pages) : (p += 1) {
+        const page_vaddr = (start_page + @as(u64, p)) << 12;
+        if (!unmapPage(pml4, page_vaddr)) {
             all_unmapped = false;
         }
     }
@@ -245,6 +267,10 @@ pub fn unpinDmaPages(pml4_phys: u64, virt_addr: u64, len_bytes: usize) void {
     }
 }
 
+// Hardware Invariant: PML4 physical base loaded into CR3 must be 4096-byte aligned.
+// Reloading CR3 unconditionally invalidates non-global TLB entries across the local hardware execution thread.
+// Address space switching preserves the upper 256 PML4 entries (Ring 0 HHDM and kernel mappings)
+// while isolating the lower 256 PML4 entries for Ring 3 capabilities.
 pub fn loadPageTable(pml4_phys: u64) void {
     if (builtin.is_test) return;
     asm volatile ("movq %[cr3], %%cr3"
@@ -605,4 +631,58 @@ test "vmm freePt reclaims anonymous physical pages on actor teardown" {
 
     // Both anonymous pages are reclaimed on actor teardown preventing physical leaks
     try std.testing.expect((pt.entries[0] & PAGE_ANON) != 0);
+}
+
+test "vmm unmapExtent boundary conditions and checked arithmetic" {
+    var pml4 align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pdpt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pd align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+    var pt align(4096) = PageTable{ .entries = [_]u64{0} ** 512 };
+
+    const saved_hhdm = hhdm_base;
+    defer hhdm_base = saved_hhdm;
+    hhdm_base = 0;
+
+    const saved_pml4 = kernel_pml4_phys;
+    defer kernel_pml4_phys = saved_pml4;
+    kernel_pml4_phys = @intFromPtr(&pml4);
+
+    const pdpt_phys = @intFromPtr(&pdpt);
+    const pd_phys = @intFromPtr(&pd);
+    const pt_phys = @intFromPtr(&pt);
+
+    const test_virt: u64 = 0x0000_0000_4000_0000;
+    const pml4_idx = (test_virt >> 39) & 0x1FF;
+    const pdpt_idx = (test_virt >> 30) & 0x1FF;
+    const pd_idx = (test_virt >> 21) & 0x1FF;
+    const pt_idx = (test_virt >> 12) & 0x1FF;
+
+    pml4.entries[pml4_idx] = pdpt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pdpt.entries[pdpt_idx] = pd_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pd.entries[pd_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pt.entries[pt_idx] = 0x2000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pt.entries[pt_idx + 1] = 0x3000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+
+    // 1. Zero size: returns true without unmapping
+    try std.testing.expect(unmapExtent(test_virt, 0));
+    try std.testing.expect((pt.entries[pt_idx] & PAGE_PRESENT) != 0);
+
+    // 2. Exactly one page
+    try std.testing.expect(unmapExtent(test_virt, 4096));
+    try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx]);
+    try std.testing.expect((pt.entries[pt_idx + 1] & PAGE_PRESENT) != 0);
+
+    // 3. Unaligned tail (spanning unaligned start across into next page)
+    pt.entries[pt_idx] = 0x2000 | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    try std.testing.expect(unmapExtent(test_virt + 100, 4096));
+    try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx]);
+    try std.testing.expectEqual(@as(u64, 0), pt.entries[pt_idx + 1]);
+
+    // 4. size = maxInt(usize): detected via overflow or cap check, returns false
+    try std.testing.expect(!unmapExtent(test_virt, std.math.maxInt(usize)));
+
+    // 5. virt near 0xFFFF_FFFF_FFFF_F000 with overflow size
+    const high_virt: u64 = 0xFFFF_FFFF_FFFF_F000;
+    try std.testing.expect(!unmapExtent(high_virt, 4096));
+    try std.testing.expect(!unmapExtent(high_virt, std.math.maxInt(usize)));
 }

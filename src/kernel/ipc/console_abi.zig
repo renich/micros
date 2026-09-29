@@ -14,10 +14,15 @@ const events_mod = @import("events.zig");
 pub var active_kbd: ?*ps2_mod.Ps2Keyboard = null;
 pub var active_ring: ?*ring_mod.RingBuffer = null;
 pub var caller_auth_fn: ?*const fn (cap_type: cap_mod.CapType, rights: u16) bool = null;
+pub var caller_id_fn: ?*const fn () u32 = null;
 
 pub fn setContext(kbd: ?*ps2_mod.Ps2Keyboard, auth_fn: ?*const fn (cap_type: cap_mod.CapType, rights: u16) bool) void {
     active_kbd = kbd;
     caller_auth_fn = auth_fn;
+}
+
+pub fn setCallerIdFn(id_fn: ?*const fn () u32) void {
+    caller_id_fn = id_fn;
 }
 
 pub fn setInputRing(ring: ?*ring_mod.RingBuffer) void {
@@ -27,6 +32,13 @@ pub fn setInputRing(ring: ?*ring_mod.RingBuffer) void {
 fn checkAuth(cap_type: cap_mod.CapType, rights: u16) bool {
     if (caller_auth_fn) |auth| return auth(cap_type, rights);
     return false;
+}
+
+fn isPrivilegedCaller(cap_type: cap_mod.CapType, rights: u16) bool {
+    if (caller_id_fn) |get_id| {
+        if (get_id() == 0) return true;
+    }
+    return checkAuth(cap_type, rights);
 }
 
 pub fn decodeAnsiParam(b3: u8) ?i64 {
@@ -81,7 +93,7 @@ pub fn decodeSerialEscape() ?i64 {
 pub fn nativeSysSerialRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    if (!checkAuth(.framebuffer, cap_mod.Rights.READ) and !checkAuth(.actor_control, cap_mod.Rights.READ)) {
+    if (!isPrivilegedCaller(.actor_control, cap_mod.Rights.WRITE)) {
         return error.PermissionDenied;
     }
     if (serial.readChar()) |c| {
@@ -122,24 +134,12 @@ pub fn nativeSysKbdRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .integer = -1 };
 }
 
-pub fn nativeSysKbdLayout(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    if (!checkAuth(.framebuffer, cap_mod.Rights.WRITE) and !checkAuth(.actor_control, cap_mod.Rights.WRITE)) {
-        return error.PermissionDenied;
-    }
-    const layout = args[0].integer;
-    if (layout == 0) {
-        ps2_mod.active_layout = .us_qwerty;
-    } else if (layout == 1) {
-        ps2_mod.active_layout = .es_latam;
-    }
-    return Value{ .integer = 0 };
-}
-
 pub fn nativeSysSerialWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
+    if (!isPrivilegedCaller(.actor_control, cap_mod.Rights.WRITE)) {
+        return error.PermissionDenied;
+    }
     serial.writeString(args[0].string);
     return Value{ .nil = {} };
 }

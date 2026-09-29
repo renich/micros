@@ -125,7 +125,7 @@ The microkernel polls hardware pointer packets:
 -------------------------------------
 * **Window Hit-Testing**: Pointer clicks query the window hierarchy top-to-bottom in Z-order. The matching window becomes active, moving to the top of the stack.
 * **Keyboard Routing**: Scancodes from PS/2 keyboard or serial input are routed directly to the active window's incoming IPC ring.
-* **Seamless Shell Switching**: Hotkey ``Ctrl+Alt+Space`` toggles focus instantly between App 0 MicroShell and the active visual actor window.
+* **Seamless Shell Switching**: Hotkey ``Ctrl+Alt+Space`` toggles focus instantly between App 0 µShell and the active visual actor window.
 
 6. Framebuffer Verification & Quality Assurance
 ===============================================

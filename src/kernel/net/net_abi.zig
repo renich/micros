@@ -40,7 +40,7 @@ fn checkCallerAuthority(cap_type: CapType, rights: u16) bool {
     if (caller_auth_fn) |auth| {
         return auth(cap_type, rights);
     }
-    return true;
+    return false;
 }
 
 fn getCallerActorId() u32 {
@@ -191,6 +191,11 @@ test "network abi registration and unauthorized caller rejection" {
     var close_args = [_]Value{Value{ .integer = 1 }};
     const close_res = try nativeSysNetClose(&vm, &close_args);
     try std.testing.expectEqual(false, close_res.boolean);
+
+    // Context set with null auth callback -> must fail closed
+    setNetworkContext(null, null, null);
+    const null_listen = try nativeSysNetListen(&vm, &listen_args);
+    try std.testing.expectEqual(@as(i64, -1), null_listen.integer);
 }
 
 test "network abi listen and accept with dummy stack" {

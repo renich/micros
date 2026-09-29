@@ -1,6 +1,10 @@
 {
-  "current_phase": 5,
+  "current_phase": 0,
   "journal_version": "0.2.0",
-  "objective": "Phase 10: Operational Hardening, Pure Microkernel Daemon Handoff & Virtual Cluster Mesh",
-  "pjp_version": "0.10.1"
+  "last_report": "msg-017",
+  "objective": "Sovereign OS Stage 4 (Milestone 41 FINAL: self-rewrite + emission) per /tmp/micros-sovereign-stage4-orders.rst",
+  "pjp_version": "0.10.1",
+  "stage": "Stage 4 (Milestone 41) Kickoff",
+  "status": "Phase 0 Designs Ready for Checker Review / Stamp",
+  "tests_passing": 468
 }

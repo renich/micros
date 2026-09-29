@@ -77,10 +77,14 @@ pub fn setInputRing(ring: *ring_mod.RingBuffer) void {
 }
 
 fn setGate(vec: u8, isr_addr: u64, flags: u8) void {
+    setGateIst(vec, isr_addr, flags, 0);
+}
+
+fn setGateIst(vec: u8, isr_addr: u64, flags: u8, ist: u8) void {
     idt_entries[vec] = IdtEntry{
         .offset_low = @intCast(isr_addr & 0xFFFF),
         .selector = 0x08,
-        .ist = 0,
+        .ist = ist,
         .type_attr = flags,
         .offset_mid = @intCast((isr_addr >> 16) & 0xFFFF),
         .offset_high = @intCast((isr_addr >> 32) & 0xFFFFFFFF),
@@ -147,11 +151,43 @@ fn markActorFaulted(actor_id: u32) void {
     }
 }
 
+pub var pf_probe_hook_fn: ?*const fn (cr2: u64, error_code: u64, rip: u64) bool = null;
+
+pub fn setPageFaultProbeHook(hook: ?*const fn (cr2: u64, error_code: u64, rip: u64) bool) void {
+    pf_probe_hook_fn = hook;
+}
+
+fn redirectToChildTrampoline(frame: *ExceptionStackFrame) void {
+    frame.rip = @intFromPtr(&childFaultTrampoline);
+    frame.cs = 0x08;
+    frame.ss = 0x10;
+    const tss_rsp0 = gdt.getTss().rsp0;
+    if (tss_rsp0 != 0) {
+        frame.rsp = tss_rsp0;
+    }
+    frame.rflags &= ~@as(u64, 0x200);
+    const core = smp.global_topology.getCurrentCore();
+    core.current_actor_id = 0;
+    current_actor_id = 0;
+}
+
+fn handleProbePageFault(frame: *ExceptionStackFrame, cr2: u64, rip: u64) bool {
+    if (frame.vector != 14) return false;
+    const hook = pf_probe_hook_fn orelse return false;
+    if (!hook(cr2, frame.error_code, rip)) return false;
+
+    redirectToChildTrampoline(frame);
+    return true;
+}
+
 export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     const rip = frame.rip;
     const cr2 = if (builtin.is_test) 0 else asm volatile ("mov %%cr2, %[ret]"
         : [ret] "=r" (-> u64),
     );
+
+    // P0-C2: Range-check active probe MMIO window FIRST on vector-14 page fault
+    if (handleProbePageFault(frame, cr2, rip)) return;
 
     const core = smp.global_topology.getCurrentCore();
     const actor_id = if (builtin.is_test and current_actor_id != 0) current_actor_id else core.current_actor_id;
@@ -177,16 +213,7 @@ export fn exceptionHandlerZig(frame: *ExceptionStackFrame) void {
     const msg = supervisor_mod.toMessageFrame(fault, seq);
     _ = pushInputMessage(msg);
 
-    frame.rip = @intFromPtr(&childFaultTrampoline);
-    frame.cs = 0x08;
-    frame.ss = 0x10;
-    const tss_rsp0 = gdt.getTss().rsp0;
-    if (tss_rsp0 != 0) {
-        frame.rsp = tss_rsp0;
-    }
-    frame.rflags &= ~@as(u64, 0x200);
-    core.current_actor_id = 0;
-    current_actor_id = 0;
+    redirectToChildTrampoline(frame);
 }
 
 fn isErrorCodeVector(vec: u8) bool {
@@ -353,7 +380,9 @@ pub fn init() void {
     }
 
     inline for (0..32) |i| {
-        setGate(i, @intFromPtr(makeIsr(i)), 0x8E);
+        // Double fault (#DF, vector 8) is routed to dedicated IST1 stack to contain stack exhaustion
+        const ist: u8 = if (i == 8) 1 else 0;
+        setGateIst(i, @intFromPtr(makeIsr(i)), 0x8E, ist);
     }
 
     const apic_timer_addr = @intFromPtr(&apicTimerInterruptHandler);
@@ -396,6 +425,19 @@ test "IDT exception gates have distinct vector ISR handlers" {
     try std.testing.expect(de_isr != ud_isr);
     try std.testing.expect(gp_isr != pf_isr);
     try std.testing.expect(ud_isr != pf_isr);
+}
+
+test "IDT double fault vector 8 is routed to dedicated IST1 stack" {
+    init();
+    const df_gate = getGate(8);
+    try std.testing.expectEqual(@as(u8, 1), df_gate.ist);
+    try std.testing.expectEqual(@as(u8, 0x8E), df_gate.type_attr);
+
+    inline for (0..32) |vec| {
+        if (vec != 8) {
+            try std.testing.expectEqual(@as(u8, 0), getGate(vec).ist);
+        }
+    }
 }
 
 test "IDT exceptionHandlerZig transitions child actor to faulted in registry" {

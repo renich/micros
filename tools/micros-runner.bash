@@ -46,9 +46,12 @@ Options:
   --wipe-nvme                Wipe/recreate NVMe disk image before booting
   --verify-silicon           Execute end-to-end silicon installer & cord-cutting verification
   --verify-rebuild           Execute end-to-end in-system kernel self-rebuild verification
+  --preserve-efi             Do not overwrite ESP/EFI/BOOT/BOOTX64.EFI with build output
 EOF
     exit 1
 }
+
+PRESERVE_EFI=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -70,6 +73,7 @@ while [[ $# -gt 0 ]]; do
         --wipe-nvme) WIPE_NVME=1; shift 1 ;;
         --verify-silicon) VERIFY_SILICON=1; shift 1 ;;
         --verify-rebuild) VERIFY_REBUILD=1; shift 1 ;;
+        --preserve-efi) PRESERVE_EFI=1; shift 1 ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -169,7 +173,7 @@ run_silicon_verification() {
     echo "[silicon-test] Stage 1 SUCCESS! Bare-metal silicon partitioned, formatted, and staged!"
 
     echo "[silicon-test] Stage 2: Cord-cutting verification — Booting standalone NVMe silicon..."
-    "$0" --mode uefi --nvme "$nvme" --serial-log "$log2" --expect "MicroShell" --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --nvme "$nvme" --serial-log "$log2" --expect "µShell" --timeout "$TIMEOUT_SEC"
 
     echo "[silicon-test] Stage 2 SUCCESS! MicrOS booted directly from standalone physical NVMe drive!"
     echo "========================================================"
@@ -213,7 +217,7 @@ fi
 if [[ "$MODE" == "sandbox" ]]; then
     mkdir -p "$INITRAMFS_DIR/dev" "$INITRAMFS_DIR/proc" "$INITRAMFS_DIR/sys"
     cp "$ROOT_DIR/zig-out/bin/micros-init" "$INITRAMFS_DIR/init"
-    cp "$ROOT_DIR/zig-out/bin/msh" "$INITRAMFS_DIR/msh"
+    cp "$ROOT_DIR/zig-out/bin/ush" "$INITRAMFS_DIR/ush"
     (cd "$INITRAMFS_DIR" && find . | cpio -o -H newc --quiet) > "$CPIO_ARCHIVE"
 
     KERNEL="/boot/vmlinuz-$(uname -r)"
@@ -277,19 +281,26 @@ elif [[ "$MODE" == "uefi" ]]; then
     fi
 
     if [[ "$EXPECT" == "Substrate self-test verified (Macros 20+22=42)" ]]; then
-        EXPECT="MicroShell"
+        EXPECT="µShell"
     fi
 
     ESP_DIR="$BUILD_DIR/esp"
     mkdir -p "$ESP_DIR/EFI/BOOT"
-    cp "$ROOT_DIR/zig-out/bin/boot.efi" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
+    if [[ "$PRESERVE_EFI" -eq 0 ]]; then
+        cp "$ROOT_DIR/zig-out/bin/boot.efi" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
+    fi
     cp "$ROOT_DIR/src/kernel/genesis.mcb" "$ESP_DIR/genesis.mcb"
+
+    HOST_PORT="${MICROS_HOST_PORT:-8080}"
+    if ss -tln 2>/dev/null | grep -q ":${HOST_PORT} "; then
+        HOST_PORT=18080
+    fi
 
     QEMU_ARGS=(
         -m 512M
         -drive "if=pflash,format=raw,readonly=on,file=$OVMF_IMAGE"
         -drive "format=raw,file=fat:rw:$ESP_DIR"
-        -netdev "user,id=net0,hostfwd=tcp::8080-:8080"
+        -netdev "user,id=net0,hostfwd=tcp::${HOST_PORT}-:8080"
         -device "virtio-net-pci,netdev=net0"
         -display none
         -no-reboot
@@ -362,7 +373,7 @@ elif [[ "$MODE" == "uefi" ]]; then
         FIFO_IN=$(mktemp -u "${BUILD_DIR}/qemu-in-XXXXXX.fifo")
         mkfifo "$FIFO_IN"
         (
-            while ! grep -E "(msh>|macros>)" "$TMP_SERIAL" >/dev/null 2>&1; do
+            while ! grep -E "(ush>|macros>)" "$TMP_SERIAL" >/dev/null 2>&1; do
                 sleep 0.1
             done
             sleep 0.2
@@ -400,7 +411,7 @@ elif [[ "$MODE" == "uefi" ]]; then
                     capture_screendump
                 fi
             elif grep -F "Visual canvas and vector status rendered successfully" "$TMP_SERIAL" >/dev/null 2>&1 || \
-                 grep -E "(msh>|µOS macros>)" "$TMP_SERIAL" >/dev/null 2>&1 || \
+                 grep -E "(ush>|µOS macros>)" "$TMP_SERIAL" >/dev/null 2>&1 || \
                  grep -F "Event loop terminated" "$TMP_SERIAL" >/dev/null 2>&1; then
                 capture_screendump
             fi

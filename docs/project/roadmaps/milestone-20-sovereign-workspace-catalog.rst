@@ -3,7 +3,7 @@ Milestone 20: Sovereign Catalog Broker & Semantic Workspace Substrate
 
 :Objective: Formalize the Sovereign Catalog Broker and Semantic Workspace Substrate for MicrOS (µOS), providing human developers and autonomous AI agents with a persistent, named workspace home, Optimistic Concurrency Control (OCC), and full-screen visual text editing without mutable POSIX inodes or unchecksummed disk blocks.
 :Status: Complete & Verified
-:Specifications: `SPEC-TECH-FS-001`, `SPEC-TECH-AI-002`
+:Specifications: `SPEC-TECH-FS-001`, `SPEC-TECH-TOOL-001` (`SPEC-TECH-AI-002` absorbed in Milestone 38)
 
 Milestones & Deliverables
 -------------------------

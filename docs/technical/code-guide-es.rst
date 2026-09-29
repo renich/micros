@@ -23,7 +23,7 @@ La base de código está dividida limpiamente en dos capas colaborativas:
    Ubicada en ``src/sys/`` y ``src/kernel/``, la Capa 0 está escrita en Zig independiente sin librerías estándar de C externas (cero libc). Interactúa directamente con las estructuras de hardware x86_64 y los dispositivos. La Capa 0 gestiona la Tabla Global de Descriptores (GDT), la Tabla de Descriptores de Interrupción (IDT), los marcos de página física (PMM), la paginación virtual de 4 niveles (VMM), los controladores de red y almacenamiento VirtIO, los tokens de seguridad del Espacio de Capacidades (CSpace), los búferes circulares en memoria compartida sin bloqueos y la máquina virtual de código de bytes con recolector Immix.
 
 2. **Capa 1: Aplicaciones Soberanas en Espacio de Usuario (Macros)**:
-   Ubicada en ``lib/macros/`` y escrita en el lenguaje Macros (``.mx``, ``.macros``), la Capa 1 define la personalidad del sistema. Contiene el supervisor del sistema (``init.mx``), el intérprete interactivo MicroShell (``msh.mx``), los entornos de ejecución autónomos y la canalización del compilador autohospedado. Los programas de Capa 1 se ejecutan como actores aislados planificados sobre fibras cooperativas en espacio de usuario, comunicándose mediante búferes circulares tipados y tokens de capacidad CSpace explícitos.
+   Ubicada en ``lib/macros/`` y escrita en el lenguaje Macros (``.mx``, ``.macros``), la Capa 1 define la personalidad del sistema. Contiene el supervisor del sistema (``init.mx``), el intérprete interactivo µShell (``ush.mx``), los entornos de ejecución autónomos y la canalización del compilador autohospedado. Los programas de Capa 1 se ejecutan como actores aislados planificados sobre fibras cooperativas en espacio de usuario, comunicándose mediante búferes circulares tipados y tokens de capacidad CSpace explícitos.
 
 Eliminación del Lastre Histórico de POSIX:
 ------------------------------------------
@@ -42,7 +42,7 @@ La base de código está diseñada para compilarse y ejecutarse en dos entornos 
    El entorno operativo principal. Arranca mediante firmware UEFI (OVMF en QEMU o hardware físico) a través de ``src/boot/uefi_main.zig``. El microkernel inicializa directamente las tablas de CPU, la paginación, dispositivos PCI, almacenamiento y red VirtIO, monta el almacenamiento CAS, inicializa el lienzo vectorial GOP de 1280x800 con doble búfer y ejecuta el paquete Génesis dentro de fibras cooperativas.
 
 * **Sandbox de Llamadas Directas en Linux (Entorno de TDD/CI Rápido)**:
-   Para desarrollo ágil e integración continua, ``src/main.zig`` compila como un binario independiente (``zig-out/bin/micros-init``) que actúa como PID 1 dentro de un sandbox aislado de Linux en QEMU o contenedor. Se comunica con el kernel Linux mediante llamadas directas en ``src/sys/linux.zig``, ejecuta autoverificaciones, procesa comandos de MicroShell y apaga el sistema mediante ACPI S5 en milisegundos.
+   Para desarrollo ágil e integración continua, ``src/main.zig`` compila como un binario independiente (``zig-out/bin/micros-init``) que actúa como PID 1 dentro de un sandbox aislado de Linux en QEMU o contenedor. Se comunica con el kernel Linux mediante llamadas directas en ``src/sys/linux.zig``, ejecuta autoverificaciones, procesa comandos de µShell y apaga el sistema mediante ACPI S5 en milisegundos.
 
 Puntos de Entrada del Sistema y Secuencia de Arranque
 =====================================================
@@ -75,8 +75,8 @@ La ejecución entra al microkernel en ``pub export fn kmain(boot_info: *const Bo
 -------------------------------------------------------------------
 El primer código en espacio de usuario que corre dentro de la VM Génesis actúa como Actor 0 (PID 1):
 
-* **Despliegue de App 0**: Lee ``msh.mx`` desde el paquete Génesis mediante ``sys_bundle_read("msh.mx")``.
-* **Engendrado de Actor**: Genera el actor hijo de MicroShell mediante ``sys_actor_spawn_code("msh", msh_src)``.
+* **Despliegue de App 0**: Lee ``ush.mx`` desde el paquete Génesis mediante ``sys_bundle_read("ush.mx")``.
+* **Engendrado de Actor**: Genera el actor hijo de µShell mediante ``sys_actor_spawn_code("ush", ush_src)``.
 * **Bucle de Supervisión**: Entra en ``supervisor_loop``, consultando el estado de los actores hijos (``sys_actor_state``), reviviendo automáticamente aquellos que presenten fallas y cediendo CPU con ``sys_yield()``.
 
 4. Sandbox de Llamadas Directas en Linux (src/main.zig):
@@ -85,13 +85,13 @@ Cuando se ejecuta en modo sandbox, el control arranca en ``pub fn main() !void``
 
 * **Diagnóstico por Syscalls Directas**: Emite mensajes de inicio directamente al descriptor 1 mediante ``src/sys/io.zig``.
 * **Autoverificación del Substrato**: Ejecuta una prueba automática compilando y evaluando ``boot_check = 20 + 22`` en una VM limpia de Macros, verificando que el resultado sea 42.
-* **Lanzamiento de MicroShell**: Instancia ``msh.Shell`` conectado a la entrada y salida estándar.
+* **Lanzamiento de µShell**: Instancia ``ush.Shell`` conectado a la entrada y salida estándar.
 * **Apagado Limpio**: Llama a ``sys.process.poweroff()`` para apagar la máquina mediante la constante mágica de reinicio ACPI (``0x4321fedc``).
 
 5. Ejecutores Independientes en el Host:
 ----------------------------------------
 * ``src/macros_main.zig``: Utilidad de línea de comandos para compilar y ejecutar archivos ``.mx`` directamente en el host.
-* ``src/msh_main.zig``: Interfaz interactiva de consola para probar el REPL de MicroShell en local.
+* ``src/ush_main.zig``: Interfaz interactiva de consola para probar el REPL de µShell en local.
 
 Anatomía del Repositorio: Qué Está en Dónde
 ===========================================
@@ -116,7 +116,7 @@ El núcleo del sistema escrito en Zig independiente:
    * ``abi.zig``: Enlaces de funciones ABI y llamadas al sistema expuestas a la máquina virtual Macros.
    * ``main.zig``: Punto de entrada raíz del microkernel (``kmain``).
 * ``src/sys/``: Librería de llamadas al sistema de Linux y capa de abstracción de hardware (``linux.zig``, ``io.zig``, ``mem.zig``, ``process.zig``, ``hal.zig``).
-* ``src/msh/``: Implementación de MicroShell para el host (``shell.zig`` con comandos integrados).
+* ``src/ush/``: Implementación de µShell para el host (``shell.zig`` con comandos integrados).
 
 Motor del Lenguaje y Tiempo de Ejecución (src/macros/):
 -------------------------------------------------------
@@ -127,7 +127,7 @@ La implementación Stage 0 de Macros en Zig:
 * ``compiler.zig`` y ``chunk.zig``: Compila nodos AST en fragmentos serializados de código de bytes.
 * ``vm.zig``: Máquina virtual basada en pila que ejecuta instrucciones de código de bytes.
 * ``eval.zig``: Intérprete por recorrido de AST utilizado durante etapas iniciales de arranque.
-* ``gc.zig`` y ``immix.zig``: Recolector de basura Immix (bloques de 32 KiB, mapas de líneas, reciclaje de huecos).
+* ``gc.zig``: Recolector de basura Immix (bloques de 32 KiB, mapas de líneas, reciclaje de huecos).
 * ``fiber.zig`` y ``context_switch.s``: Fibras cooperativas en espacio de usuario y conmutación en ensamblador.
 * ``codegen_x86_64.zig``: Generador de código máquina nativo con protección de páginas W^X.
 * ``module.zig`` y ``serializer.zig``: Resolutor de módulos CAS (``b3:...`` y ``bundle:...``) y serialización canónica.
@@ -137,7 +137,7 @@ Aplicaciones Autohospedadas (lib/macros/):
 La implementación Stage 1 de Macros escrita íntegramente en Macros puro:
 
 * ``init.mx``: Supervisor del sistema y script raíz de inicialización del Actor 0.
-* ``msh.mx``: Implementación de MicroShell escrita en Macros puro.
+* ``ush.mx``: Implementación de µShell escrita en Macros puro.
 * ``harness.mx``: Ejecutor autónomo de pruebas y suite de verificación.
 * ``ast.mx``, ``lexer.mx``, ``parser.mx``: Frontend del compilador autohospedado.
 * ``compiler.mx``, ``compiler_main.mx``: Compilador de código de bytes autohospedado.
@@ -175,7 +175,7 @@ El microkernel expone las capacidades del hardware a Macros mediante ``src/kerne
        try vm.globals.put("sys_window_create", Value{ .native = nativeSysWindowCreate });
    }
 
-Cuando un script en Macros ejecuta ``sys_bundle_read("msh.mx")``, la VM pausa el código de bytes, extrae los argumentos de la pila de operandos, invoca la función nativa en Zig y devuelve el resultado ``eval.Value`` a la pila sin fugas de memoria.
+Cuando un script en Macros ejecuta ``sys_bundle_read("ush.mx")``, la VM pausa el código de bytes, extrae los argumentos de la pila de operandos, invoca la función nativa en Zig y devuelve el resultado ``eval.Value`` a la pila sin fugas de memoria.
 
 Arquitectura de Memoria y Recolector Immix:
 -------------------------------------------
@@ -224,7 +224,7 @@ MicrOS está diseñado para compilarse a sí mismo, asegurando independencia tec
 Flujo de Empaquetado en Compilación:
 ------------------------------------
 1. **Compilación de Herramientas**: Las utilidades del host (incluyendo ``micros-bundle``) se compilan con ``make tools``.
-2. **Serialización del Paquete**: ``tools/micros-bundle`` lee los archivos fuente Stage 1 desde ``lib/macros/`` (``init.mx``, ``msh.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) y los serializa en ``src/kernel/genesis.mcb``.
+2. **Serialización del Paquete**: ``tools/micros-bundle`` lee los archivos fuente Stage 1 desde ``lib/macros/`` (``init.mx``, ``ush.mx``, ``harness.mx``, ``lexer.mx``, ``parser.mx``, ``compiler.mx``, ``compiler_main.mx``) y los serializa en ``src/kernel/genesis.mcb``.
 3. **Incrustación en el Kernel**: El código fuente del microkernel (``src/kernel/main.zig``) incrusta este archivo binario mediante ``@embedFile("genesis.mcb")``. Al arrancar en hardware real, todo el código de usuario esencial ya se encuentra en memoria sin requerir drivers de disco.
 
 Verificación de Punto Fijo de Autohospedaje:
@@ -245,7 +245,7 @@ Cómo Agregar una Nueva Syscall o Capacidad al Microkernel:
 #. **Registrar en Syscalls**: Registra la función dentro de ``registerSyscalls`` en ``src/kernel/abi.zig``:
    ``try vm.globals.put("sys_mi_caracteristica", Value{ .native = nativeSysMiCaracteristica });``
 #. **Implementar la Lógica en el Kernel**: Si accede a un controlador o subsistema de memoria, invoca el módulo correspondiente en ``src/kernel/``, validando la capacidad CSpace del actor solicitante.
-#. **Exponer al Espacio de Usuario**: Utiliza la nueva primitiva en ``lib/macros/init.mx`` o ``lib/macros/msh.mx``.
+#. **Exponer al Espacio de Usuario**: Utiliza la nueva primitiva en ``lib/macros/init.mx`` o ``lib/macros/ush.mx``.
 
 Cómo Agregar una Nueva Primitiva u Opcode a Macros:
 ---------------------------------------------------

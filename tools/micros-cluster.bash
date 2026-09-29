@@ -152,16 +152,16 @@ run_verify() {
             fi
         fi
 
-        if [[ -f "$n1_log" ]] && grep -q "Peer node discovered" "$n1_log" 2>/dev/null; then
+        if [[ -f "$n1_log" ]] && grep -q "Peer node discovered at.*192\.168\.100\.2" "$n1_log" 2>/dev/null; then
             if (( n1_discovered == 0 )); then
-                echo "  [  ok  ] Node 1: Received UDP beacon & discovered peer on virtual mesh"
+                echo "  [  ok  ] Node 1: Received UDP beacon & discovered peer 192.168.100.2 on virtual mesh"
                 n1_discovered=1
             fi
         fi
 
-        if [[ -f "$n2_log" ]] && grep -q "Peer node discovered" "$n2_log" 2>/dev/null; then
+        if [[ -f "$n2_log" ]] && grep -q "Peer node discovered at.*192\.168\.100\.1" "$n2_log" 2>/dev/null; then
             if (( n2_discovered == 0 )); then
-                echo "  [  ok  ] Node 2: Received UDP beacon & discovered peer on virtual mesh"
+                echo "  [  ok  ] Node 2: Received UDP beacon & discovered peer 192.168.100.1 on virtual mesh"
                 n2_discovered=1
             fi
         fi

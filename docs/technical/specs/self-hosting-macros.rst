@@ -23,28 +23,29 @@ Milestone 17 elevates Macros to a fully self-hosting language with native x86_64
 .. code-block:: text
 
    +-------------------------------------------------------------+
-   | Stage 0: Freestanding Zig Substrate Compiler (src/macros/)  |
-   | Host/Boot VM, Memory Management, Microkernel Integration    |
+   | Stage 0: Freestanding Zig Substrate Runtime (src/macros/)   |
+   | VM Interpreter, Immix GC, Fiber Scheduler, Native Backend   |
    +------------------------------+------------------------------+
-                                  | Compiles (Stage 1 Source)
+                                  | Executes & Compiles (Stage 1)
    +------------------------------v------------------------------+
    | Stage 1: Pure Macros Compiler (lib/macros/compiler.mx)      |
-   | Lexer, Parser, AST, Symbol Table, Bytecode & Native Emitter |
+   | Lexer, Parser, AST, Symbol Table, Bytecode Emitter          |
    +------------------------------+------------------------------+
                                   | Compiles Itself (Stage 2)
    +------------------------------v------------------------------+
-   | Stage 2: Fixed-Point Self-Hosted Compiler Binary            |
+   | Stage 2: Fixed-Point Self-Hosted Compiler Bytecode          |
    | Bit-for-Bit Identical Bytecode Hash: H(Stage 1) == H(Stage 2)|
    +-------------------------------------------------------------+
 
-2.1 Stage 0: Freestanding Zig Substrate Compiler
-------------------------------------------------
+2.1 Stage 0: Freestanding Zig Substrate Compiler & Runtime
+----------------------------------------------------------
 * **Location**: `src/macros/`
 * **Responsibilities**:
   1. Bootstraps the initial Macros execution environment directly from bare metal.
   2. Implements the Immix mark-region garbage collector (`src/macros/gc.zig`).
-  3. Provides cooperative green-thread fiber scheduling (`src/macros/fiber.zig`).
+  3. Provides cooperative green-thread fiber scheduling (`src/macros/fiber.zig`) and VM execution (`src/macros/vm.zig`).
   4. Exposes the native C-ABI substrate (`src/kernel/abi.zig`) and builtin operations.
+  5. Provides freestanding native machine code generation (`src/macros/codegen_x86_64.zig`), relocatable ELF64 object emission (`src/macros/elf_emitter.zig`), and canonical chunk serialization (`src/macros/serializer.zig`).
 
 2.2 Stage 1: Macros-in-Macros Compiler Source
 ---------------------------------------------
@@ -64,6 +65,10 @@ Fixed-point verification mathematically guarantees deterministic, reproducible b
 2. Bytecode Chunk 1 is executed on the VM, compiling ``lib/macros/`` to produce Bytecode Chunk 2.
 3. The BLAKE3 cryptographic hashes of Bytecode Chunk 1 and Bytecode Chunk 2 are computed and compared (``BLAKE3(Chunk 1) == BLAKE3(Chunk 2)``).
 4. Any discrepancy indicates non-determinism, undefined behavior, or state leakage across compilation runs.
+
+2.4 Substrate Native Backend vs. Pure Macros Codegen
+----------------------------------------------------
+The pure Macros compiler (``lib/macros/compiler.mx``) currently emits deterministic bytecode chunks. Native x86_64 machine code compilation and relocatable ELF64 object generation are handled by the substrate runtime backend (``src/macros/codegen_x86_64.zig`` and ``src/macros/elf_emitter.zig``). Full self-hosting of the native machine code generator within ``lib/macros/`` is an evolutionary goal planned for future milestones.
 
 3. Pure Macros Compiler Pipeline (lib/macros/)
 ==============================================

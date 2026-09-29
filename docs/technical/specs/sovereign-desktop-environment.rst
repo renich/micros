@@ -31,8 +31,8 @@ A fixed 24-pixel top bar spanning the full display (1280x24) rendered in dark ch
 --------------------------------------------
 ``desk.mx`` manages four primary application surfaces tiled and floating across the 1280x776 desktop area:
 
-1. **Terminal Emulator Window (msh)**:
-   A high-speed stream-oriented terminal running the MicroShell CLI for executing builds, scripts, and system maintenance.
+1. **Terminal Emulator Window (ush)**:
+   A high-speed stream-oriented terminal running the µShell CLI for executing builds, scripts, and system maintenance.
 2. **AI Autonomous Studio Window (harness)**:
    A dedicated pair-programming studio modeled after sovereign agent environments, offering multi-turn conversations, tool calling inspection, clipboard management, and context auto-compression.
 3. **Workspace File Manager (files)**:

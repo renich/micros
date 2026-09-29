@@ -24,6 +24,6 @@ Sub-Specifications
 Strategic Objectives
 ====================
 1. **Dual-Native Sovereignty**: Create an environment equally intuitive for human infrastructure architects and autonomous AI engineering agents.
-2. **Elimination of Text-Stream Brittleness**: Replace untyped ASCII pipes with typed shared-memory rings in MicroShell (`msh`).
+2. **Elimination of Text-Stream Brittleness**: Replace untyped ASCII pipes with typed shared-memory rings in µShell (`ush`).
 3. **Immutable UKI & UEFI Delivery**: Package unified kernel images (`.efi`) for instant, measured, and verified boots across virtualized and bare-metal nodes.
 4. **Context-Window Efficiency**: Enforce strict file size and structural constraints (< 1,000 lines, max 3 nesting levels) to optimize LLM reasoning and code generation.

@@ -12,6 +12,15 @@ pub const CapType = enum(u16) {
     actor_control = 0x0005,
     network_device = 0x0006,
     storage_device = 0x0007,
+    /// Dedicated hardware MMIO/BAR window capability for device drivers.
+    /// Replaces overloaded memory_extent with strict device-bound semantics (P0-C1).
+    hardware_device = 0x0008,
+    /// Designated page-aligned DMA bounce buffer capability.
+    /// Exclusively authorized for sys_dma_bounce_copy transfers (P0-C1).
+    dma_buffer = 0x0009,
+    /// Dedicated in-system self-rewrite and kernel staging authority token.
+    /// Assigned 0x000A to prevent collision with storage_device (0x0007) per P4-C6.
+    rebuild_control = 0x000A,
 };
 
 pub const Rights = struct {
@@ -84,4 +93,60 @@ test "Capability initialization and rights verification" {
     overflow_cap.data_addr = std.math.maxInt(u64) - 100;
     overflow_cap.data_size = 200;
     try std.testing.expect(!overflow_cap.isValid());
+}
+
+test "P0-C1: hardware_device and dma_buffer typing, rights, and attenuation" {
+    const hw_cap = Capability{
+        .cap_type = .hardware_device,
+        .rights = Rights.READ | Rights.WRITE | Rights.REVOKE,
+        .object_id = 0x1AF4,
+        .data_addr = 0xFEB0_0000,
+        .data_size = 0x1000,
+    };
+
+    try std.testing.expect(hw_cap.isValid());
+    try std.testing.expectEqual(CapType.hardware_device, hw_cap.cap_type);
+    try std.testing.expect(hw_cap.hasRight(Rights.READ));
+    try std.testing.expect(hw_cap.hasRight(Rights.WRITE));
+    try std.testing.expect(hw_cap.hasRight(Rights.REVOKE));
+    try std.testing.expect(!hw_cap.hasRight(Rights.GRANT));
+    try std.testing.expect(!hw_cap.hasRight(Rights.EXECUTE));
+
+    const dma_cap = Capability{
+        .cap_type = .dma_buffer,
+        .rights = Rights.READ | Rights.WRITE | Rights.GRANT,
+        .object_id = 42,
+        .data_addr = 0x0020_0000,
+        .data_size = 65536,
+    };
+
+    try std.testing.expect(dma_cap.isValid());
+    try std.testing.expectEqual(CapType.dma_buffer, dma_cap.cap_type);
+    try std.testing.expect(dma_cap.hasRight(Rights.READ));
+    try std.testing.expect(dma_cap.hasRight(Rights.WRITE));
+    try std.testing.expect(dma_cap.canGrant());
+    try std.testing.expect(!dma_cap.hasRight(Rights.EXECUTE));
+    try std.testing.expect(!dma_cap.hasRight(Rights.REVOKE));
+
+    // Attenuation: READ-only hardware probe token (STG_3_AUDIT_RO)
+    var ro_hw = hw_cap;
+    ro_hw.rights = hw_cap.rights & Rights.READ;
+    try std.testing.expect(ro_hw.isValid());
+    try std.testing.expect(ro_hw.hasRight(Rights.READ));
+    try std.testing.expect(!ro_hw.hasRight(Rights.WRITE));
+    try std.testing.expect(!ro_hw.hasRight(Rights.REVOKE));
+
+    // Phase 4 / P4-C6: rebuild_control capability (0x000A)
+    const rebuild_cap = Capability{
+        .cap_type = .rebuild_control,
+        .rights = Rights.WRITE | Rights.EXECUTE,
+        .object_id = 99,
+        .data_addr = 0,
+        .data_size = 0,
+    };
+    try std.testing.expect(rebuild_cap.isValid());
+    try std.testing.expectEqual(CapType.rebuild_control, rebuild_cap.cap_type);
+    try std.testing.expect(rebuild_cap.hasRight(Rights.WRITE));
+    try std.testing.expect(rebuild_cap.hasRight(Rights.EXECUTE));
+    try std.testing.expect(!rebuild_cap.hasRight(Rights.GRANT));
 }

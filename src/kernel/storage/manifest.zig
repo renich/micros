@@ -29,6 +29,10 @@ pub const WorkspaceEntry = extern struct {
     pub fn getName(self: *const WorkspaceEntry) []const u8 {
         return self.name[0..self.name_len];
     }
+
+    pub fn isTombstone(self: *const WorkspaceEntry) bool {
+        return (self.flags & WorkspaceEntryFlags.DELETED) != 0;
+    }
 };
 
 pub const WorkspaceManifestHeader = extern struct {
@@ -94,8 +98,16 @@ pub const WorkspaceManifest = struct {
 
     pub fn lookup(self: *const WorkspaceManifest, path: []const u8) ?*const WorkspaceEntry {
         const idx = self.findEntryIndex(path) orelse return null;
-        if ((self.entries[idx].flags & WorkspaceEntryFlags.DELETED) != 0) return null;
+        if (self.entries[idx].isTombstone()) return null;
         return &self.entries[idx];
+    }
+
+    pub fn activeEntryCount(self: *const WorkspaceManifest) usize {
+        var count: usize = 0;
+        for (0..self.header.entry_count) |i| {
+            if (!self.entries[i].isTombstone()) count += 1;
+        }
+        return count;
     }
 
     fn findInsertIndex(self: *const WorkspaceManifest, path: []const u8) usize {
@@ -118,7 +130,9 @@ pub const WorkspaceManifest = struct {
         if (!validatePath(path)) return error.InvalidPath;
 
         if (self.findEntryIndex(path)) |existing_idx| {
-            self.header.total_bytes -= self.entries[existing_idx].size;
+            if (!self.entries[existing_idx].isTombstone()) {
+                self.header.total_bytes -= self.entries[existing_idx].size;
+            }
             self.entries[existing_idx] = entry;
             self.header.total_bytes += entry.size;
             return;
@@ -141,14 +155,19 @@ pub const WorkspaceManifest = struct {
 
     pub fn deleteEntry(self: *WorkspaceManifest, path: []const u8) bool {
         const idx = self.findEntryIndex(path) orelse return false;
-        if ((self.entries[idx].flags & WorkspaceEntryFlags.DELETED) != 0) return false;
+        if (self.entries[idx].isTombstone()) return false;
 
         self.header.total_bytes -= self.entries[idx].size;
-        var i: usize = idx;
-        while (i + 1 < self.header.entry_count) : (i += 1) {
-            self.entries[i] = self.entries[i + 1];
-        }
-        self.header.entry_count -= 1;
+        self.entries[idx].flags |= WorkspaceEntryFlags.DELETED;
+        return true;
+    }
+
+    pub fn resurrectEntry(self: *WorkspaceManifest, path: []const u8) bool {
+        const idx = self.findEntryIndex(path) orelse return false;
+        if (!self.entries[idx].isTombstone()) return false;
+
+        self.entries[idx].flags &= ~WorkspaceEntryFlags.DELETED;
+        self.header.total_bytes += self.entries[idx].size;
         return true;
     }
 
@@ -246,9 +265,16 @@ test "workspace manifest insert, sort, lookup and delete" {
     try std.testing.expect(ws.lookup("nonexistent") == null);
 
     try std.testing.expect(ws.deleteEntry("file_b.c"));
-    try std.testing.expectEqual(@as(u32, 2), ws.header.entry_count);
+    try std.testing.expectEqual(@as(usize, 2), ws.activeEntryCount());
     try std.testing.expect(ws.lookup("file_b.c") == null);
+    try std.testing.expect(ws.entries[ws.findEntryIndex("file_b.c").?].isTombstone());
     try std.testing.expectEqual(@as(u64, 500), ws.header.total_bytes);
+
+    // Resurrect entry and prove state restored
+    try std.testing.expect(ws.resurrectEntry("file_b.c"));
+    try std.testing.expectEqual(@as(usize, 3), ws.activeEntryCount());
+    try std.testing.expect(ws.lookup("file_b.c") != null);
+    try std.testing.expectEqual(@as(u64, 600), ws.header.total_bytes);
 }
 
 test "workspace manifest serialization roundtrip" {

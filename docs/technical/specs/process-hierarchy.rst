@@ -16,12 +16,13 @@ Prior to this architecture, the microkernel booted directly into a full-screen g
 
 The decoupled process hierarchy enforces four strict layers:
 
-* **Layer 0 (Microkernel Substrate)**: Ring 0 Zig implementation providing raw CPU fiber scheduling, PMM/VMM memory isolation, VirtIO drivers, SPSC IPC rings, capability checks, and the unified native C-ABI substrate (`src/kernel/abi.zig`). Exposes mechanism only; enforces zero UI or shell policies.
-* **Layer 1 (Supervisor)**: Root userspace actor (`lib/macros/init.mx`, PID 1 / Actor 0) running in CSpace 0. Acts as the immortal Erlang-style hardware supervisor. Reads genesis payloads, spawns default user interfaces, and traps child faults and termination events.
-* **Layer 2 (MicroShell)**: Primary system interface (`lib/macros/msh.mx`). Dual-output terminal interface for humans and AI agents. Renders directly to the UEFI GOP linear framebuffer (`tty0`) while mirroring to the UART 16550 serial console (`ttyS0`). Handles command evaluation, telemetry queries, actor lifecycle management, CAS storage manipulation, and application dispatching.
-* **Layer 3 (Interactive Studio)**: Visual IDE and GOP canvas workspace (`lib/macros/harness.mx`). Launched on demand from MicroShell (`msh> harness`), rendering vector telemetry and actor graphs on the 1280x800 framebuffer. Exits cleanly back to MicroShell via `exit`, restoring MicroShell's display.
+* **Layer 0 (Microkernel Substrate)**: Ring 0 Zig implementation providing raw CPU fiber scheduling, PMM/VMM memory isolation, VirtIO drivers, SPSC IPC rings, capability checks, and the unified native C-ABI substrate (``src/kernel/abi.zig``). Exposes mechanism only; enforces zero UI or shell policies.
+* **Layer 1 (Supervisor)**: Root userspace actor (``lib/macros/init.mx``, PID 1 / Actor 0) running in CSpace 0. Acts as the immortal Erlang-style hardware supervisor. Reads genesis payloads, spawns default user interfaces, and traps child faults and termination events.
+* **Layer 2 (µShell)**: Primary system interface (``lib/macros/ush.mx``). Stream-oriented CLI and conversational dispatcher for humans and AI agents over UART serial console and terminal canvas. Handles command evaluation, telemetry queries, actor lifecycle management, CAS storage manipulation, and application dispatching.
+* **Layer 3 (Sovereign Canvas & Display Server)**: Window compositor and GOP canvas server (``gopd`` / ``window_abi``). Manages tiled/floating window surfaces, visual layout, and double-buffered frame flushes.
+* **Layer 4 (Sandboxed Guest Actors)**: Dynamically spawned userland applications (e.g. hypermedia viewer, editors, synthesized tools). Execute in sandboxed CSpaces with attenuated capabilities, instruction gas budgeting (G4), and content-addressed persistence (CAS).
 
-2. Four-Layer Process Taxonomy
+2. Five-Layer Process Taxonomy
 ==============================
 
 .. code-block:: text
@@ -37,43 +38,30 @@ The decoupled process hierarchy enforces four strict layers:
    +------------------------------+------------------------------+
                                   | Spawns
    +------------------------------v------------------------------+
-   | Layer 2: MicroShell (lib/macros/msh.mx, Dual GOP/TTY)       |
-   | Line Editor, Builtin Dispatcher, Actor Manager, Framebuffer |
+   | Layer 2: µShell (lib/macros/ush.mx, Stream / Prompt)        |
+   | Line Editor, 7 Guest Verbs, Resident AI Dispatch, Telemetry |
    +------------------------------+------------------------------+
-                                  | Launches on Demand
+                                  | Manages & Composes
    +------------------------------v------------------------------+
-   | Layer 3: Interactive Studio (lib/macros/harness.mx)         |
-   | Direct GOP Framebuffer Canvas, Visual Telemetry, Vector UI  |
+   | Layer 3: Sovereign Canvas (gopd, Window Surface Manager)    |
+   | Vector GOP Linear Surface, Window Clipping, Atomic Commit   |
+   +------------------------------+------------------------------+
+                                  | Sandboxes on Demand
+   +------------------------------v------------------------------+
+   | Layer 4: Sandboxed Guest Actors (Demand Synthesized / CAS)  |
+   | Attenuated CSpace, Gas Metering, Merkle OCC Workspace       |
    +-------------------------------------------------------------+
 
 3. Unified Native C-ABI Substrate (src/kernel/abi.zig)
 ======================================================
-All capability invocations from the Macros runtime enter the microkernel through a standardized, typed ABI table registered with each actor's VM instance:
+All capability invocations from the Macros runtime enter the microkernel through a standardized, typed ABI table registered with each actor's VM instance (24 core primitives):
 
-* ``sys_actor_count() -> i64``: Total number of active actor domains in the registry.
-* ``sys_actor_spawn(name: str) -> i64``: Spawns an actor domain by name.
-* ``sys_actor_spawn_code(name: str, src: str) -> i64``: Compiles and spawns an isolated actor fiber.
-* ``sys_actor_terminate(id: int) -> i64``: Requests cooperative termination of an actor domain.
-* ``sys_actor_wait(id: int) -> bool``: Suspends the calling fiber until the target actor terminates or faults.
-* ``sys_actor_state(id: int) -> i64``: Returns actor lifecycle state (0=uninitialized, 1=ready, 2=running, 3=paused, 4=faulted, 5=terminated, -1=invalid).
-* ``sys_actor_name(id: int) -> str``: Retrieves the registered human-readable name of an actor.
-* ``sys_fb_clear(color: int) -> void``: Sets the entire linear GOP framebuffer to a 32-bit ARGB color.
-* ``sys_fb_draw_string(x: int, y: int, s: str, fg: int, bg: int) -> void``: Blits 8x8 font glyphs.
-* ``sys_fb_draw_rect(x: int, y: int, w: int, h: int, color: int) -> void``: Blits solid color rectangle.
-* ``sys_ipc_recv() -> str``: Pops messages from the actor's incoming SPSC ring buffer.
-* ``sys_serial_write(s: str) -> void``: Emits text directly out the COM1 UART serial port.
-* ``sys_serial_read() -> i64``: Non-blocking poll of COM1 UART input buffer.
-* ``sys_kbd_read() -> i64``: Non-blocking poll of PS/2 keyboard scancode queue.
-* ``sys_fault_count() -> i64``: Total number of hardware exceptions contained by the supervisor.
-* ``sys_ai_prompt(prompt: str) -> str``: Synchronous inference request to resident AI over VirtIO/TLS.
-* ``sys_ai_extract_code(resp: str) -> str``: Zero-allocation code block extraction.
-* ``sys_ai_tool_call(resp: str) -> str``: Zero-allocation structured tool call parser and dispatcher.
-* ``sys_cas_put(data: str) -> str``: Computes BLAKE3 hash and persists payload to VirtIO-Blk CAS.
-* ``sys_cas_get(hex: str) -> str``: Fetches immutable payload from CAS by 64-character hex hash.
-* ``sys_actor_persist(id: int) -> str``: Persists actor source snapshot to CAS root.
-* ``sys_actor_spawn_cas(hex: str) -> i64``: Reconstitutes and spawns actor directly from CAS hash.
-* ``sys_bundle_read(name: str) -> str``: Extracts payload directly from the genesis MCB bundle.
-* ``sys_yield() -> void``: Yields CPU execution context to the next ready fiber in the scheduler.
+* **Actor Lifecycle**: ``sys_actor_spawn``, ``sys_actor_terminate``, ``sys_actor_state``, ``sys_actor_set_budget``, ``sys_yield``.
+* **IPC & Events**: ``sys_event_poll``, ``sys_ipc_recv``, ``sys_kbd_read``.
+* **Content Storage (CAS)**: ``sys_cas_put``, ``sys_cas_get``, ``sys_cas_confirm_boot``.
+* **Workspace Catalog**: ``sys_catalog_write``, ``sys_catalog_read``, ``sys_catalog_status``, ``sys_catalog_list``, ``sys_catalog_delete``.
+* **Window Surface (Canvas)**: ``sys_window_create``, ``sys_window_close``, ``sys_window_focus``, ``sys_window_draw_rect``, ``sys_window_commit``.
+* **Resident AI & Cluster**: ``sys_ai_prompt``, ``sys_peer_count``, ``sys_peer_info``.
 
 4. Actor Lifecycle & Supervision Invariants
 ===========================================
@@ -99,22 +87,26 @@ Actor 0 executes an immortal supervision loop:
        while (true) {
            st = sys_actor_state(child_id);
            if (st == 5) {
-               print("[init] App 0 (msh) exited. Respawning shell...");
-               msh_src = sys_bundle_read("msh.mx");
-               child_id = sys_actor_spawn_code("msh", msh_src);
+               print("[init] Shell exited. Respawning...");
+               ush_src = sys_bundle_read("ush.mx");
+               child_id = sys_actor_spawn("ush", ush_src);
            } else if (st == 4) {
-               print("[init] App 0 (msh) faulted! Respawning shell...");
-               msh_src = sys_bundle_read("msh.mx");
-               child_id = sys_actor_spawn_code("msh", msh_src);
+               print("[init] Shell faulted! Respawning...");
+               ush_src = sys_bundle_read("ush.mx");
+               child_id = sys_actor_spawn("ush", ush_src);
+           } else if (st < 0) {
+               print("[init] Shell missing. Respawning...");
+               ush_src = sys_bundle_read("ush.mx");
+               child_id = sys_actor_spawn("ush", ush_src);
            }
            sys_yield();
        }
    }
 
-When the interactive shell terminates (voluntarily or via fault), the supervisor immediately detects state 5 or 4, reloads ``msh.mx`` from the genesis bundle, and reconstitutes the user session with zero kernel reboots.
+When the interactive shell terminates (voluntarily or via fault), the supervisor immediately detects state 5 or 4, reloads ``ush.mx`` from the genesis bundle, and reconstitutes the user session with zero kernel reboots.
 
 5. Focus Arbitration & Terminal Ergonomics
 ==========================================
-* **Serial / TTY Co-existence**: MicroShell (``msh.mx``) uses COM1 serial output and standard TTY escape sequences for line editing and prompt redraws.
-* **Canvas Preemption**: When ``harness.mx`` is launched, it takes exclusive ownership of the GOP framebuffer, rendering vector graphs and the Actor Inspector.
-* **Serene Return**: Upon entering ``exit`` in the harness, ``harness.mx`` executes ``sys_fb_clear(0)`` to wipe graphical artifacts and terminates its fiber. MicroShell resumes from ``sys_actor_wait``, announces return, and displays the standard ``msh>`` prompt.
+* **Serial / TTY Co-existence**: µShell (``ush.mx``) uses COM1 serial output and standard ANSI escape sequences for stream interaction.
+* **Canvas Window Management**: Graphical applications execute as isolated window surfaces composed via ``sys_window_commit``.
+* **Serene Return**: When a guest application actor exits, its window surface is closed cleanly and control returns instantly to the host shell session without display corruption.

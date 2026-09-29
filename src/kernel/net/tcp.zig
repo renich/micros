@@ -57,21 +57,21 @@ pub const TcpHeader = struct {
 };
 
 pub fn calculateChecksum(src_ip: [4]u8, dst_ip: [4]u8, tcp_packet: []const u8) u16 {
-    var sum: u32 = 0;
+    var sum: u64 = 0;
     // Pseudo-header
-    sum += ((@as(u32, src_ip[0]) << 8) | src_ip[1]);
-    sum += ((@as(u32, src_ip[2]) << 8) | src_ip[3]);
-    sum += ((@as(u32, dst_ip[0]) << 8) | dst_ip[1]);
-    sum += ((@as(u32, dst_ip[2]) << 8) | dst_ip[3]);
+    sum += ((@as(u64, src_ip[0]) << 8) | src_ip[1]);
+    sum += ((@as(u64, src_ip[2]) << 8) | src_ip[3]);
+    sum += ((@as(u64, dst_ip[0]) << 8) | dst_ip[1]);
+    sum += ((@as(u64, dst_ip[2]) << 8) | dst_ip[3]);
     sum += PROTO_TCP;
-    sum += @as(u32, @intCast(tcp_packet.len));
+    sum += @as(u64, @intCast(tcp_packet.len));
 
     var i: usize = 0;
     while (i + 1 < tcp_packet.len) : (i += 2) {
-        sum += (@as(u32, tcp_packet[i]) << 8) | @as(u32, tcp_packet[i + 1]);
+        sum += (@as(u64, tcp_packet[i]) << 8) | @as(u64, tcp_packet[i + 1]);
     }
     if (i < tcp_packet.len) {
-        sum += @as(u32, tcp_packet[i]) << 8;
+        sum += @as(u64, tcp_packet[i]) << 8;
     }
 
     while ((sum >> 16) != 0) {
@@ -151,7 +151,9 @@ pub fn writePacket(
     flags: u9,
     payload: []const u8,
 ) !usize {
-    const total_len = TCP_HEADER_MIN_LEN + payload.len;
+    const total_len_u32 = @as(u32, TCP_HEADER_MIN_LEN) + @as(u32, @intCast(payload.len));
+    if (total_len_u32 > 0xFFFF) return error.PayloadTooLarge;
+    const total_len: usize = total_len_u32;
     if (out_buf.len < total_len) return error.BufferTooSmall;
 
     writeTcpHeaderFields(out_buf, src_port, dst_port, seq, ack, flags);

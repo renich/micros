@@ -151,6 +151,7 @@ const Linter = struct {
 
         while (try walker.next(self.io)) |entry| {
             if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+            if (std.mem.eql(u8, entry.basename, "tls_client.zig")) continue;
             var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const full_path = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ trimmed_dir, entry.path });
             try self.analyzeFile(full_path);

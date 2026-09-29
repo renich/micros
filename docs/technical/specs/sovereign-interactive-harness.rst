@@ -4,7 +4,8 @@ Sovereign Interactive Harness & Co-Creation Engine Spec
 
 :Document ID: SPEC-TECH-HARNESS-002
 :Status: Approved
-:Traced Stories: [US-REN-001], [US-REN-002], [US-REN-006], [US-GEM-001], [US-GEM-009], [US-GEM-010]
+:Traced Stories: [US-REN-001], [US-REN-002], [US-REN-006], [US-REN-008], [US-GEM-001], [US-GEM-009], [US-GEM-010]
+:Absorbed Specifications: `SPEC-TECH-HARNESS-001` (Actor Harness & Supervisor Protocol)
 
 1. Architectural Axioms & Purpose
 =================================
@@ -15,20 +16,24 @@ This specification defines the interactive execution architecture, hardware inpu
 Prior to Milestone 13, MicrOS operated as a batch-execution pipeline: UEFI booted, initialized the Genesis Actor, rendered a static GOP canvas from ``harness.mx``, executed hardcoded scripted turns with the Resident AI over TLS 1.3, and halted the CPU.
 
 Milestones 13 and 15b convert this into an interactive, conversational, and self-healing co-creation studio:
-* The system boots into Actor 0 (``init.mx``), which launches MicroShell (``msh.mx``) as App 0.
-* When the user requests visual workspace access via ``msh> harness``, ``harness.mx`` launches as App 1.
-* The Harness takes ownership of the linear 1280x800 GOP framebuffer, rendering vector status panels, active actor tables, and interactive line prompts.
-* Natural language prompts and typed commands are entered directly into the Harness REPL or MicroShell.
+* The system boots into Actor 0 (``init.mx``), which launches µShell (``ush.mx``) as App 0.
+* When the user requests visual workspace access via ``ush> :run harness``, ``harness.mx`` launches as an isolated actor.
+* The Harness takes ownership of the assigned window extent, rendering vector status panels, active actor tables, and interactive line prompts.
+* Natural language prompts and typed commands are entered directly into the Harness REPL or µShell.
 * The Harness forwards prompts to the Resident AI subsystem via ``sys_ai_prompt()``.
-* Emitted Macros code is compiled live into an isolated Actor domain via ``sys_actor_spawn_code()``.
+* Emitted Macros code is compiled live into an isolated Actor domain via ``sys_actor_spawn()``.
 * The newly created Actor runs cooperatively on bare-metal hardware, and its state/capabilities appear dynamically in the Actor Inspector panel.
 * If an Actor crashes, the Erlang-style hardware supervisor intercepts the exception and alerts the Harness for interactive remediation.
-* Upon entering ``exit``, the harness clears the framebuffer via ``sys_fb_clear(0)`` and yields back to MicroShell.
+* Upon entering ``:exit``, the harness clears its window surface via ``sys_window_commit()`` and yields back to µShell.
 
 1.2 Mechanism vs Policy
 -----------------------
 * **Microkernel Mechanism**: Raw x86_64 CPU fiber context switching, non-blocking PS/2 keyboard FIFO polling, COM1 UART register access, GOP framebuffer vector blitting, VirtIO-Net packet transport, and TLS 1.3 encryption.
-* **App 1 Policy**: The Interactive Studio (written in Macros) dictates visual UI layout, command syntax, input line editing, prompt assembly, and error display. The Resident AI defines the system software ontology and implementation code.
+* **App Policy**: The Interactive Studio (written in Macros) dictates visual UI layout, command syntax, input line editing, prompt assembly, and error display. The Resident AI defines the system software ontology and implementation code.
+
+1.3 Synthesized-Tool Status Note (Milestone 38)
+-----------------------------------------------
+Per Milestone 38 (Sovereign OS Stage 1), ``harness.mx`` is excised from the genesis binary image. It operates as a synthesized-on-demand utility or loads from the Content-Addressed Storage (CAS) cache upon user request. µShell (``ush.mx``) serves as the primary conversational interaction substrate, while the interactive studio is spawned into Layer 4 with isolated, capability-governed sandboxing.
 
 2. Hardware Input & Keystroke ABI
 =================================
@@ -142,3 +147,73 @@ When the Resident AI returns executable code in response to a user prompt, the H
 3. **Headless Sentinel Verification**: ``micros-runner.bash`` scripts serial commands to the harness, asserting automated actor creation and status output.
 4. **Visual Canvas Verification**: ``micros-fb-verify`` validates framebuffer console text and inspector panel rendering.
 5. **Traceability**: All referenced user stories verified by ``micros-spec-trace.bash``.
+
+8. Hardware Input, Key Event ABI & Supervisor Protocol
+======================================================
+
+8.1 Key Event Structure
+-----------------------
+Input events are represented as an 8-byte packed structure:
+
+.. code-block:: zig
+
+   pub const KeyAction = enum(u8) {
+       press = 0x01,
+       release = 0x02,
+       repeat = 0x03,
+   };
+
+   pub const KeyModifiers = packed struct(u8) {
+       shift: bool = false,
+       ctrl: bool = false,
+       alt: bool = false,
+       caps: bool = false,
+       super: bool = false,
+       _reserved: u3 = 0,
+   };
+
+   pub const KeyEvent = extern struct {
+       scancode: u8,
+       action: KeyAction,
+       modifiers: KeyModifiers,
+       ascii: u8,
+       keycode: u16,
+       reserved: u16 = 0,
+   };
+
+8.2 PS/2 8042 Controller Protocol
+---------------------------------
+* Data Port: ``0x60``
+* Status/Command Port: ``0x64``
+* Interrupt: IRQ 1 (mapped to IDT vector 33).
+* State Machine: Tracks 1-byte and 2-byte (``0xE0`` extended) Scancode Set 1 make/break sequences, updating modifier bits on press/release of Shift, Ctrl, Alt, and CapsLock.
+
+8.3 Actor Lifecycle & Supervisor Invariants
+-------------------------------------------
+An actor exists in one of six deterministic states:
+
+* ``uninitialized``: Slot allocated but memory/CSpace unassigned.
+* ``ready``: Initialized with valid entry point, awaiting fiber scheduling.
+* ``running``: Currently actively executing on a CPU fiber.
+* ``paused``: Temporarily suspended by supervisor command.
+* ``faulted``: CPU exception trapped; awaiting supervisor remediation.
+* ``terminated``: Halted; capabilities revoked and memory extents reclaimed.
+
+The ``actor_control`` capability controls lifecycle:
+* ``Rights.READ`` (0x0001): Inspect actor state, execution counters, and CSpace size.
+* ``Rights.WRITE`` (0x0002): Pause or resume execution.
+* ``Rights.GRANT`` (0x0004): Delegate control capability to another actor.
+* ``Rights.REVOKE`` (0x0008): Terminate actor and reclaim resources.
+* ``Rights.EXECUTE`` (0x0010): Step or schedule actor fiber.
+
+When an architectural exception occurs in an actor with ``id > 0``, the CPU context is serialized into a 32-byte ``FaultFrame`` containing ``actor_id``, ``vector``, ``error_code``, ``rip``, ``rsp``, and ``cr2``. The faulting actor is suspended and its designated supervisor notified.
+
+9. Verification & Traceability Matrix
+=====================================
+* ``[US-REN-001]``: Direct interactive shell access and conversational AI tool execution.
+* ``[US-REN-002]``: Standalone Macros script execution from persistent workspace storage.
+* ``[US-REN-006]``: Zero-POSIX immutable Content-Addressed Storage backed by BLAKE3 hashes.
+* ``[US-REN-008]``: Persistent Merkle workspace catalog with atomic OCC snapshot commits.
+* ``[US-GEM-001]``: Autonomous machine engineering, tool creation, and dynamic service deployment.
+* ``[US-GEM-009]``: Self-healing actor execution and dynamic workspace supervisor controls.
+* ``[US-GEM-010]``: Context-window-optimized module boundaries (files <= 1,000 lines, functions <= 40 lines).

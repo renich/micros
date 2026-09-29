@@ -109,8 +109,8 @@ User Stories Traceability Matrix
    | [US-GEM-007]  | Bidirectional Specification Traceability      | tools/micros-spec-trace.bash      | make spec-trace                   | COMPLIANT  |
    |               |                                               |                                   | Document dependency validation    |            |
    +---------------+-----------------------------------------------+-----------------------------------+-----------------------------------+------------+
-   | [US-GEM-008]  | Isolated Immix GC Heap Partitioning           | src/macros/immix.zig              | src/macros/immix.zig              | COMPLIANT  |
-   |               |                                               | src/macros/gc.zig                 | "ImmixHeap allocation and line..."|            |
+   | [US-GEM-008]  | Isolated Immix GC Heap Partitioning           | src/macros/gc.zig                 | src/macros/gc.zig                 | COMPLIANT  |
+   |               |                                               |                                   | "ImmixHeap allocation and line..."|            |
    +---------------+-----------------------------------------------+-----------------------------------+-----------------------------------+------------+
    | [US-GEM-009]  | Self-Healing Script Execution in MicroShell   | src/msh/shell.zig                 | src/msh/shell.zig                 | COMPLIANT  |
    |               |                                               | src/macros/eval.zig               | "MicroShell builtin execution"    |            |
@@ -132,7 +132,7 @@ Technical Sub-Specifications Matrix
    +---------------------------+-----------------------------------+-------------------------------+-------------------------------+------------+
    | SPEC-TECH-MACROS-LANG-001 | Macros Language Formal Spec       | src/macros/                   | src/macros/lexer.zig, vm.zig  | COMPLIANT  |
    +---------------------------+-----------------------------------+-------------------------------+-------------------------------+------------+
-   | SPEC-TECH-MACROS-001      | Macros Runtime Specification      | src/macros/                   | src/macros/immix.zig, gc.zig  | COMPLIANT  |
+   | SPEC-TECH-MACROS-001      | Macros Runtime Specification      | src/macros/                   | src/macros/gc.zig             | COMPLIANT  |
    +---------------------------+-----------------------------------+-------------------------------+-------------------------------+------------+
    | SPEC-TECH-MACROS-SELF-001 | Self-Hosting Bootstrap Plan       | lib/macros/                   | lib/macros/compiler.mx tests  | COMPLIANT  |
    +---------------------------+-----------------------------------+-------------------------------+-------------------------------+------------+

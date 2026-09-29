@@ -8,7 +8,7 @@ MicrOS (µOS) Master Technical Specification
 
 Technical Architecture Overview
 ===============================
-This specification defines the substrate engineering standards, the Macros programming language runtime, the MicroShell (`msh/ush`) interaction interface, and the deterministic verification toolchain for MicrOS (µOS).
+This specification defines the substrate engineering standards, the Macros programming language runtime, the µShell (`ush`) interaction interface, and the deterministic verification toolchain for MicrOS (µOS).
 
 Technical Sub-Specifications
 ============================
@@ -21,24 +21,23 @@ Technical Sub-Specifications
    specs/macros-lang
    specs/macros-runtime
    specs/self-hosting-macros
-   specs/microshell-msh
+   specs/ushell-ush
+   specs/sovereign-shell
    specs/toolchain
    specs/sovereign-capability-substrate
-   specs/sovereign-harness-protocol
    specs/sovereign-gemini-orchestrator
    specs/sovereign-interactive-harness
    specs/sovereign-storage-substrate
    specs/sovereign-tool-calling
    specs/process-hierarchy
    specs/reactive-compositor
-   specs/sovereign-cord-cutting
+   specs/sovereign-workspace
    specs/self-rebuilding-kernel
-   specs/fast-path-tcp-server
-   specs/git-smart-http-ingestion
    specs/sovereign-workspace-catalog
-   specs/sovereign-ai-tool-synthesis
    specs/content-addressed-modules
    specs/microkernel-network-decoupling
+   specs/p2p-artifact-replication
+   specs/driver-synthesis
    specs/hardware-ring3-syscall
    specs/smp-apic-preemption
    specs/pure-microkernel-compositor

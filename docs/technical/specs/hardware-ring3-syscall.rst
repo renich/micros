@@ -176,3 +176,95 @@ Every Ring 3 actor receives a distinct PML4 page directory.
 2. **Supervisor Page Access Traps**: Execute a test actor attempting to read ``0xFFFF_8000_0000_0000``. The CPU must trigger vector 14 (``#PF`` with User/Protection fault error code).
 3. **Stack Swap Verification**: Verify that during a syscall loop, kernel execution never uses the userland stack pointer, preventing user-space stack smash exploits.
 4. **Syscall Fuzzing**: Stream invalid capability handles, out-of-range syscall numbers, and unaligned buffer addresses through ``micros-telem``; all must return typed capability errors (e.g. ``CapabilityDenied``, ``InvalidHandle``) without panicking Ring 0.
+
+6. Standard 24-Primitive Syscall Table & Capability Semantics
+=============================================================
+MicrOS enforces zero ambient authority. Standard userland applications execute against a streamlined, type-safe substrate interface bounded to 24 core primitives.
+
+6.1 Standard Application Syscall Surface (24 Primitives)
+-------------------------------------------------------
+.. list-table::
+   :widths: 20 25 55
+   :header-rows: 1
+
+   * - Category
+     - Primitive
+     - Required Capability & Semantic Role
+   * - **Actor Lifecycle**
+     - ``sys_actor_spawn``
+     - ``CAP_ACTOR_CONTROL (WRITE)``: Spawn child actor from source, bundle, or CAS.
+   * -
+     - ``sys_actor_terminate``
+     - ``CAP_ACTOR_CONTROL (WRITE)``: Halt child actor; cannot terminate Actor 0 (supervisor).
+   * -
+     - ``sys_actor_state``
+     - ``None``: 1-arg queries metrics / status; 2-arg queries ``[state, name, budget, sup]``.
+   * -
+     - ``sys_actor_set_budget``
+     - ``CAP_ACTOR_CONTROL (WRITE)``: Set actor instruction gas budget (G4).
+   * -
+     - ``sys_yield``
+     - ``None``: Voluntarily yield execution time slice to fiber scheduler.
+   * - **IPC & Events**
+     - ``sys_event_poll``
+     - ``CAP_FRAMEBUFFER (READ)`` or ``CAP_ACTOR_CONTROL (READ)``: Non-blocking event poll.
+   * -
+     - ``sys_ipc_recv``
+     - ``CAP_IPC_RING (READ)``: Receive structured message frame.
+   * -
+     - ``sys_kbd_read``
+     - ``CAP_FRAMEBUFFER (READ)``: Read scancode or decoded ASCII key event.
+   * - **Content Storage (CAS)**
+     - ``sys_cas_put``
+     - ``CAP_STORAGE_DEVICE (WRITE)``: Store immutable payload; returns 64-char BLAKE3 hex.
+   * -
+     - ``sys_cas_get``
+     - ``CAP_STORAGE_DEVICE (READ)``: Fetch content-addressed blob by 64-char hex hash.
+   * -
+     - ``sys_cas_confirm_boot``
+     - ``CAP_STORAGE_DEVICE (WRITE)``: Promote trial boot slot generation to stable.
+   * - **Workspace Catalog (G5)**
+     - ``sys_catalog_write``
+     - ``CAP_STORAGE_DEVICE (WRITE)``: Bind human-legible tag/path to content; advance generation.
+   * -
+     - ``sys_catalog_read``
+     - ``CAP_STORAGE_DEVICE (READ)``: Resolve human tag or file path from catalog workspace.
+   * -
+     - ``sys_catalog_status``
+     - ``CAP_STORAGE_DEVICE (READ)``: Inspect workspace generation counter, entry count, root hash.
+   * -
+     - ``sys_catalog_list``
+     - ``CAP_STORAGE_DEVICE (READ)``: List workspace entries under optional prefix.
+   * -
+     - ``sys_catalog_delete``
+     - ``CAP_STORAGE_DEVICE (WRITE)``: Tombstone catalog tag/entry; advance generation counter.
+   * - **Window Surface (Canvas)**
+     - ``sys_window_create``
+     - ``CAP_FRAMEBUFFER (WRITE)``: Create isolated window surface.
+   * -
+     - ``sys_window_close``
+     - ``CAP_FRAMEBUFFER (WRITE)``: Close and destroy window surface.
+   * -
+     - ``sys_window_focus``
+     - ``CAP_FRAMEBUFFER (WRITE)``: Bring window surface to foreground.
+   * -
+     - ``sys_window_draw_rect``
+     - ``CAP_FRAMEBUFFER (WRITE)``: Draw filled rectangle on owned surface.
+   * -
+     - ``sys_window_commit``
+     - ``CAP_FRAMEBUFFER (WRITE)``: Atomic commit of window surfaces to display canvas.
+   * - **Resident AI & Cluster**
+     - ``sys_ai_prompt``
+     - ``None``: Dispatch conversational query or synthesis task to resident AI daemon.
+   * -
+     - ``sys_peer_count``
+     - ``CAP_NETWORK_DEVICE (READ)``: Query number of discovered cluster mesh peers.
+   * -
+     - ``sys_peer_info``
+     - ``CAP_NETWORK_DEVICE (READ)``: Query peer telemetry and IP address on mesh.
+
+6.2 Privilege Gates & Capability Semantics (C5 & O6)
+----------------------------------------------------
+* **C5 Installer Privilege Gate**: Destructive storage operations are unified under the atomic primitive ``sys_disk_provision(dev, cap, cfg)``. Callable only by actors possessing the ``INSTALLER`` role and holding ``CAP_STORAGE_ADMIN``. Genesis init drops installer authority irreversibly after initial setup.
+* **Supervisor Demotions**: Low-level serial I/O (``sys_serial_read``, ``sys_serial_write``) and kernel fault telemetry (``sys_fault_count``) are demoted behind Actor 0 / ``CAP_ACTOR_CONTROL (WRITE)`` authority.
+* **O6 Capability Naming**: Legacy file descriptors are prohibited. All resources are addressed via CSpace capability tokens binding strongly-typed ``CapType`` identifiers and unforgeable permission bitmasks (``Rights``).

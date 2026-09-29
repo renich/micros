@@ -3,7 +3,7 @@ Milestone 18b: Fast-Path TCP Server Substrate
 
 :Objective: Implement a freestanding, zero-libc Fast-Path Transmission Control Protocol (TCP) server engine for MicrOS (µOS). Deliver stateless BLAKE3 SYN-cookie generation, an RFC 9293 9-state TCP server state machine, in-order packet dropping, a static Transmission Control Block (TCB) pool, capability-gated network syscalls, and a pure Macros CAS-backed HTTP/1.1 web server actor.
 :Status: Complete & Verified
-:Specification: SPEC-TECH-NET-002
+:Specification: SPEC-TECH-NET-002 (Absorbed into SPEC-TECH-NET-004 in Milestone 38)
 
 Milestones & Deliverables
 -------------------------

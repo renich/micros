@@ -428,13 +428,13 @@ test "extract envelope gemini and parse tool call" {
 test "extract envelope openai escaped arguments" {
     const openai_json =
         "{\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\"," ++
-        "\"function\":{\"name\":\"spawn_actor\",\"arguments\":\"{\\\"name\\\":\\\"worker1\\\",\\\"source\\\":\\\"sys_actor_count();\\\"}\"}}]}}]}";
+        "\"function\":{\"name\":\"spawn_actor\",\"arguments\":\"{\\\"name\\\":\\\"worker1\\\",\\\"source\\\":\\\"sys_yield();\\\"}\"}}]}}]}";
     var scratch: [1024]u8 = undefined;
     const call = extractToolCall(openai_json, &scratch);
     try std.testing.expect(call != null);
     try std.testing.expectEqual(tools.ToolType.spawn_actor, @as(tools.ToolType, call.?));
     try std.testing.expectEqualStrings("worker1", call.?.spawn_actor.name);
-    try std.testing.expectEqualStrings("sys_actor_count();", call.?.spawn_actor.source);
+    try std.testing.expectEqualStrings("sys_yield();", call.?.spawn_actor.source);
 }
 
 test "format tool result and gemini return leg" {

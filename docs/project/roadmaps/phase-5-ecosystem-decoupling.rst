@@ -14,7 +14,7 @@ Milestones & Deliverables
    - Exposed capability-gated network syscall ABI (``sys_net_listen``, ``sys_net_accept``, ``sys_net_recv``, ``sys_net_send``, ``sys_net_close``).
    - Authored pure Macros CAS-backed HTTP/1.1 web server actor in ``lib/macros/http_server.mx`` and integrated ``httpd`` command in ``lib/macros/msh.mx``.
    - Verified live multi-route HTTP queries from host ``curl`` under QEMU over forwarded port 8080.
-   - Authored specification ``docs/technical/specs/fast-path-tcp-server.rst`` (``SPEC-TECH-NET-002``).
+   - Authored specification ``docs/technical/specs/fast-path-tcp-server.rst`` (``SPEC-TECH-NET-002``; *Historical Note: merged into microkernel-network-decoupling.rst in Milestone 38*).
 
 * **Milestone 19: Git Smart HTTP Transport & CAS Packfile Ingestion** [COMPLETE & VERIFIED]
    - Implemented Git packet-line framing parser and emitter in ``src/kernel/net/git_pkt.zig`` with 4-byte hex length prefixing.
@@ -22,7 +22,7 @@ Milestones & Deliverables
    - Implemented freestanding zero-libc Git packfile parser and zlib decompressor in ``src/kernel/net/git_pack.zig`` using ``std.compress.flate``.
    - Implemented content-addressed Git ingestion and capability-gated syscall ABI in ``src/kernel/net/git_abi.zig``.
    - Connected Git endpoints into ``lib/macros/http_server.mx``, enabling host ``git push`` directly to running MicrOS node over port 8080.
-   - Authored specification ``docs/technical/specs/git-smart-http-ingestion.rst`` (``SPEC-TECH-NET-003``).
+   - Authored specification ``docs/technical/specs/git-smart-http-ingestion.rst`` (``SPEC-TECH-NET-003``; *Historical Note: excised in Milestone 38 per zero-strings sovereign mesh architecture*).
 
 * **Milestone 20: Sovereign Catalog Broker & Semantic Workspace Substrate** [COMPLETE & VERIFIED]
    - Implemented Merkle Workspace Manifest substrate in ``src/kernel/storage/manifest.zig`` with 128-byte fixed records and strict path sanitization.
@@ -31,7 +31,7 @@ Milestones & Deliverables
    - Implemented stream-oriented workspace commands in ``lib/macros/msh.mx`` (``ls``, ``cat``, ``write``, ``rm``, ``commit``, ``workspace``, ``edit``).
    - Authored full-screen visual text editor actor in ``lib/macros/vedit.mx`` rendering directly to UEFI GOP framebuffer and serial console.
    - Implemented autonomous tool execution (``run <path>``) and conversational Resident AI tool synthesis (``ai <prompt>``).
-   - Authored specifications ``docs/technical/specs/sovereign-workspace-catalog.rst`` (``SPEC-TECH-FS-001``) and ``docs/technical/specs/sovereign-ai-tool-synthesis.rst`` (``SPEC-TECH-AI-002``).
+   - Authored specifications ``docs/technical/specs/sovereign-workspace-catalog.rst`` (``SPEC-TECH-FS-001``) and ``docs/technical/specs/sovereign-ai-tool-synthesis.rst`` (``SPEC-TECH-AI-002``; *Historical Note: merged into sovereign-tool-calling.rst in Milestone 38*).
 
 * **Milestone 21: Native Content-Addressed & Workspace Module System** [COMPLETE & VERIFIED]
    - Implemented ``import`` and ``export`` statements and expressions across Stage 0 (Zig) and Stage 1 (Macros) compilers, AST, lexer, and parser.

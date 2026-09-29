@@ -39,6 +39,16 @@ pub const Window = struct {
     mode: WindowMode,
     visible: bool,
     surface: *Surface,
+    badge: [8]u8 = [_]u8{0} ** 8,
+    badge_len: usize = 0,
+    badge_color: u32 = 0x00FF_9F1C,
+
+    pub fn setBadge(self: *Window, badge_text: []const u8, color: u32) void {
+        const copy_len = @min(badge_text.len, self.badge.len);
+        @memcpy(self.badge[0..copy_len], badge_text[0..copy_len]);
+        self.badge_len = copy_len;
+        self.badge_color = color;
+    }
 
     pub fn clientX(self: *const Window) i32 {
         return self.x + @as(i32, @intCast(DEFAULT_BORDER_WIDTH));
@@ -259,6 +269,16 @@ pub const WindowManager = struct {
 
         const title_str = win.title[0..win.title_len];
         canvas.drawString(wx + 4, wy + 4, title_str, title_fg, title_bg);
+
+        // G7: Render Ed25519 provenance badge on window chrome
+        if (win.badge_len > 0) {
+            const badge_str = win.badge[0..win.badge_len];
+            const badge_w = @as(u32, @intCast(win.badge_len * 8));
+            if (win.w > badge_w + 16) {
+                const badge_x = wx + win.w - badge_w - 8;
+                canvas.drawString(badge_x, wy + 4, badge_str, win.badge_color, title_bg);
+            }
+        }
     }
 
     pub fn hitTest(self: *const WindowManager, x: i32, y: i32) ?u32 {
@@ -297,6 +317,9 @@ fn initWindowStruct(
         .mode = mode,
         .visible = true,
         .surface = surf,
+        .badge = [_]u8{0} ** 8,
+        .badge_len = 0,
+        .badge_color = 0x00FF_9F1C,
     };
 }
 

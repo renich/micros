@@ -37,18 +37,20 @@ const virtio_net_mod = @import("drivers/virtio_net.zig");
 const virtio_blk_mod = @import("drivers/virtio_blk.zig");
 const nvme_mod = @import("drivers/nvme.zig");
 const block_mod = @import("drivers/block.zig");
+const probe_ladder_mod = @import("drivers/probe_ladder.zig");
 const block_cache_mod = @import("storage/block_cache.zig");
 const cas_mod = @import("storage/cas.zig");
 const cas_chunk_mod = @import("storage/chunk.zig");
 const rebuild_mod = @import("storage/rebuild.zig");
+const catalog_abi = @import("storage/catalog_abi.zig");
 const net_mod = @import("net.zig");
+const spki_mod = @import("net/spki.zig");
 const ai_mod = @import("ai.zig");
 const netd_mod = @import("../userland/netd/netd.zig");
 const aid_mod = @import("../userland/aid/aid.zig");
 const gopd_mod = @import("../userland/gopd/gopd.zig");
 const storaged_mod = @import("../userland/storaged/storaged.zig");
 const p2pd_mod = @import("../userland/p2pd/p2p.zig");
-const pkgd_mod = @import("../userland/pkgd/package.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
@@ -78,7 +80,6 @@ var global_aid: ?aid_mod.AiDaemon = null;
 var global_gopd: ?gopd_mod.GopDaemon = null;
 var global_storaged: ?storaged_mod.StorageDaemon = null;
 var global_p2pd: ?p2pd_mod.P2pDaemon = null;
-var global_pkgd: ?pkgd_mod.PackageDaemon = null;
 var global_ai_req_ring = ipc_mod.SpscRingBuffer.init();
 var global_ai_resp_ring = ipc_mod.SpscRingBuffer.init();
 var global_kbd: ps2_kbd_mod.Ps2Keyboard = ps2_kbd_mod.Ps2Keyboard.init();
@@ -102,7 +103,12 @@ fn kernelPanic(stage: []const u8) noreturn {
 }
 
 fn printBanner() void {
-    serial.writeString("\n\x1b[1;97mµOS 0.1.0-dev\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
+    serial.writeString("\n\x1b[1;97muOS 0.1.0-dev\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
+    if (config.trial_canary) {
+        serial.writeString("[trial] Trial slot candidate active (canary build, watchdog verdict pending)\n");
+    } else {
+        serial.writeString("[slot] Stable slot boot (last-known-good)\n");
+    }
 }
 
 fn initHardware(boot_info: *const BootInfo) void {
@@ -116,6 +122,7 @@ fn initHardware(boot_info: *const BootInfo) void {
     serial.writeStatusOk("boot", "UEFI handoff parameters validated");
     gdt.init();
     idt.init();
+    idt.setPageFaultProbeHook(probe_ladder_mod.handlePageFaultTrip);
     serial.writeStatusOk("arch", "GDT and IDT fault containment active");
     pmm.init(boot_info);
     vmm.init(boot_info.hhdm_offset);
@@ -130,7 +137,6 @@ fn initHardware(boot_info: *const BootInfo) void {
     apic.initTimer(apic.DEFAULT_QUANTUM_TICKS);
     smp.global_topology.bootstrapSecondaryCores(1);
     serial.writeStatusOk("smp ", "Local APIC 1000Hz preemption timer & SMP topology online");
-    initNetwork(boot_info);
 }
 
 fn printMac(mac: *const [6]u8) void {
@@ -148,11 +154,39 @@ fn printIpv4(ip: [4]u8) void {
     serial.writeString(str);
 }
 
-fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo) void {
+fn probeVirtioNetLadder(net_dev: pci_mod.PciDevice, mmio_addr: u64, cspace: *cspace_mod.CSpace) ?probe_ladder_mod.ProbeSession {
+    const desc = probe_ladder_mod.DeviceDescriptor{
+        .vendor_id = net_dev.vendor_id,
+        .device_id = net_dev.device_id,
+        .class_code = net_dev.class_code,
+        .subclass = net_dev.subclass,
+        .prog_if = net_dev.prog_if,
+        .bar0_addr = mmio_addr,
+        .bar0_size = 4096,
+        .irq_line = net_dev.irq_line,
+        .scratch_reg_offset = 0x14,
+        .irq_trigger_offset = 0x18,
+    };
+    var session = probe_ladder_mod.ProbeSession.init(1, desc, cspace);
+    session.advanceToPassiveEnum() catch return null;
+    session.advanceToOfflineSynth() catch return null;
+    session.advanceToAuditRo() catch return null;
+    _ = session.executeMmioRead(0x00) catch return null;
+    session.advanceToActiveProbe() catch return null;
+    _ = session.executeMmioWrite(0x14, 0x01) catch return null;
+    return session;
+}
+
+fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo, cspace: *cspace_mod.CSpace) void {
     const rx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse return;
     const tx_ring = pmm.allocContiguousPages(virtio_net_mod.QUEUE_PAGES) orelse return;
     const rx_buf = pmm.allocContiguousPages(16) orelse return;
     const tx_buf = pmm.allocPage() orelse return;
+
+    const mmio_addr = net_dev.getMmioAddr(0) orelse (@as(u64, net_dev.bar0 & 0xFFFF_FFF0));
+    var session = probeVirtioNetLadder(net_dev, mmio_addr, cspace) orelse return;
+    probe_ladder_mod.active_probe_session = &session;
+    defer probe_ladder_mod.active_probe_session = null;
 
     global_virtio_net = virtio_net_mod.VirtioNetDevice.init(
         net_dev,
@@ -162,11 +196,27 @@ fn initVirtioNet(net_dev: pci_mod.PciDevice, boot_info: *const BootInfo) void {
         tx_buf,
         boot_info.hhdm_offset,
     ) catch |err| {
+        session.tripQuarantine("VirtIO-Net hardware init failed", mmio_addr, 0);
         serial.writeString("[kernel] Failed to initialize VirtIO-Net device: ");
         serial.writeString(@errorName(err));
         serial.writeString("\n");
         return;
     };
+
+    const dma_regions = [_]probe_ladder_mod.DmaRegion{
+        .{ .phys_addr = rx_ring, .size_bytes = virtio_net_mod.QUEUE_PAGES * 4096 },
+        .{ .phys_addr = tx_ring, .size_bytes = virtio_net_mod.QUEUE_PAGES * 4096 },
+        .{ .phys_addr = rx_buf, .size_bytes = 16 * 4096 },
+        .{ .phys_addr = tx_buf, .size_bytes = 4096 },
+    };
+    _ = session.advanceToOperationalRegions(&dma_regions) catch return;
+    printVirtioNetStatus(&session);
+}
+
+fn printVirtioNetStatus(session: *const probe_ladder_mod.ProbeSession) void {
+    serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mprobe\x1b[90m: \x1b[97mPCI 1AF4:1000 ladder STG_0..STG_5 -> OPERATIONAL (Token Triad granted, seal ");
+    serial.writeBytesHex(session.transcript.blake3_hash[0..8]);
+    serial.writeString(" committed to CAS)\x1b[0m\n");
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mnet \x1b[90m: \x1b[97mVirtIO-Net 1.0 active (MAC \x1b[0m");
     printMac(&global_virtio_net.?.mac);
     serial.writeString("\x1b[97m)\x1b[0m\n");
@@ -248,7 +298,7 @@ fn initAiDaemon(allocator: std.mem.Allocator) void {
     if (ptype == .mock) {
         serial.writeStatusOk("aid ", "Resident AI daemon active (mock mode)");
     } else {
-        serial.writeStatusOk("aid ", "Resident AI daemon active (online live inference)");
+        serial.writeStatusOk("aid ", "Resident AI daemon active (provider configured, link unverified)");
     }
 }
 
@@ -270,8 +320,15 @@ fn p2pBeaconBridge(ctx: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void {
 }
 
 fn initP2pDaemon(allocator: std.mem.Allocator) void {
-    var seed = [_]u8{0x42} ** 32;
-    if (global_virtio_net) |vdev| @memcpy(seed[0..6], &vdev.mac);
+    var seed = [_]u8{0} ** 32;
+    for (0..4) |chunk_idx| {
+        const ent = io.getEntropy64(0x5032_505F_5345_4544 +% @as(u64, @intCast(chunk_idx)));
+        const ent_bytes: [8]u8 = @bitCast(ent);
+        @memcpy(seed[chunk_idx * 8 .. (chunk_idx + 1) * 8], &ent_bytes);
+    }
+    if (global_virtio_net) |vdev| {
+        for (vdev.mac, 0..) |m, i| seed[i] ^= m;
+    }
     global_p2pd = p2pd_mod.P2pDaemon.init(allocator, seed, 8080) catch null;
     if (global_p2pd != null) {
         if (global_netd) |*netd| {
@@ -282,12 +339,12 @@ fn initP2pDaemon(allocator: std.mem.Allocator) void {
 }
 
 fn initPackageDaemon() void {
-    global_pkgd = pkgd_mod.PackageDaemon.init();
-    serial.writeStatusOk("pkgd", "Sovereign package federation registry active (SPK1)");
+    serial.writeStatusOk("pkgd", "Sovereign P2P artifact registry active (SPK1/CAS via pkg_abi)");
 }
 
 fn initUserlandServices(allocator: std.mem.Allocator) void {
     initNetDaemon(allocator);
+    spki_mod.logBootStatus();
     initAiDaemon(allocator);
     initP2pDaemon(allocator);
     initPackageDaemon();
@@ -334,6 +391,14 @@ fn casPutBridge(data: []const u8, out_hex: *[64]u8) anyerror!void {
     const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.raw_blob, data, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
+}
+
+fn probeCasPutBridge(hash: *const [32]u8, data: []const u8) bool {
+    _ = hash;
+    var out_hex: [64]u8 = undefined;
+    casPutBridge(data, &out_hex) catch return false;
+    _ = catalog_abi.writeProbeTranscript(data);
+    return true;
 }
 
 fn casGetBridge(hex_hash: []const u8, out_buf: []u8) anyerror!usize {
@@ -455,21 +520,28 @@ fn initFallbackCas(allocator: std.mem.Allocator, dev: ?*block_mod.BlockDevice) v
 
 fn initStorageEngines(allocator: std.mem.Allocator) void {
     const dev = if (global_block_device != null) &global_block_device.? else null;
-    global_storaged = initStorageDaemon(allocator, dev);
-
-    if (global_storaged) |*strd| {
-        global_block_cache = strd.block_cache;
-        global_cas = strd.cas_engine;
-        if (global_cas) |cas| {
-            global_rebuild = rebuild_mod.RebuildEngine.init(cas, null, null);
-            abi_mod.setRebuildEngine(&global_rebuild.?);
-        }
-        serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
-        serial.writeStatusOk("strd", "Userland storage daemon active (CAS + VirtIO/NVMe)");
+    if (dev == null) {
+        initFallbackCas(allocator, dev);
         return;
     }
 
-    initFallbackCas(allocator, dev);
+    global_storaged = initStorageDaemon(allocator, dev);
+    const strd = if (global_storaged) |*s| s else {
+        initFallbackCas(allocator, dev);
+        return;
+    };
+
+    const cas = strd.cas_engine orelse {
+        initFallbackCas(allocator, dev);
+        return;
+    };
+
+    global_block_cache = strd.block_cache;
+    global_cas = cas;
+    global_rebuild = rebuild_mod.RebuildEngine.init(cas, null, null);
+    abi_mod.setRebuildEngine(&global_rebuild.?);
+    serial.writeStatusOk("cas ", "BLAKE3 Content-Addressed Storage engine ready");
+    serial.writeStatusOk("strd", "Userland storage daemon active (CAS + VirtIO/NVMe)");
 }
 
 const NvmeDmaPages = struct {
@@ -530,16 +602,35 @@ fn initNvmeDevice(nvme_pci: pci_mod.PciDevice, boot_info: *const BootInfo) bool 
 fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
     if (pci_mod.findVirtioBlkDevice()) |blk_dev| _ = initBlkDevice(blk_dev, boot_info);
     if (pci_mod.findNvmeDevice()) |nvme_dev| _ = initNvmeDevice(nvme_dev, boot_info);
-    if (global_block_device != null) initStorageEngines(allocator);
+    initStorageEngines(allocator);
+    probe_ladder_mod.cas_put_transcript_fn = probeCasPutBridge;
+    catalog_abi.setStorageContext(casPutBridge, casGetBridge, abi_mod.checkCallerAuthority);
 }
 
-fn initNetwork(boot_info: *const BootInfo) void {
+fn initNetwork(boot_info: *const BootInfo, cspace: *cspace_mod.CSpace) void {
     const maybe_net = pci_mod.findNetworkDevice();
     if (maybe_net) |net_dev| {
         if (net_dev.vendor_id == pci_mod.VENDOR_VIRTIO) {
-            initVirtioNet(net_dev, boot_info);
+            initVirtioNet(net_dev, boot_info, cspace);
         }
     }
+
+    // D1 Autonomous Probe Ladder: Probe synthetic unknown PCI device to prove honest QUARANTINE
+    const unk_desc = probe_ladder_mod.DeviceDescriptor{
+        .vendor_id = 0x1234,
+        .device_id = 0x5678,
+        .class_code = 0xFF,
+        .subclass = 0x00,
+        .prog_if = 0x00,
+        .bar0_addr = 0xFEF0_0000,
+        .bar0_size = 4096,
+        .irq_line = 5,
+    };
+    var unk_session = probe_ladder_mod.ProbeSession.init(2, unk_desc, cspace);
+    unk_session.advanceToPassiveEnum() catch {};
+    unk_session.advanceToOfflineSynth() catch {};
+    unk_session.advanceToAuditRo() catch {};
+    _ = unk_session.executeMmioWrite(0x00, 0xBAD10) catch {};
 }
 
 fn initGenesisDisplay(boot_info: *const BootInfo) void {
@@ -559,7 +650,7 @@ fn registerGenesisHardwareCaps(genesis: *actor_mod.Actor) !void {
             .data_size = @sizeOf(virtio_net_mod.VirtioNetDevice),
         });
     }
-    if ((global_virtio_blk != null or global_nvme != null) and global_cas != null) {
+    if (global_cas != null) {
         _ = try genesis.insertCap(.{
             .cap_type = .storage_device,
             .rights = cap_mod.Rights.ALL,
@@ -764,7 +855,6 @@ fn initGenesisVm(
     genesis: *actor_mod.Actor,
     ipc_ring: *ipc_mod.RingBuffer,
 ) *vm_mod.VM {
-    initStorage(boot_info, allocator);
     registerGenesisCapabilities(genesis, boot_info, ipc_ring) catch kernelPanic("register_caps");
     serial.writeStatusOk("cap ", "Genesis CSpace initialized (64 capability slots)");
 
@@ -788,12 +878,31 @@ fn getCoreIdBridge() u32 {
     return smp.global_topology.getCurrentCore().core_id;
 }
 
+var boot_start_tsc: u64 = 0;
+
+fn logBootToUserspace(start_tsc: u64) void {
+    const boot_cycles = io.rdtsc() -% start_tsc;
+    var time_buf: [64]u8 = undefined;
+    if (std.fmt.bufPrint(&time_buf, "Boot to userspace: {d} cycles", .{boot_cycles})) |msg| {
+        serial.writeStatusOk("time", msg);
+    } else |_| {}
+}
+
+fn createGenesisContext(allocator: std.mem.Allocator, genesis: *actor_mod.Actor, vm: *vm_mod.VM) *actor_lifecycle.ActorThreadContext {
+    const ctx = allocator.create(actor_lifecycle.ActorThreadContext) catch kernelPanic("genesis_act_ctx");
+    ctx.* = .{ .allocator = allocator, .actor = genesis, .vm = vm, .owns_chunk = false };
+    return ctx;
+}
+
 pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
+    boot_start_tsc = io.rdtsc();
     initHardware(boot_info);
 
     var fba = std.heap.FixedBufferAllocator.init(&kernel_heap);
     const allocator = fba.allocator();
     syscall.setAllocator(allocator);
+
+    initStorage(boot_info, allocator);
 
     const genesis = actor_mod.Actor.init(
         allocator,
@@ -803,23 +912,20 @@ pub export fn kmain(boot_info: *const BootInfo) callconv(.c) noreturn {
         GENESIS_PAGE_TABLE_ROOT,
     ) catch kernelPanic("actor_init");
 
+    initNetwork(boot_info, genesis.cspace);
+
     const ipc_ring = ipc_mod.RingBuffer.init(allocator, ipc_mod.DEFAULT_RING_CAPACITY) catch kernelPanic("ipc_ring_init");
     const genesis_vm = initGenesisVm(boot_info, allocator, genesis, ipc_ring);
     setupAbiEnvironment(genesis, boot_info, ipc_ring, genesis_vm, allocator);
 
     serial.writeStatusOk("act ", "Genesis Actor 0 online (cooperative fiber scheduler)");
+    logBootToUserspace(boot_start_tsc);
 
     fiber_mod.get_core_id_fn = getCoreIdBridge;
     var sched = fiber_mod.Scheduler.init(allocator);
     sched.on_context_switch = onFiberContextSwitch;
     global_sched = &sched;
-    const genesis_act_ctx = allocator.create(actor_lifecycle.ActorThreadContext) catch kernelPanic("genesis_act_ctx");
-    genesis_act_ctx.* = .{
-        .allocator = allocator,
-        .actor = genesis,
-        .vm = genesis_vm,
-        .owns_chunk = false,
-    };
+    const genesis_act_ctx = createGenesisContext(allocator, genesis, genesis_vm);
     actor_lifecycle.init(&sched, &global_registry, if (global_fb != null) &global_fb.? else null, bundleReadBridge);
     _ = sched.spawn(actor_lifecycle.actorThread, genesis_act_ctx) catch kernelPanic("fiber_spawn");
     _ = sched.spawn(serviceWorker, null) catch kernelPanic("service_spawn");

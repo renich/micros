@@ -45,6 +45,7 @@ pub const TaskStateSegment = extern struct {
 
 pub var kernel_tsses: [smp.MAX_CORES]TaskStateSegment = [_]TaskStateSegment{std.mem.zeroes(TaskStateSegment)} ** smp.MAX_CORES;
 var kernel_stacks: [smp.MAX_CORES][16384]u8 align(4096) = undefined;
+var df_stacks: [smp.MAX_CORES][4096]u8 align(4096) = undefined;
 var gdt_entries_per_core: [smp.MAX_CORES][8]GdtDescriptor = undefined;
 var gdt_ptrs: [smp.MAX_CORES]GdtPointer = undefined;
 
@@ -104,6 +105,7 @@ pub fn initCore(core_id: u32) void {
 
     tss.iomap_base = @sizeOf(TaskStateSegment);
     tss.rsp0 = @intFromPtr(&kernel_stacks[core_id]) + kernel_stacks[core_id].len;
+    tss.ist1 = @intFromPtr(&df_stacks[core_id]) + df_stacks[core_id].len;
     setTssDescriptor(entries, @intFromPtr(tss), @sizeOf(TaskStateSegment) - 1);
 
     ptr.limit = @sizeOf([8]GdtDescriptor) - 1;

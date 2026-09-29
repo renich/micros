@@ -100,10 +100,10 @@ This document specifies the user stories defining how autonomous AI agents inter
 * Zero stop-the-world pauses exceeding 1ms for interactive fibers.
 * Explicit memory reclamation without memory fragmentation.
 
-[US-GEM-009] Self-Healing Script Execution in MicroShell
-========================================================
+[US-GEM-009] Self-Healing Script Execution in µShell
+===================================================
 * **As an** autonomous operations agent,
-* **I want** to pipe multi-line Macros scripts into `msh` and receive strongly typed return values (`Value` unions) and explicit errors,
+* **I want** to pipe multi-line Macros scripts into `ush` and receive strongly typed return values (`Value` unions) and explicit errors,
 * **So that** I can dynamically synthesize, evaluate, and self-heal automation routines with zero ambiguity.
 
 **Acceptance Criteria**:
@@ -118,6 +118,6 @@ This document specifies the user stories defining how autonomous AI agents inter
 * **So that** entire subsystem contexts fit comfortably within model attention windows without truncation or retrieval degradation.
 
 **Acceptance Criteria**:
-* All subsystem packages bounded by explicit domain boundaries (`sys/io.zig`, `macros/eval.zig`, `msh/shell.zig`).
+* All subsystem packages bounded by explicit domain boundaries (`sys/io.zig`, `macros/eval.zig`, `ush/shell.zig`).
 * Zero monolithic "god files" or generic `utils` packages.
 * Documentation and tests colocated alongside code for zero-shot reasoning.

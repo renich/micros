@@ -169,7 +169,7 @@ fn formatSuperblock(total_sectors: u64) CasSuperblock {
         .version = CAS_SUPERBLOCK_VERSION,
         .generation = 0,
         .root_hash = [_]u8{0} ** chunk_mod.HASH_SIZE,
-        .block_count = total_sectors,
+        .block_count = if (total_sectors > 0) total_sectors else 65536,
         .next_free_sector = SECTOR_FIRST_CHUNK,
         .checksum = [_]u8{0} ** chunk_mod.HASH_SIZE,
     };

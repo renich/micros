@@ -28,15 +28,18 @@ var active_rebuild_engine: ?*rebuild.RebuildEngine = null;
 pub var caller_auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool = null;
 
 fn verifyStorageAuthority() !void {
-    if (caller_auth_fn) |auth| {
-        if (!auth(.storage_device, Rights.WRITE)) return error.PermissionDenied;
-    }
+    const auth = caller_auth_fn orelse return error.PermissionDenied;
+    if (!auth(.storage_device, Rights.WRITE)) return error.PermissionDenied;
+}
+
+fn verifyRebuildAuthority(rights: u16) !void {
+    const auth = caller_auth_fn orelse return error.PermissionDenied;
+    if (!auth(.rebuild_control, rights)) return error.PermissionDenied;
 }
 
 fn verifyRebootAuthority() !void {
-    if (caller_auth_fn) |auth| {
-        if (!auth(.actor_control, Rights.EXECUTE)) return error.PermissionDenied;
-    }
+    const auth = caller_auth_fn orelse return error.PermissionDenied;
+    if (!auth(.actor_control, Rights.EXECUTE)) return error.PermissionDenied;
 }
 
 pub fn registerBlockDevice(dev: *block.BlockDevice) void {
@@ -106,69 +109,8 @@ fn nativeSysBlockDevIsBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = dev.is_boot_media };
 }
 
-fn nativeSysDiskGptFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    try verifyStorageAuthority();
-    if (args.len != 2 or args[0] != .integer or args[1] != .integer) return error.InvalidArgs;
-    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
-    const esp_sectors = castToU64(args[1].integer) orelse return error.InvalidArgs;
-    const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
-    if (dev.is_boot_media) return error.LiveBootMedia;
-
-    try gpt.formatDisk(dev, esp_sectors);
-    return Value{ .boolean = true };
-}
-
-fn nativeSysDiskEspFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    try verifyStorageAuthority();
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
-    const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
-    if (dev.is_boot_media) return error.LiveBootMedia;
-
-    const tbl = try gpt.readGptTable(dev);
-    const esp_idx = tbl.findByType(&gpt.ESP_GUID) orelse return error.PartitionNotFound;
-    const esp_entry = tbl.entries[esp_idx];
-    const sector_count = esp_entry.sectorCount();
-    var esp_part = try block.PartitionBlockDevice.init(dev, esp_entry.starting_lba, sector_count, "esp");
-
-    try fat32.formatEsp(esp_part.blockDevice());
-    return Value{ .boolean = true };
-}
-
-fn nativeSysDiskEspWrite(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    try verifyStorageAuthority();
-    if (args.len != 3 or args[0] != .integer or args[1] != .string or args[2] != .string) return error.InvalidArgs;
-    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
-    const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
-    if (dev.is_boot_media) return error.LiveBootMedia;
-
-    const tbl = try gpt.readGptTable(dev);
-    const esp_idx = tbl.findByType(&gpt.ESP_GUID) orelse return error.PartitionNotFound;
-    const esp_entry = tbl.entries[esp_idx];
-    const sector_count = esp_entry.sectorCount();
-    var esp_part = try block.PartitionBlockDevice.init(dev, esp_entry.starting_lba, sector_count, "esp");
-
-    try fat32.writeFile(esp_part.blockDevice(), args[1].string, args[2].string);
-    return Value{ .boolean = true };
-}
-
-fn nativeSysDiskEspStageBootloader(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    try verifyStorageAuthority();
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
-    const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
-    const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
-    if (dev.is_boot_media) return error.LiveBootMedia;
-
-    const tbl = try gpt.readGptTable(dev);
-    const esp_idx = tbl.findByType(&gpt.ESP_GUID) orelse return error.PartitionNotFound;
-    const esp_entry = tbl.entries[esp_idx];
-    var esp_part = try block.PartitionBlockDevice.init(dev, esp_entry.starting_lba, esp_entry.sectorCount(), "esp");
-
-    const emitter = pe_emitter.PeEmitter.init(vm.allocator, .{
+fn writeEspBootloader(allocator: std.mem.Allocator, part: *block.PartitionBlockDevice) !void {
+    const emitter = pe_emitter.PeEmitter.init(allocator, .{
         .entry_point_rva = pe_emitter.SECTION_ALIGNMENT,
     });
     const mock_code = [_]u8{ 0x48, 0x31, 0xC0, 0xC3 };
@@ -177,21 +119,31 @@ fn nativeSysDiskEspStageBootloader(vm_ptr: *anyopaque, args: []Value) anyerror!V
     const mock_relocs = [_]u32{ 0x1002, 0x2000 };
 
     const pe_bin = try emitter.synthesizeBootloader(&mock_code, mock_rodata, &mock_data, &mock_relocs);
-    defer vm.allocator.free(pe_bin);
+    defer allocator.free(pe_bin);
 
-    try fat32.writeFile(esp_part.blockDevice(), "/EFI/BOOT/BOOTX64.EFI", pe_bin);
-    return Value{ .boolean = true };
+    try fat32.writeFile(part.blockDevice(), "/EFI/BOOT/BOOTX64.EFI", pe_bin);
 }
 
-fn nativeSysDiskCasFormat(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+fn nativeSysDiskProvision(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     try verifyStorageAuthority();
-    if (args.len != 1 or args[0] != .integer) return error.InvalidArgs;
+    if (args.len != 2 or args[0] != .integer or args[1] != .string) return error.InvalidArgs;
+    if (!std.mem.eql(u8, args[1].string, "CONFIRM OVERWRITE")) return error.PermissionDenied;
     const idx = castToUsize(args[0].integer) orelse return error.InvalidArgs;
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
+    const esp_sectors: u64 = 262144;
+    try gpt.formatDisk(dev, esp_sectors);
+
     const tbl = try gpt.readGptTable(dev);
+    const esp_idx = tbl.findByType(&gpt.ESP_GUID) orelse return error.PartitionNotFound;
+    const esp_entry = tbl.entries[esp_idx];
+    var esp_part = try block.PartitionBlockDevice.init(dev, esp_entry.starting_lba, esp_entry.sectorCount(), "esp");
+
+    try fat32.formatEsp(esp_part.blockDevice());
+    try writeEspBootloader(vm.allocator, &esp_part);
+
     const cas_idx = tbl.findByType(&gpt.CAS_GUID) orelse return error.PartitionNotFound;
     const cas_entry = tbl.entries[cas_idx];
     const sector_count = cas_entry.sectorCount();
@@ -216,7 +168,7 @@ fn nativeSysCasConfirmBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysKernelSynthesize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    try verifyStorageAuthority();
+    try verifyRebuildAuthority(Rights.WRITE | Rights.EXECUTE);
     if (args.len != 1 or args[0] != .string) return error.InvalidArgs;
     const bundle_bytes = args[0].string;
 
@@ -226,7 +178,7 @@ fn nativeSysKernelSynthesize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn nativeSysKernelStageUpdate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    try verifyStorageAuthority();
+    try verifyRebuildAuthority(Rights.WRITE);
     if (args.len != 2 or args[0] != .string or args[1] != .string) return error.InvalidArgs;
     const kernel_data = args[0].string;
     const bundle_data = args[1].string;
@@ -242,6 +194,7 @@ fn nativeSysKernelStageUpdate(vm_ptr: *anyopaque, args: []Value) anyerror!Value 
 fn nativeSysRebuildStatus(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VM = @ptrCast(@alignCast(vm_ptr));
     _ = args;
+    try verifyRebuildAuthority(Rights.READ);
     const engine = active_rebuild_engine orelse return error.RebuildEngineNotInitialized;
     const manifest = try engine.getActiveManifest();
 
@@ -268,47 +221,23 @@ fn nativeSysReboot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
 }
 
-fn nativeSysBundlePack(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-    if (args.len != 1 or args[0] != .array) return error.InvalidArgs;
-    const raw_arr = args[0].array;
-
-    var entries = try vm.allocator.alloc(bundle_writer.EntryInput, raw_arr.len);
-    defer vm.allocator.free(entries);
-
-    for (raw_arr, 0..) |item, i| {
-        if (item != .array or item.array.len != 2) return error.InvalidEntryFormat;
-        if (item.array[0] != .string or item.array[1] != .string) return error.InvalidEntryType;
-        entries[i] = .{
-            .tag = item.array[0].string,
-            .data = item.array[1].string,
-        };
-    }
-
-    const bundle_bytes = try bundle_writer.packBundle(vm.gcAllocator(), entries);
-    return Value{ .string = bundle_bytes };
-}
-
 pub fn registerStorageSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_block_dev_count", Value{ .native = nativeSysBlockDevCount });
     try vm.globals.put("sys_block_dev_name", Value{ .native = nativeSysBlockDevName });
     try vm.globals.put("sys_block_dev_sectors", Value{ .native = nativeSysBlockDevSectors });
     try vm.globals.put("sys_block_dev_is_boot", Value{ .native = nativeSysBlockDevIsBoot });
-    try vm.globals.put("sys_disk_gpt_format", Value{ .native = nativeSysDiskGptFormat });
-    try vm.globals.put("sys_disk_esp_format", Value{ .native = nativeSysDiskEspFormat });
-    try vm.globals.put("sys_disk_esp_write", Value{ .native = nativeSysDiskEspWrite });
-    try vm.globals.put("sys_disk_esp_stage_bootloader", Value{ .native = nativeSysDiskEspStageBootloader });
-    try vm.globals.put("sys_disk_cas_format", Value{ .native = nativeSysDiskCasFormat });
+    try vm.globals.put("sys_disk_provision", Value{ .native = nativeSysDiskProvision });
     try vm.globals.put("sys_cas_confirm_boot", Value{ .native = nativeSysCasConfirmBoot });
     try vm.globals.put("sys_kernel_synthesize", Value{ .native = nativeSysKernelSynthesize });
     try vm.globals.put("sys_kernel_stage_update", Value{ .native = nativeSysKernelStageUpdate });
     try vm.globals.put("sys_rebuild_status", Value{ .native = nativeSysRebuildStatus });
-    try vm.globals.put("sys_bundle_pack", Value{ .native = nativeSysBundlePack });
     try vm.globals.put("sys_reboot", Value{ .native = nativeSysReboot });
 }
 
 test "storage abi registration and live boot media protection" {
     clearBlockDevices();
+    caller_auth_fn = testAllowAuth;
+    defer caller_auth_fn = null;
 
     const mock_vtable = block.BlockDevice.VTable{
         .readSector = testMockRead,
@@ -342,11 +271,8 @@ test "storage abi registration and live boot media protection" {
     try std.testing.expect(!getBlockDevice(1).?.is_boot_media);
 
     var dummy: usize = 0;
-    var args = [_]Value{ Value{ .integer = 0 }, Value{ .integer = 614400 } };
-    try std.testing.expectError(error.LiveBootMedia, nativeSysDiskGptFormat(&dummy, &args));
-
-    var stage_args = [_]Value{Value{ .integer = 0 }};
-    try std.testing.expectError(error.LiveBootMedia, nativeSysDiskEspStageBootloader(&dummy, &stage_args));
+    var prov_args = [_]Value{ Value{ .integer = 0 }, Value{ .string = "CONFIRM OVERWRITE" } };
+    try std.testing.expectError(error.LiveBootMedia, nativeSysDiskProvision(&dummy, &prov_args));
 }
 
 fn testMockRead(ctx: *anyopaque, lba: u64, buf: *[block.SECTOR_SIZE]u8) anyerror!void {
@@ -379,30 +305,10 @@ fn testMockFlush(ctx: *anyopaque) anyerror!void {
     _ = ctx;
 }
 
-test "storage abi sys_bundle_pack packs and roundtrips entries" {
-    const allocator = std.testing.allocator;
-    var chunk = @import("../../macros/chunk.zig").Chunk.init();
-    defer chunk.deinit(allocator);
-
-    var vm = try VM.init(allocator, &chunk);
-    defer vm.deinit();
-
-    var item0 = [_]Value{ Value{ .string = "alpha.mx" }, Value{ .string = "content 1" } };
-    var item1 = [_]Value{ Value{ .string = "beta.mx" }, Value{ .string = "content 2" } };
-    var items = [_]Value{ Value{ .array = &item0 }, Value{ .array = &item1 } };
-    var args = [_]Value{Value{ .array = &items }};
-
-    const res = try nativeSysBundlePack(&vm, &args);
-    defer allocator.free(res.string);
-
-    const bundle_mod = @import("../bundle.zig");
-    const reader = try bundle_mod.BundleReader.init(res.string);
-    try std.testing.expectEqual(@as(u32, 2), reader.header.entry_count);
-    try std.testing.expectEqualStrings("content 1", reader.findData("alpha.mx").?);
-    try std.testing.expectEqualStrings("content 2", reader.findData("beta.mx").?);
-}
-
 test "storage abi sys_kernel_synthesize generates valid PE image" {
+    caller_auth_fn = testAllowAuth;
+    defer caller_auth_fn = null;
+
     const allocator = std.testing.allocator;
     var chunk = @import("../../macros/chunk.zig").Chunk.init();
     defer chunk.deinit(allocator);
@@ -410,20 +316,24 @@ test "storage abi sys_kernel_synthesize generates valid PE image" {
     var vm = try VM.init(allocator, &chunk);
     defer vm.deinit();
 
-    var item0 = [_]Value{ Value{ .string = "init.mx" }, Value{ .string = "print(1);" } };
-    var items = [_]Value{Value{ .array = &item0 }};
-    var pack_args = [_]Value{Value{ .array = &items }};
+    const bundle_bytes = try bundle_writer.packBundle(allocator, &[_]bundle_writer.EntryInput{
+        .{ .tag = "init.mx", .data = "print(1);" },
+    });
+    defer allocator.free(bundle_bytes);
 
-    const bundle_res = try nativeSysBundlePack(&vm, &pack_args);
-    defer allocator.free(bundle_res.string);
-
-    var synth_args = [_]Value{bundle_res};
+    var synth_args = [_]Value{Value{ .string = bundle_bytes }};
     const kernel_res = try nativeSysKernelSynthesize(&vm, &synth_args);
     defer allocator.free(kernel_res.string);
 
     try kernel_synthesizer.validatePeImage(kernel_res.string);
     try std.testing.expect(kernel_res.string.len >= 512);
     try std.testing.expectEqual(@as(usize, 0), kernel_res.string.len % pe_emitter.FILE_ALIGNMENT);
+}
+
+fn testAllowAuth(cap_type: CapType, rights: u16) bool {
+    _ = cap_type;
+    _ = rights;
+    return true;
 }
 
 fn testRejectAuth(cap_type: CapType, rights: u16) bool {
@@ -439,7 +349,53 @@ test "storage abi rejects unprivileged callers" {
     }
 
     var dummy: usize = 0;
-    var args = [_]Value{ Value{ .integer = 1 }, Value{ .integer = 614400 } };
-    try std.testing.expectError(error.PermissionDenied, nativeSysDiskGptFormat(&dummy, &args));
+    var args = [_]Value{ Value{ .integer = 1 }, Value{ .string = "CONFIRM OVERWRITE" } };
+    try std.testing.expectError(error.PermissionDenied, nativeSysDiskProvision(&dummy, &args));
     try std.testing.expectError(error.PermissionDenied, nativeSysReboot(&dummy, &args));
+
+    // When auth callback is null, it must fail closed as well
+    caller_auth_fn = null;
+    try std.testing.expectError(error.PermissionDenied, nativeSysDiskProvision(&dummy, &args));
+    try std.testing.expectError(error.PermissionDenied, nativeSysReboot(&dummy, &args));
+}
+
+test "storage abi sys_disk_provision denies invalid confirmation phrase" {
+    caller_auth_fn = testAllowAuth;
+    defer caller_auth_fn = null;
+    var dummy: usize = 0;
+    var bad_args = [_]Value{ Value{ .integer = 1 }, Value{ .string = "NO_CONFIRM" } };
+    try std.testing.expectError(error.PermissionDenied, nativeSysDiskProvision(&dummy, &bad_args));
+}
+
+test "storage abi excised syscalls absent from vm globals" {
+    const allocator = std.testing.allocator;
+    var chunk = @import("../../macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(allocator);
+    var vm = try VM.init(allocator, &chunk);
+    defer vm.deinit();
+
+    try registerStorageSyscalls(&vm);
+    try std.testing.expect(!vm.globals.contains("sys_bundle_pack"));
+    try std.testing.expect(!vm.globals.contains("sys_disk_gpt_format"));
+    try std.testing.expect(!vm.globals.contains("sys_disk_esp_format"));
+    try std.testing.expect(!vm.globals.contains("sys_disk_esp_write"));
+    try std.testing.expect(!vm.globals.contains("sys_disk_esp_stage_bootloader"));
+    try std.testing.expect(!vm.globals.contains("sys_disk_cas_format"));
+    try std.testing.expect(vm.globals.contains("sys_disk_provision"));
+}
+
+fn testOnlyStorageAuth(cap_type: CapType, rights: u16) bool {
+    _ = rights;
+    return cap_type == .storage_device;
+}
+
+test "storage abi sys_kernel_synthesize denies callers without rebuild_control" {
+    caller_auth_fn = testOnlyStorageAuth;
+    defer caller_auth_fn = null;
+    var dummy: usize = 0;
+    var synth_args = [_]Value{Value{ .string = "test_bundle" }};
+    // Caller holding only storage_device (0x0007) is denied because rebuild_control (0x000A) is strictly required (P4-C6)
+    try std.testing.expectError(error.PermissionDenied, nativeSysKernelSynthesize(&dummy, &synth_args));
+    var stage_args = [_]Value{ Value{ .string = "k" }, Value{ .string = "b" } };
+    try std.testing.expectError(error.PermissionDenied, nativeSysKernelStageUpdate(&dummy, &stage_args));
 }

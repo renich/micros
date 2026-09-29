@@ -20,8 +20,16 @@ The MicrOS toolchain in `tools/` delivers deterministic verification, linting, t
 2. Quality Gate Execution
 =========================
 All builds, tests, and CI/CD runs execute `make check`, running:
-1. `zig build test`: Substrate, Macros runtime, and MicroShell unit tests.
+1. `zig build test`: Substrate, Macros runtime, and µShell unit tests.
 2. `make -C tools test`: Toolchain unit tests and validation suites.
 3. `make lint`: Full AST and shell script compliance linting.
 4. `make fmt-check`: Strict code formatting validation.
 5. `make spec-trace`: Bidirectional requirement traceability audit.
+
+3. Unified Microbenchmark Suite (zig build bench)
+=================================================
+MicrOS integrates a standardized, reproducible in-tree microbenchmark suite callable directly via ``zig build bench``:
+
+* **Fiber Context Switch Latency**: Measures cooperative fiber context switch latency over 100,000 switches (baseline: ~5.1 µs in Debug, <50 ns in ReleaseFast).
+* **Immix Garbage Collector Throughput**: Benchmarks object allocation rate and sweep latency over 10,000 objects (~2.44 MB total; baseline: >1,000 MB/s alloc rate, sweep <25 µs).
+* **Empirical Gate Integration**: Serves as the quantitative gate for the 3-gate bar (performance, fault-containment, tail-latency) during kernel evolutionary optimizations.

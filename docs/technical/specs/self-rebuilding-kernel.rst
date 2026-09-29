@@ -14,7 +14,7 @@ A truly independent operating system must possess the capability to rebuild its 
 However, attempting to embed a 500,000-line LLVM/Zig compiler into Ring 0 microkernel memory violates the core tenets of lean systems engineering, introduces millions of lines of untrusted attack surface, and risks fatal memory leaks and kernel panics.
 
 This specification formalizes the **Two-Tiered Self-Rebuilding Architecture**:
-1. **Tier 1 (High-Level Actor Assembly)**: The pure Macros Stage 1 self-hosting compiler (``lib/macros/compiler.mx``) compiles userspace system actors (``init.mx``, ``msh.mx``, ``harness.mx``, ``installer.mx``, ``rebuild.mx``) into deterministic ``MCR1`` bytecode and serializes the Genesis Capability Bundle (``genesis.mcb``) in-system.
+1. **Tier 1 (High-Level Actor Assembly)**: The pure Macros Stage 1 self-hosting compiler (``lib/macros/compiler.mx``) compiles userspace system actors (``init.mx``, ``ush.mx``, ``harness.mx``, ``installer.mx``, ``rebuild.mx``) into deterministic ``MCR1`` bytecode and serializes the Genesis Capability Bundle (``genesis.mcb``) in-system.
 2. **Tier 2 (Low-Level Kernel Synthesis)**: The freestanding kernel synthesizer (``src/kernel/storage/kernel_synthesizer.zig``) and PE32+ assembler (``src/boot/pe_emitter.zig``) link pre-verified substrate relocatable objects with the freshly synthesized ``genesis.mcb`` payload to emit an authentic, bootable ``BOOTX64.EFI`` executable.
 
 2. Bit-for-Bit Reproducibility Invariants
@@ -63,17 +63,38 @@ To prevent system bricking under unexpected power loss during kernel updates, th
 Lifecycle Transitions:
 1. **Rebuild Execution**: The rebuilder reads ``BOOTSTATE.DAT``, identifies the inactive slot (e.g., Slot B), and writes the synthesized kernel binary to the inactive slot first.
 2. **Firmware Sync**: Once Slot B is verified, the binary is copied to ``BOOTX64.EFI``, ``BOOTSTATE.DAT`` is set to the target slot, and ``TRIAL.DAT`` is armed with ``'1'``.
-3. **Canary Validation**: On reboot, Actor 0 (``lib/macros/init.mx``) boots, spawns App 0 (``lib/macros/msh.mx``), and calls ``sys_cas_confirm_boot()``.
+3. **Canary Validation**: On reboot, Actor 0 (``lib/macros/init.mx``) boots, spawns App 0 (``lib/macros/ush.mx``), and calls ``sys_cas_confirm_boot()``.
 4. **Promotion**: ``sys_cas_confirm_boot()`` resets ``TRIAL.DAT`` to ``'0'`` and commits ``MANIFEST_FLAG_STABLE`` to CAS Sector 0 superblock.
 5. **Auto-Rollback**: If boot fails before userspace confirms health, ``rollbackToPrevious()`` restores the prior stable generation from CAS and ESP.
 
-4. MicroShell Command & Syscall Bindings
-========================================
-The autonomous rebuild pipeline is accessible through MicroShell (``msh``) and exposes low-level mechanisms through the Storage ABI:
+4. µShell Command & Syscall Bindings
+====================================
+The autonomous rebuild pipeline is accessible through µShell (``ush``) and exposes low-level mechanisms through the Storage ABI:
 
 * ``sys_bundle_pack(entries)``: Packs array of ``[tag, content]`` pairs into 64-byte aligned MCB binary.
-* ``sys_kernel_synthesize(bundle_bytes)``: Links substrate code and embedded MCB section into a valid PE32+ executable.
-* ``sys_kernel_stage_update(kernel_bytes, bundle_bytes)``: Atomically stages Generation N+1 into CAS and FAT32 ESP.
-* ``sys_rebuild_status()``: Returns active manifest generation, trial flag, stable flag, and kernel content hash.
+* ``sys_kernel_synthesize(bundle_bytes)``: Links substrate code and embedded MCB section into a valid PE32+ executable (requires ``rebuild_control`` WRITE|EXECUTE authority).
+* ``sys_kernel_stage_update(kernel_bytes, bundle_bytes)``: Atomically stages Generation N+1 into CAS and FAT32 ESP (requires ``rebuild_control`` WRITE authority).
+* ``sys_rebuild_status()``: Returns active manifest generation, trial flag, stable flag, and kernel content hash (requires ``rebuild_control`` READ authority).
 * ``sys_cas_confirm_boot()``: Disarms trial canary and promotes running generation to stable.
 * ``sys_reboot()``: Triggers hardware reset via 8042 keyboard controller pulse (``io.outb(0x64, 0xFE)``).
+
+5. Empirical Amendment RFC Lifecycle & Watchdog Trial
+=====================================================
+Self-rewrites execute through the structured RFC amendment lifecycle (``tools/micros-rfc-gate.bash``):
+1. **RFC Proposal**: Amendment author supplies patch manifest, target tunable or bytecode change, and justification.
+2. **Empirical Verification Gates**:
+   - **G-perf**: Zero regression in fiber context-switch throughput.
+   - **G-fault**: 100% test suite passing (>= 487 tests, zero dropped).
+   - **G-tail**: Fiber dispatch p99 tail latency strictly bounded (p99 <= 50.0 us).
+3. **Host-Side Human Thaw**: Explicit human-in-the-loop authorization flag (``/tmp/micros-rfc-thaw.flag``) atomically consumed.
+4. **Watchdog Trial Boot**: Automated QEMU harness executes trial boot with 15s deadline (calibrated 2x baseline).
+   - **Verdict PASS**: Milestone sentinel (``µShell``) verified within deadline; candidate kernel promoted to ``last_known_good``.
+   - **Verdict FAIL**: Timeout, CPU exception (#UD, #GP, #PF), or kernel panic triggers automated fallback restoring ``last_known_good`` and archiving trial failure log in ``.agents/trials/``.
+
+6. Cryptographic Provenance Seal & Capability Control
+=====================================================
+To prevent unauthorized or untrusted binary execution:
+* **ArtifactProvenanceSeal**: A 256-byte sector-aligned structure (``src/kernel/provenance.zig``) embedded directly into the PE ``.prov`` section, containing:
+  - Format magic (``MPRV``), schema version (1), timestamp cycles, builder ID, build hash, source hash, parent kernel hash, compiler flags hash, and 64-byte Ed25519 signature.
+* **Kernel Synthesizer Validation**: ``validatePeImage`` in ``src/kernel/storage/kernel_synthesizer.zig`` mathematically verifies PE headers, entry point bounds, and cryptographic Ed25519 signature before staging.
+* **Rebuild Control Capability**: Rebuild authority is isolated under ``CapType.rebuild_control = 0x000A`` (separate from ``storage_device = 0x0007``), enforcing least-privilege access.

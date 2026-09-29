@@ -46,11 +46,17 @@ pub const p2pd = @import("userland/p2pd/p2p.zig");
 pub const cas_sync = @import("userland/p2pd/cas_sync.zig");
 pub const remote_actor = @import("userland/p2pd/remote_actor.zig");
 pub const pkgd = @import("userland/pkgd/package.zig");
+pub const replication = @import("userland/p2pd/replication.zig");
+pub const consent = @import("kernel/cap/consent.zig");
+pub const probe_ladder = @import("kernel/drivers/probe_ladder.zig");
+pub const slot = @import("kernel/storage/slot.zig");
 
 test "kernel module tests" {
     _ = @import("kernel/cap/capability.zig");
     _ = @import("kernel/cap/cspace.zig");
+    _ = @import("kernel/cap/consent.zig");
     _ = @import("kernel/cap/cap_abi.zig");
+    _ = @import("kernel/drivers/probe_ladder.zig");
     _ = @import("kernel/actor.zig");
     _ = @import("kernel/ipc/ring.zig");
     _ = @import("kernel/ipc/events.zig");
@@ -74,6 +80,7 @@ test "kernel module tests" {
     _ = @import("kernel/storage/cas.zig");
     _ = @import("kernel/storage/fat32.zig");
     _ = @import("kernel/storage/rebuild.zig");
+    _ = @import("kernel/storage/slot.zig");
     _ = @import("kernel/storage/bundle_writer.zig");
     _ = @import("kernel/storage/kernel_synthesizer.zig");
     _ = @import("kernel/storage/storage_abi.zig");
@@ -98,6 +105,10 @@ test "kernel module tests" {
     _ = @import("kernel/arch/x86_64/apic.zig");
     _ = @import("kernel/sched/smp.zig");
     _ = @import("kernel/arch/x86_64/idt.zig");
+    _ = @import("kernel/actor_lifecycle.zig");
+    _ = @import("kernel/provenance.zig");
+    _ = @import("kernel/net/spki.zig");
+    _ = @import("userland/p2pd/replication.zig");
 }
 
 test "Genesis Bundle contains and compiles init.mx" {
@@ -120,17 +131,17 @@ test "Genesis Bundle contains and compiles init.mx" {
     try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
-test "Genesis Bundle contains and compiles msh.mx" {
+test "Genesis Bundle contains and compiles ush.mx" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const msh_source = reader.findData("msh.mx").?;
+    const ush_source = reader.findData("ush.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, msh_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, ush_source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);
@@ -138,21 +149,21 @@ test "Genesis Bundle contains and compiles msh.mx" {
     }
     try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
     try std_mod.testing.expect(chunk.code.items.len > 0);
-    try std_mod.testing.expect(std_mod.mem.indexOf(u8, msh_source, "fn cmd_run(path)") != null);
-    try std_mod.testing.expect(std_mod.mem.indexOf(u8, msh_source, "fn cmd_ai(prompt)") != null);
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, ush_source, "fn cmd_run(path)") != null);
+    try std_mod.testing.expect(std_mod.mem.indexOf(u8, ush_source, "fn cmd_ai(prompt)") != null);
 }
 
-test "Genesis Bundle contains and compiles harness.mx" {
+test "Genesis Bundle contains and compiles lexer.mx" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const harness_source = reader.findData("harness.mx").?;
+    const source = reader.findData("lexer.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, harness_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);
@@ -162,17 +173,37 @@ test "Genesis Bundle contains and compiles harness.mx" {
     try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
-test "Genesis Bundle contains and compiles installer.mx" {
+test "Genesis Bundle contains and compiles parser.mx" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const installer_source = reader.findData("installer.mx").?;
+    const source = reader.findData("parser.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, installer_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, source);
+    while (p.current_token.token_type != .eof) {
+        const stmt = try p.parseStatement();
+        defer stmt.deinit(std_mod.testing.allocator);
+        try compiler.compile(stmt);
+    }
+    try chunk.writeChunk(std_mod.testing.allocator, @intFromEnum(@import("macros/chunk.zig").OpCode.return_op));
+    try std_mod.testing.expect(chunk.code.items.len > 0);
+}
+
+test "Genesis Bundle contains and compiles compiler.mx" {
+    const std_mod = @import("std");
+    const raw_bundle = @embedFile("kernel/genesis.mcb");
+    const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
+    const source = reader.findData("compiler.mx").?;
+
+    var chunk = @import("macros/chunk.zig").Chunk.init();
+    defer chunk.deinit(std_mod.testing.allocator);
+
+    var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);
@@ -222,17 +253,17 @@ test "Genesis Bundle contains and compiles rebuild.mx" {
     try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
-test "Genesis Bundle contains and compiles http_server.mx" {
+test "Genesis Bundle contains and compiles compiler_main.mx" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const http_source = reader.findData("http_server.mx").?;
+    const source = reader.findData("compiler_main.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, http_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);
@@ -242,17 +273,17 @@ test "Genesis Bundle contains and compiles http_server.mx" {
     try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
-test "Genesis Bundle contains and compiles vedit.mx" {
+test "Genesis Bundle contains and compiles ast.mx" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const vedit_source = reader.findData("vedit.mx").?;
+    const source = reader.findData("ast.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, vedit_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);
@@ -262,17 +293,17 @@ test "Genesis Bundle contains and compiles vedit.mx" {
     try std_mod.testing.expect(chunk.code.items.len > 0);
 }
 
-test "Genesis Bundle contains and compiles desk.mx" {
+test "Genesis Bundle contains and compiles eval_shim.mx" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const desk_source = reader.findData("desk.mx").?;
+    const source = reader.findData("eval_shim.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.testing.allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, desk_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.testing.allocator, source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.testing.allocator);
@@ -286,7 +317,7 @@ test "Compiles and executes MOCK_RESPONSE code block" {
     const std_mod = @import("std");
     const source =
         \\sys_serial_write("[MockAi] System ready.\n");
-        \\sys_fb_draw_string(50, 50, "MICROS OFFLINE HARNESS", 65280, 0);
+        \\sys_yield();
     ;
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.testing.allocator);
@@ -323,7 +354,7 @@ test "Compiles and executes MOCK_RESPONSE code block" {
     try vm.run(0);
 }
 
-var test_serial_input: []const u8 = "ai spawn worker\rexit\r";
+var test_serial_input: []const u8 = "help\rexit\r";
 var test_serial_idx: usize = 0;
 
 fn testSerialRead(vm_ptr: *anyopaque, args: []@import("macros/eval.zig").Value) anyerror!@import("macros/eval.zig").Value {
@@ -344,7 +375,7 @@ fn testAiPromptMock(vm_ptr: *anyopaque, args: []@import("macros/eval.zig").Value
         "Status: MOCK-0001\n\n" ++
         ".. code-block:: macros\n\n" ++
         "   sys_serial_write(\"[MockAi] Hello\\n\");\n" ++
-        "   sys_fb_draw_string(50, 50, \"MICROS\", 65280, 0);\n";
+        "   sys_window_draw_string(1, 50, 50, \"MICROS\", 65280, 0);\n";
     return @import("macros/eval.zig").Value{ .string = resp };
 }
 
@@ -355,17 +386,17 @@ fn testSpawnCodeMock(allocator: @import("std").mem.Allocator, name: []const u8, 
     return 1;
 }
 
-test "Harness VM stack depth tracking with simulated commands" {
+test "µShell VM stack depth tracking with simulated commands" {
     const std_mod = @import("std");
     const raw_bundle = @embedFile("kernel/genesis.mcb");
     const reader = try @import("kernel/bundle.zig").BundleReader.init(raw_bundle);
-    const harness_source = reader.findData("harness.mx").?;
+    const ush_source = reader.findData("ush.mx").?;
 
     var chunk = @import("macros/chunk.zig").Chunk.init();
     defer chunk.deinit(std_mod.heap.page_allocator);
 
     var compiler = @import("macros/compiler.zig").Compiler.init(std_mod.heap.page_allocator, &chunk);
-    var p = @import("macros/parser.zig").Parser.init(std_mod.heap.page_allocator, harness_source);
+    var p = @import("macros/parser.zig").Parser.init(std_mod.heap.page_allocator, ush_source);
     while (p.current_token.token_type != .eof) {
         const stmt = try p.parseStatement();
         defer stmt.deinit(std_mod.heap.page_allocator);
@@ -415,7 +446,7 @@ test "Harness VM stack depth tracking with simulated commands" {
 
 test "Tokenize mock extracted code" {
     const std_mod = @import("std");
-    const source = "\n   sys_serial_write(\"[MockAi] System ready.\");\n   sys_fb_draw_string(50, 50, \"MICROS OFFLINE HARNESS\", 65280, 0);\n";
+    const source = "\n   sys_serial_write(\"[MockAi] System ready.\");\n   sys_window_draw_string(1, 50, 50, \"MICROS OFFLINE HARNESS\", 65280, 0);\n";
     var lex = @import("macros/lexer.zig").Lexer.init(source);
     const first_tok = lex.nextToken();
     try std_mod.testing.expectEqualStrings("sys_serial_write", first_tok.lexeme);

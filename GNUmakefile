@@ -15,8 +15,10 @@ AI_ENDPOINT ?=
 AI_PORT ?=
 AI_USE_TLS ?=
 
+# The API key NEVER travels on argv (make echo, `ps`, zig error output all leak
+# it). build.zig reads GEMINI_API_KEY/AI_API_KEY/AI_KEY from the environment.
+export GEMINI_API_KEY AI_API_KEY AI_KEY
 ZIG_BUILD_FLAGS := $(if $(AI_PROVIDER),-Dai-provider="$(AI_PROVIDER)",) \
-                   $(if $(AI_API_KEY),-Dai-api-key="$(AI_API_KEY)",) \
                    $(if $(AI_MODEL),-Dai-model="$(AI_MODEL)",) \
                    $(if $(AI_ENDPOINT),-Dai-endpoint="$(AI_ENDPOINT)",) \
                    $(if $(AI_PORT),-Dai-port=$(AI_PORT),) \
@@ -29,16 +31,16 @@ CACHE_DIR := .zig-cache
 # Default goal
 .DEFAULT_GOAL := all
 
-.PHONY: all clean test help run run-msh qemu-msh uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace check
+.PHONY: all clean test help run run-ush qemu-ush uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
 all: tools src/kernel/genesis.mcb
 	@echo "=> Building MicrOS..."
-	$(ZIG) build $(ZIG_BUILD_FLAGS)
+	@$(ZIG) build $(ZIG_BUILD_FLAGS)
 
-src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/msh.mx lib/macros/harness.mx lib/macros/desk.mx lib/macros/installer.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx lib/macros/bundle.mx lib/macros/rebuild.mx lib/macros/http_server.mx lib/macros/vedit.mx | tools
+src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/ush.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx lib/macros/bundle.mx lib/macros/rebuild.mx lib/macros/ast.mx lib/macros/eval_shim.mx | tools
 	@echo "=> Packaging Genesis MCB bundle..."
-	./tools/micros-bundle $@ init.mx=lib/macros/init.mx msh.mx=lib/macros/msh.mx harness.mx=lib/macros/harness.mx desk.mx=lib/macros/desk.mx installer.mx=lib/macros/installer.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx http_server.mx=lib/macros/http_server.mx vedit.mx=lib/macros/vedit.mx
+	./tools/micros-bundle $@ init.mx=lib/macros/init.mx ush.mx=lib/macros/ush.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx ast.mx=lib/macros/ast.mx eval_shim.mx=lib/macros/eval_shim.mx
 
 ## test: Execute the unit and integration test suite
 test: src/kernel/genesis.mcb
@@ -66,17 +68,17 @@ run: all
 	@echo "=> Executing MicrOS Sandbox..."
 	@./zig-out/bin/micros-init || true
 
-## run-msh: Execute the interactive MicroShell (msh) on host
-run-msh: all
-	@echo "=> Launching MicroShell (msh)..."
-	@./zig-out/bin/msh || true
+## run-ush: Execute the interactive µShell (ush) on host
+run-ush: all
+	@echo "=> Launching µShell (ush)..."
+	@./zig-out/bin/ush || true
 
 ## uki: Build a Unified Kernel Image (UKI) PE/COFF executable (.efi)
 uki: all
 	@echo "=> Building Unified Kernel Image (UKI)..."
 	@mkdir -p build/initramfs/dev build/initramfs/proc build/initramfs/sys build/initramfs/lib/macros
 	@cp zig-out/bin/micros-init build/initramfs/init
-	@cp zig-out/bin/msh build/initramfs/msh
+	@cp zig-out/bin/ush build/initramfs/ush
 	@cp lib/macros/*.mx build/initramfs/lib/macros/
 	@(cd build/initramfs && find . | cpio -o -H newc --quiet) > build/initramfs.cpio
 	@ukify build --linux "/boot/vmlinuz-$$(uname -r)" --initrd build/initramfs.cpio --cmdline "console=ttyS0 earlyprintk=serial,ttyS0 panic=1 rdinit=/init" --output build/micros-sandbox.efi
@@ -87,15 +89,15 @@ test-uki: uki
 	@echo "=> Booting UKI via UEFI OVMF in QEMU/KVM..."
 	@qemu-system-x86_64 -enable-kvm -cpu host -bios /usr/share/OVMF/OVMF_CODE.fd -kernel build/micros-sandbox.efi -serial stdio -display none -no-reboot -m 512M || true
 
-## qemu-msh: Boot into interactive MicroShell inside QEMU/KVM
-qemu-msh: all
-	@echo "=> Booting into interactive MicroShell in QEMU/KVM..."
+## qemu-ush: Boot into interactive µShell inside QEMU/KVM
+qemu-ush: all
+	@echo "=> Booting into interactive µShell in QEMU/KVM..."
 	@mkdir -p build/initramfs/dev build/initramfs/proc build/initramfs/sys build/initramfs/lib/macros
 	@cp zig-out/bin/micros-init build/initramfs/init
-	@cp zig-out/bin/msh build/initramfs/msh
+	@cp zig-out/bin/ush build/initramfs/ush
 	@cp lib/macros/*.mx build/initramfs/lib/macros/
 	@(cd build/initramfs && find . | cpio -o -H newc --quiet) > build/initramfs.cpio
-	@qemu-system-x86_64 -enable-kvm -cpu host -kernel "/boot/vmlinuz-$$(uname -r)" -initrd build/initramfs.cpio -append "console=ttyS0 quiet panic=1 rdinit=/msh" -serial stdio -display none -no-reboot -m 256M || true
+	@qemu-system-x86_64 -enable-kvm -cpu host -kernel "/boot/vmlinuz-$$(uname -r)" -initrd build/initramfs.cpio -append "console=ttyS0 quiet panic=1 rdinit=/ush" -serial stdio -display none -no-reboot -m 256M || true
 
 ## uefi-boot: Build bootable UEFI artifacts (boot.efi and genesis.mcb in build/esp)
 uefi-boot: all
@@ -167,8 +169,13 @@ spec-trace:
 	@echo "=> Running specification traceability auditor..."
 	./tools/micros-spec-trace --check
 
-## check: Run all verifications (test, lint, fmt-check, spec-trace)
-check: test lint fmt-check spec-trace
+## arch-gate: Verify microkernel architectural boundary rules
+arch-gate: tools
+	@echo "=> Checking architectural boundary rules..."
+	./tools/micros-arch-gate src/
+
+## check: Run all verifications (test, lint, fmt-check, spec-trace, arch-gate)
+check: test lint fmt-check spec-trace arch-gate
 	@echo "=> All checks passed successfully."
 
 ## help: Print this help message

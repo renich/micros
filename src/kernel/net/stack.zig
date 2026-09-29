@@ -57,7 +57,7 @@ pub const NetworkStack = struct {
     }
 
     pub fn init(device: *virtio_net_mod.VirtioNetDevice) NetworkStack {
-        var nonce = io.rdtsc();
+        var nonce = io.getEntropy64(0x5359_4E5F_4D49_4352);
         if (nonce == 0) nonce = 0x5359_4E5F_4D49_4352;
         return NetworkStack{
             .device = device,
@@ -197,6 +197,10 @@ pub const NetworkStack = struct {
 
     fn processTcp(self: *NetworkStack, src_mac: [6]u8, src_ip: [4]u8, payload: []const u8) void {
         const tcp_hdr = tcp_mod.parseHeader(payload) orelse return;
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+        // Environmental noise defense: validate TCP checksum with pseudo-header; drop if corrupted
+        if (tcp_mod.calculateChecksum(src_ip, my_ip, payload) != 0) return;
+
         const hdr_len = @as(usize, tcp_hdr.data_offset) * 4;
         const data = if (payload.len > hdr_len) payload[hdr_len..] else &[_]u8{};
 
@@ -248,6 +252,12 @@ pub const NetworkStack = struct {
 
     fn processUdp(self: *NetworkStack, src_ip: [4]u8, payload: []const u8) void {
         const udp_hdr = udp_mod.parseHeader(payload) orelse return;
+        const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
+        // Environmental noise defense: validate UDP checksum if non-zero; drop if corrupted
+        if (udp_hdr.checksum != 0) {
+            if (udp_mod.calculateChecksum(src_ip, my_ip, payload[0..udp_hdr.length]) != 0) return;
+        }
+
         if (udp_hdr.dst_port == dhcp_mod.PORT_CLIENT) {
             const dhcp_data = payload[udp_mod.UDP_HEADER_LEN..];
             const msg_type = dhcp_mod.parseResponse(dhcp_data, self.dhcp_xid, &self.dhcp_config) orelse return;

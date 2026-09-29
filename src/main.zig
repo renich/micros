@@ -1,7 +1,7 @@
 const std = @import("std");
 const sys = @import("sys.zig");
 const macros = @import("macros.zig");
-const msh = @import("msh.zig");
+const ush = @import("ush.zig");
 
 fn printBanner() void {
     const banner =
@@ -47,11 +47,11 @@ pub fn main() !void {
         sys.process.exit(1);
     }
 
-    _ = sys.io.write(1, "[micros-init] Spawning MicroShell (msh)...\n\n") catch {};
-    var shell = try msh.Shell.init(allocator, 0, 1);
+    _ = sys.io.write(1, "[micros-init] Spawning µShell (ush)...\n\n") catch {};
+    var shell = try ush.Shell.init(allocator, 0, 1);
     defer shell.deinit();
 
-    shell.executeLine("echo MicroShell initialized by PID 1.");
+    shell.executeLine("echo µShell initialized by PID 1.");
     shell.executeLine("ready = 1");
 
     _ = sys.io.write(1, "[micros-init] Execution completed. Halting.\n") catch {};
