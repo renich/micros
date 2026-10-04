@@ -6,8 +6,87 @@ All notable changes to this project will be documented in this file.
 
 The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
+Published release tags and compare links live at `<https://gitlab.com/renich/micros/-/tags>`_.
 [Unreleased]
 ============
+
+[0.16.0] - 2026-10-04
+---------------------
+
+First versioned release. Consolidates the Milestone 24-41 substrate work with the verification,
+durability, and deployment gates that followed it, so that every flagship claim is backed by a
+gate that runs in `make check` or as a named deep gate.
+
+.. rubric:: Added
+
+- **Cold-Reboot Catalog Durability**: the CAS superblock root now points at a magic-tagged root directory naming the system-manifest and catalog sub-roots, and boot restores the workspace catalog before actors spawn. Cached actors and named artifacts resolve across cold reboots instead of re-synthesizing.
+- **Silicon Provisioning & Cord-Cutting**: `lib/macros/installer.mx` drives `sys_disk_provision` to lay down a GPT layout, a FAT32 ESP carrying a real synthesized kernel image, and a fresh CAS partition, verified by booting the provisioned target alone.
+- **Supervisor Tool Dispatch**: prompt responses carrying a tool-call envelope are executed by µShell under the caller's own capability space, with the structured result printed instead of the raw envelope.
+- **Machine-Enforced Quality Waivers**: `// lint-waiver: <rules> [max=N] <reason>` with mandatory reasons, per-file capacity ceilings, and visible usage counters.
+- **Governing Boundary Specification**: `SPEC-TECH-ARCH-001` (`docs/technical/specs/microkernel-boundary-enforcement.rst`), plus a version-consistency gate (`tools/micros-version-check.bash`) and deep-gate targets (`make test-persistence`, `make test-rebuild`, `make test-silicon`).
+
+.. rubric:: Changed
+
+- **Boundary Gate Hardening**: Rule 2 is an allow-list over the public capability surface, exemptions are enumerated per edge rather than per daemon, the baseline lock rejects unrecorded edges, and every run discloses how many exemptions it granted.
+- **Capability-Gated Bundle Packing**: `sys_bundle_pack` returns as a `rebuild_control`-gated request served by `src/kernel/storage/bundle_pack.zig`; it stays outside the general application ABI.
+- **Shell Resolution & Consent Scope**: `:run <name>` resolves shipped system actors through `<name>.mx` in the bundle, consent memory is documented as session-scoped, and the CAS cache hit is documented as reboot-durable.
+- **Unified Version**: the project version is 0.16.0 with `src/version.zig` as the single source of truth; the kernel banner interpolates it and the version gate enforces agreement across banners, docs, and this file.
+
+.. rubric:: Fixed
+
+- **Macros Source Encoding**: string literals are transcoded from UTF-8 source into the Latin-1 code units the VM, font table, keyboard decoder, and serial encoder expect, so `µShell` no longer reaches the wire as mojibake.
+- **Stale Harnesses**: the QEMU UEFI milestone gate no longer reports a false failure, and the retired persistence, rebuild, and silicon flows now drive the live surfaces with negative assertions (`--forbid`).
+- **CAS Root Ownership**: the superblock root slot is owned solely by the root directory, ending contention between the rebuild and trial-boot chain and catalog persistence; the unwired actor-persistence bridge no longer claims it.
+- **Provisioning Correctness**: silicon provisioning no longer stages a placeholder bootloader, and its ESP reservation satisfies the FAT32 cluster floor; undersized targets are rejected with `TargetTooSmall`.
+- **Boot Hygiene**: PID 1's sandbox self-test exercises a native guest verb instead of unroutable demo lines, and the nested-list indentation errors in this changelog and the self-rebuilding specification are corrected.
+
+.. rubric:: Security
+
+- **Least Privilege**: kernel-replacement authority (`rebuild_control`) is granted only to the pristine `rebuild` actor, asserted by a scoped-authority test, and the decision to keep bundle packing out of the application ABI is recorded as an architectural rejection.
+- **Visible Debt**: quality waivers require a stated reason and a hard ceiling so suppressed lint findings cannot grow silently, and the architectural baseline makes every new tier-crossing edge a reviewable event.
+
+.. rubric:: Detailed History
+
+- **All Three End-to-End Gates Restored and Verified (Rebuild, Silicon, Persistence)**:
+  - **AI Tool Loop Wired**: ``sys_ai_tool_call`` was registered but invoked by nobody, so every supervisor tool call (``run_command``, ``spawn_actor``, file and search tools) was returned to the caller as raw envelope JSON. ``lib/macros/ush.mx`` now detects a tool-call envelope in a prompt response and dispatches it under the caller's own CSpace authority, then prints the structured result.
+  - **Bundle Packing Restored Under rebuild_control**: Cozy Stage 1's 61-to-24 syscall surgery cut ``sys_bundle_pack`` but left ``bundle.mx`` and ``rebuild.mx`` in the shipped bundle, so the supervisor's own rebuild request crashed an actor with ``RuntimeError [Undefined: 'sys_bundle_pack']``. The MCB writer now lives in ``src/kernel/storage/bundle_pack.zig`` and is reachable only through ``rebuild_control``, held solely by the pristine ``rebuild`` actor (asserted by a scoped-authority test).
+  - **Rebuild Gate Verified**: ``--verify-rebuild`` asks the resident supervisor in natural language, which routes ``run_command("rebuild")``; the actor repacks the bundle, synthesizes the PE32+ kernel, and stages the update into CAS and the dual-slot ESP. ``make test-rebuild`` passes end to end.
+  - **Silicon Provisioning Made Real**: ``sys_disk_provision`` was writing a placeholder bootloader (``mock_code``/``mock_rodata``) and reserving an ESP smaller than FAT32's 65,525-cluster floor, so a provisioned target could never boot. Provisioning now embeds a synthesized standalone kernel image (via ``kernel_synthesizer`` over the embedded genesis bundle), reserves a compliant ESP, and rejects undersized targets with ``TargetTooSmall``. ``lib/macros/installer.mx`` drives it; ``make test-silicon`` provisions an NVMe target and cord-cut boots from it with no host disk.
+  - **Shell Resolves Shipped Actors by Module Name**: ``:run installer`` now tries ``<name>.mx`` in the bundle before falling back to demand-miss synthesis, so shipped system actors resolve without a synthesis round.
+  - **Stale-Flow Machinery Removed**: With all three gates live at the current ABI, the refusal path and ``MICROS_ALLOW_STALE_FLOWS`` are gone.
+  - **Line-Limit Compliance Restored**: The new format writer was extracted to its own module and the capability grant split into helpers, keeping ``abi.zig`` (975), ``actor_lifecycle.zig``, and ``main.zig`` within the 1,000-line commandment.
+
+- **Cold-Reboot Storage Persistence: CAS Root Directory & Verified Catalog Durability**:
+  - **Root Directory Object**: The CAS superblock ``root_hash`` now points at a single magic-tagged ``RootDirectory`` (``src/kernel/storage/root_dir.zig``) naming the persisted sub-trees (``system_manifest_hash``, ``catalog_manifest_hash``). Subsystems no longer contend for one slot: the rebuild and trial-boot chain owns one sub-root, the workspace catalog owns the other, and each update is a read-modify-write that preserves its sibling. A slot holding anything else resolves to an empty directory instead of being misread, so existing disks degrade to previous behaviour. The unwired actor-persistence bridge no longer claims the superblock root.
+  - **Catalog Durability**: ``sys_catalog_write``, ``sys_catalog_commit``, and ``sys_catalog_undo`` now record the active manifest as the catalog sub-root, and boot restores the workspace manifest before actors spawn (``catl: Workspace catalog restored from persisted CAS root``). Previously the chunk store persisted, but nothing recorded the name-to-hash directory: every cold reboot re-synthesized cached applications and re-prompted for consent despite the identical BLAKE3 object sitting on disk.
+  - **Persistence Gate Resurrected**: The retired M14 flow (verbs ``store``/``spawn_cas``, sentinel ``Stored in CAS. Hash:`` that no code emitted) is replaced by a real end-to-end gate: stage 1 forces an offline demand-miss synthesis on a wiped disk, stage 2 cold-reboots the same disk and requires a ``Demand-hit`` enforced with ``--forbid "Demand-miss"``. Stage 1 doubles as the negative control. Added ``make test-persistence`` and corrected the README and CONTRIBUTING walkthroughs.
+  - **Runner Negative Assertions**: ``tools/micros-runner.bash`` gained ``--forbid <pattern>`` so a flow can assert that a marker must not appear in the serial log.
+  - **Spec Sync**: The storage specification documents the root directory and the new persistence gate; the shell specification scopes O7 consent memory to the session and records that the CAS cache hit now survives a cold reboot.
+
+- **Verification Honesty: Unavailable Harness Flows Now Refuse With a Diagnosis**:
+  - **Stale Flows Detected**: ``--verify-silicon`` and ``--verify-rebuild`` drive shell verbs that no longer exist (``install``) or that the guest shell refuses by design (``rebuild``, owned by the resident AI supervisor), and no code emits the sentinel the silicon flow waits for. ``--verify-persistence`` was found in the same state and has since been re-implemented against the live catalog (see the storage persistence entry above).
+  - **Fail Fast With a Diagnosis**: The remaining unavailable flows refuse immediately, naming the retired surface and the replacement path instead of consuming a boot timeout and reporting a misleading missing sentinel. ``MICROS_ALLOW_STALE_FLOWS=1`` still permits an archaeological run.
+  - **Documentation Corrected**: The README Quick Start and the CONTRIBUTING hardware-emulation walkthrough now point at the restored persistence gate and no longer present the unavailable flows as working steps.
+  - **Verified In The Same Pass**: ``qemu-cluster-verify`` (dual-node UDP beacon discovery and peer exchange) and both boot gates (``--mode sandbox``, ``--mode uefi``) pass on the current tree.
+
+- **Architectural Boundary Gate: Exemption Disclosure & Baseline Lock (SPEC-TECH-ARCH-001)**:
+  - **Missing Specification Authored**: Added ``docs/technical/specs/microkernel-boundary-enforcement.rst`` (SPEC-TECH-ARCH-001), the governing document the gate's banner referenced while no such file existed. It states the enforced rules, the exemption policy, the baseline semantics, and explicitly records that Rule 3 (mediated intermediary) is outside static coverage.
+  - **Rule 2 Strengthened to an Allow-List**: ``tools/src/arch_gate.zig`` admits only ``capability.zig``, ``ipc/ring.zig``, and ``boot_info.zig`` for userland imports of the substrate; every other kernel target is a violation unless enumerated. Previously only ``kernel/mem/pmm.zig``, ``kernel/arch/``, and ``kernel/sched/`` were rejected, so daemon imports of drivers, network stacks, storage, and serial passed unchecked against the documented rule.
+  - **Catch-All Exemption Removed**: The blanket clause exempting every import by ``netd``, ``aid``, ``gopd``, and ``storaged`` was replaced by 15 per-edge exemptions recording the M42 Ring-3 excision set, alongside 9 enumerated kernel-side boot and ABI exemptions. Growth now requires a reviewable change to the gate instead of being silently absorbed.
+  - **Baseline Lock Implemented**: The documented lock existed only as an unread data file. ``--baseline`` now fails the gate on any architectural edge absent from ``import-baseline.txt`` (98 unique edges, compared on normalized ``importer -> target`` identity so line shifts never invalidate it) and reports removed edges without failing. ``make arch-gate`` runs with the lock, and ``--dump-baseline`` is deduplicated.
+  - **Honest Accounting**: ``Gate Clear`` prints the exemption count, and that count is now accurate (24 real exemptions, not 43 inflated by imports that were never exemptions). Comment lines contribute no edges, and 7 colocated tests cover classification, per-edge exemption scoping, baseline key normalization, and deduplication.
+
+- **Quality Gate Integrity: Machine-Enforced Waivers & Visible Debt**:
+  - **Linter Waiver Mechanism**: Replaced the hardcoded ``tls_client.zig`` filename exclusion in ``tools/src/lint.zig`` with in-file, rule-scoped waivers (``// lint-waiver: <rules> [max=N] <reason>``). A waiver reason is mandatory, ``max`` caps how many findings a waiver may suppress so debt cannot grow silently, malformed or unknown-rule waivers are reported as violations, and every waiver is echoed with ``used/max`` counters.
+  - **Enforced Debt Visibility**: A passing run now states the total suppressed finding count, so a green ``make lint`` declares exactly how much debt it carries (77 findings for ``src/kernel/net/tls_client.zig``, all under the Section 1 cohesion, state-machine, cryptographic-bound, and invariant-proof exemptions).
+  - **Colocated Linter Tests**: ``tools/src/lint.zig`` gained 5 unit tests covering waiver parsing, mandatory reasons, unknown rules, per-file isolation, ceiling enforcement, and the no-double-budget path when a path is analyzed twice.
+  - **Doctrine & Tooling Docs**: Documented the waiver contract in ``AGENTS.md`` Section 5 and corrected ``.agents/skills/micros-tools/SKILL.md``, whose enforced-check list quoted a 50-line function limit and two CLI options that the linter does not implement.
+
+- **Boot Gate Restoration & Macros Source Encoding (UTF-8 to Latin-1 transcoding)**:
+  - **Macros String Encoding Fix**: String literals are now transcoded from UTF-8 source into the Latin-1 code units that the VM, glyph font, keyboard decoder, and serial encoder all assume, in both the host compiler (``src/macros/compiler.zig``) and the self-hosted tokenizer (``lib/macros/lexer.mx``). Non-ASCII text previously double-encoded, so ``µShell`` reached the wire as ``ÂµShell``.
+  - **Resident Shell Banner Restored**: Reinstated the audited ``µShell 0.15.0`` banner in ``lib/macros/ush.mx``; the QEMU UEFI harness milestone gate (``--expect µShell``) now passes on a clean boot instead of reporting a false failure.
+  - **Boot Gate Coverage**: Added ``make test-uefi`` and wired both ``test-sandbox`` and ``test-uefi`` into ``make check``; completed ``.PHONY`` coverage for ``test-sandbox``, ``test-qemu``, ``test-uki``, and ``arch-gate``.
+  - **PID 1 Sandbox Self-Test**: Replaced the unroutable ``echo`` and pre-bootstrap Macros assignment lines in ``src/main.zig`` with a native ``:ps`` guest verb invocation, removing error spam from every sandbox boot.
 
 - **Milestone 41 (Sovereign OS Stage 4: Self-Rebuilding Loop, Watchdog Trial Boot & Boundary Enforcement - SPEC-TECH-REBUILD-001)**:
   - **Power-Cut Immune Slot Descriptor**: Implemented 512-byte sector-aligned ``BootSlotDescriptor`` and ``SlotManager`` in ``src/kernel/storage/slot.zig`` with compile-time sector bounds (``@sizeOf == 512``), monotonic forward generation counters, and dual-slot candidate staging.
@@ -181,6 +260,7 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
   - **Structured Status Badges**: Eliminated noisy debug dumps and arbitrary step prefixes (``Step 1..8``, PCI probing chatter) in favor of fixed-width emerald green status badges (``[  ok  ]``) with categorized bold cyan subsystem tags (``boot``, ``arch``, ``mmu``, ``net``, ``dhcp``, ``blk``, ``cas``, ``cap``, ``gop``, ``mcb``, ``act``, ``spawn``, ``persist``).
   - **ANSI Telemetry Formatting Engine**: Extended ``src/kernel/serial.zig`` with typed ANSI escape constants, standalone decimal formatter (``formatDec``, ``writeDec``), and compact hex formatter (``formatHexCompact``, ``writeHexCompact``) with dedicated unit tests.
   - **Polished Interactive Sovereign Harness**:
+
     - Enhanced ``lib/macros/harness.mx`` with styled prompt (``µOS macros>``), structured and categorized ``help`` reference menu, and aligned tabular ``actors`` registry view with readable state names.
     - Preserved direct GOP framebuffer blitting safety by keeping ANSI escape sequences isolated to serial telemetry while drawing clean glyphs on the graphical canvas.
     - Refactored harness input loop into modular functions (``handle_newline``, ``handle_backspace``, ``handle_printable``, ``init_ansi``) eliminating code duplication and strictly adhering to the Ten Commandments (functions <= 40 lines, max nesting <= 3 levels).

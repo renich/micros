@@ -31,7 +31,7 @@ CACHE_DIR := .zig-cache
 # Default goal
 .DEFAULT_GOAL := all
 
-.PHONY: all clean test test-sandbox test-qemu test-uki test-uefi test-persistence test-rebuild test-silicon help run run-ush qemu-ush uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace arch-gate check
+.PHONY: all clean test test-sandbox test-qemu test-uki test-uefi test-persistence test-rebuild test-silicon version-check help run run-ush qemu-ush uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace arch-gate check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
 all: tools src/kernel/genesis.mcb
@@ -184,6 +184,11 @@ lint: tools
 	./tools/micros-lint src/
 	$(MAKE) -C tools lint
 
+## version-check: Verify every declared version site agrees with src/version.zig
+version-check:
+	@echo "=> Checking version consistency..."
+	./tools/micros-version-check
+
 ## spec-trace: Verify 100% specification traceability
 spec-trace:
 	@echo "=> Running specification traceability auditor..."
@@ -194,8 +199,8 @@ arch-gate: tools
 	@echo "=> Checking architectural boundary rules..."
 	./tools/micros-arch-gate src/ --baseline docs/project/deliberations/stage4/import-baseline.txt
 
-## check: Run all verifications (test, lint, fmt-check, spec-trace, arch-gate, sandbox boot, UEFI boot)
-check: test lint fmt-check spec-trace arch-gate test-sandbox test-uefi
+## check: Run all verifications (test, lint, fmt-check, version-check, spec-trace, arch-gate, sandbox boot, UEFI boot)
+check: test lint fmt-check version-check spec-trace arch-gate test-sandbox test-uefi
 	@echo "=> All checks passed successfully."
 
 ## help: Print this help message

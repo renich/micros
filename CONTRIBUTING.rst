@@ -154,6 +154,27 @@ Test the operating system in full x86_64 UEFI emulation via QEMU:
    make test-rebuild
    make test-silicon
 
+Release Process
+===============
+
+MicrOS follows `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_ with a
+`Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ changelog in RST. Pre-1.0
+releases use MINOR for new capability and behaviour changes and PATCH for fixes.
+
+Before tagging a release:
+
+1. Ensure ``make check`` is green, plus the deep gates that cover the flagship claims: ``make test-persistence``, ``make test-rebuild``, ``make test-silicon``, and ``tools/micros-cluster.bash --mode verify``.
+2. Cut the changelog: rename the ``[Unreleased]`` section to ``[X.Y.Z] - YYYY-MM-DD``, add a fresh empty ``[Unreleased]`` above it, and group the summary under ``.. rubric::`` categories (Added, Changed, Fixed, Security) instead of section headers.
+3. Bump the version. ``src/version.zig`` is the single source of truth; ``tools/micros-version-check.bash`` (run by ``make check``) fails until every other site agrees:
+
+   * ``lib/macros/init.mx`` and ``lib/macros/ush.mx`` banners
+   * ``docs/conf.py`` (Sphinx ``release``)
+   * ``README.rst`` status line
+   * ``CHANGELOG.rst`` release heading
+
+4. Commit the preparation as ``chore(release): prepare vX.Y.Z`` and create a signed annotated tag: ``git tag -s vX.Y.Z -m "Release vX.Y.Z"``.
+5. Push the branch and tags only when the release is approved.
+
 Project Journaling Protocol (PJP)
 =================================
 
