@@ -284,7 +284,7 @@ Antes de enviar modificaciones, ejecuta la secuencia completa de validación:
    zig build test
 
    # 6. Ejecutar arranque desatendido bare-metal en QEMU (o 'make qemu-uefi' interactivo)
-   ./tools/micros-runner --mode uefi
+   make test-uefi
 
    # 7. Ejecutar prueba del sandbox de llamadas directas
    make test-sandbox

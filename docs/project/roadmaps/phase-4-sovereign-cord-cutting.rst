@@ -11,7 +11,8 @@ Milestones & Deliverables
 * **M4.1: Pure In-System MCB Synthesizer** [COMPLETE & VERIFIED]
    - Implemented freestanding ``src/kernel/storage/bundle_writer.zig`` assembling immutable, 64-byte aligned Capability Bundle (``.mcb``) binaries in memory.
    - Enforces lexicographical tag sorting to eradicate file-ordering non-determinism, computes BLAKE3 content digests per entry, and zeroes all padding and slack bytes.
-   - Exposed ``sys_bundle_pack`` in ``src/kernel/storage/storage_abi.zig`` and implemented userspace bundle packaging in ``lib/macros/bundle.mx``.
+   - Exposed ``sys_bundle_pack`` in ``src/kernel/storage/storage_abi.zig`` and implemented userspace bundle packaging in ``lib/macros/bundle.mx``. (Cozy Stage 1 later excised bundle packing from the application ABI; it is restored as a ``rebuild_control``-gated request served by ``src/kernel/storage/bundle_pack.zig``.)
+   - Shipped ``lib/macros/installer.mx``, which drives ``sys_disk_provision`` to lay down a GPT layout, a FAT32 ESP carrying a synthesized standalone kernel image, and a fresh CAS partition; ``tools/micros-runner.bash --verify-silicon`` provisions an NVMe target and then cord-cut boots from it with no other disk.
 
 * **M4.2: Freestanding Kernel Synthesizer & PE32+ Assembler** [COMPLETE & VERIFIED]
    - Implemented ``src/kernel/storage/kernel_synthesizer.zig`` linking relocatable substrate code with embedded ``.mcb`` bundle sections.

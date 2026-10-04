@@ -1,0 +1,16 @@
+{
+  "rejections": {
+    "REJ-001": {
+      "adr_ref": "",
+      "date": "2026-10-04T10:55:50.484Z",
+      "reason": "Cozy Stage 1 excised bundle packing with the other 13 syscalls to shrink the app surface to 24 entries. It stays excluded: the restored writer is reachable only through rebuild_control, held solely by the pristine rebuild actor, so an ordinary app cannot mint bundles.",
+      "tags": [
+        "ABI",
+        "CAPABILITY",
+        "REBUILD"
+      ],
+      "topic": "Exposing sys_bundle_pack to the general application ABI"
+    }
+  },
+  "version": "0.3.0"
+}

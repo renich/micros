@@ -13,6 +13,7 @@ fn collect_system_entries() {
     rebuild_src = sys_bundle_read("rebuild.mx");
     ast_src = sys_bundle_read("ast.mx");
     eval_shim_src = sys_bundle_read("eval_shim.mx");
+    installer_src = sys_bundle_read("installer.mx");
 
     return [
         ["ast.mx", ast_src],
@@ -20,6 +21,7 @@ fn collect_system_entries() {
         ["compiler.mx", compiler_src],
         ["compiler_main.mx", compiler_main_src],
         ["eval_shim.mx", eval_shim_src],
+        ["installer.mx", installer_src],
         ["init.mx", init_src],
         ["lexer.mx", lexer_src],
         ["parser.mx", parser_src],
@@ -31,7 +33,7 @@ fn collect_system_entries() {
 fn execute_rebuild() {
     print("[rebuild] Step 1/5: Collecting system scripts from active bundle...");
     entries = collect_system_entries();
-    print("[rebuild]   -> 10 system actors collected [OK]");
+    print("[rebuild]   -> 11 system actors collected [OK]");
 
     print("[rebuild] Step 2/5: Deterministically packing candidate Genesis MCB bundle...");
     bundle_bytes = sys_bundle_pack(entries);

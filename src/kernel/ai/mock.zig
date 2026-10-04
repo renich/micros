@@ -11,6 +11,10 @@ pub const MOCK_RESPONSE: []const u8 =
     "sys_yield();\n" ++
     "```\n";
 
+pub const MOCK_REBUILD_TOOL_RESPONSE: []const u8 =
+    "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"run_command\"," ++
+    "\"args\":{\"command\":\"rebuild\"}}}]}}]}";
+
 pub const MOCK_TOOL_RESPONSE: []const u8 =
     "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"spawn_actor\"," ++
     "\"args\":{\"name\":\"mock_actor\",\"source\":\"sys_yield();\"}}}]}}]}";
@@ -38,7 +42,9 @@ pub const MOCK_SYNTHESIS_RESPONSE: []const u8 =
     "```\n";
 
 pub fn generateResponse(user_prompt: []const u8, out_buf: []u8) !usize {
-    const resp = if (std.mem.indexOf(u8, user_prompt, "script") != null or std.mem.indexOf(u8, user_prompt, "actor") != null)
+    const resp = if (std.mem.indexOf(u8, user_prompt, "rebuild") != null)
+        MOCK_REBUILD_TOOL_RESPONSE
+    else if (std.mem.indexOf(u8, user_prompt, "script") != null or std.mem.indexOf(u8, user_prompt, "actor") != null)
         MOCK_SYNTHESIS_RESPONSE
     else if (std.mem.indexOf(u8, user_prompt, "dir_listed") != null)
         MOCK_DIR_FOLLOWUP_RESPONSE
@@ -68,4 +74,12 @@ test "mock ai response generation" {
     const tool_len = try generateResponse("call tool now", &buf);
     try std.testing.expect(tool_len > 0);
     try std.testing.expect(std.mem.indexOf(u8, buf[0..tool_len], "functionCall") != null);
+}
+
+test "mock ai maps a rebuild intent to the supervisor rebuild command" {
+    var buf: [512]u8 = undefined;
+    const len = try generateResponse("rebuild the system", &buf);
+    try std.testing.expect(len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, buf[0..len], "run_command") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf[0..len], "rebuild") != null);
 }

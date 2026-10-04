@@ -42,6 +42,20 @@ Agents must never hallucinate project state. Before modifying files, an agent mu
 - Execute `ajourn status` to verify the Project Journaling Protocol (PJP) state.
 - Run `zig build test` to prove the baseline is secure.
 - Enforce Test Colocation: Tests must reside alongside the production code they test within the same module, natively leveraging Zig's `test` blocks.
+- Regenerate the architectural edge baseline (`tools/micros-arch-gate src/ --dump-baseline docs/project/deliberations/stage4/import-baseline.txt`) only in the change that intentionally introduces the edge; `make check` rejects any edge absent from it. A green `make arch-gate` always states how many exemptions it granted.
+
+### Quality Waivers
+Rules in Section 1 may only be waived through an in-file, machine-readable declaration:
+
+```text
+// lint-waiver: <rule>[,<rule>...] [max=N] <reason>
+```
+
+- Valid rule ids: `forbidden-name`, `file-length`, `function-length`, `dispatch-length`, `nesting`, `catch-unreachable`.
+- The reason is mandatory. A malformed waiver, or one naming an unknown rule, is reported as a violation.
+- `max` (default `1`) is a hard ceiling on how many findings of each named rule that waiver may suppress. Growth beyond it fails `make lint`, so suppressed debt cannot expand silently.
+- `make lint` echoes every waiver with its `used/max` counters. Ratchet `max` down when the real count drops, and delete unused waivers.
+- Prose justification elsewhere in a file is welcome context but carries no authority; only the waiver line does.
 
 ## 6. Subagent Roles
 - `zig_system_dev`: Low-level kernel, memory management, and hardware interfaces.

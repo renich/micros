@@ -6,8 +6,12 @@ IFS=$'\n\t'
 # Orchestrates UEFI and Sandbox mode executions with sub-second milestone detection.
 
 MODE="sandbox"
-EXPECT="Substrate self-test verified (Macros 20+22=42)"
+SANDBOX_EXPECT="Substrate self-test verified (Macros 20+22=42)"
+UEFI_EXPECT="µShell"
+EXPECT="$SANDBOX_EXPECT"
+EXPECT_EXPLICIT=0
 FAIL_PATTERN="KERNEL FATAL|CPU Exception|Kernel Panic|panic:"
+FORBID_PATTERN=""
 SCREENDUMP=""
 SCREENSHOT=""
 SERIAL_LOG=""
@@ -31,6 +35,7 @@ Options:
   --mode [uefi|sandbox]      Execution mode (default: sandbox)
   --expect <pattern>         Success regex sentinel
   --fail <pattern>           Regex for fatal panic
+  --forbid <pattern>         Regex that must NOT appear in the serial log (negative assertion)
   --screendump <path.ppm>    Capture GOP framebuffer to PPM
   --screenshot <path.png>    Convert PPM to PNG
   --serial-log <path>        Output serial log
@@ -41,11 +46,11 @@ Options:
   --no-kvm                   Disable KVM hardware acceleration
   --disk <path>              Path to raw disk image for VirtIO-Blk
   --wipe-disk                Wipe/recreate raw disk image before booting
-  --verify-persistence       Execute two-stage reboot persistence verification
+  --verify-persistence       Execute two-stage cold-reboot persistence verification (catalog root + CAS cache)
   --nvme <path>              Path to raw disk image for PCIe NVMe SSD
   --wipe-nvme                Wipe/recreate NVMe disk image before booting
-  --verify-silicon           Execute end-to-end silicon installer & cord-cutting verification
-  --verify-rebuild           Execute end-to-end in-system kernel self-rebuild verification
+  --verify-silicon           Execute end-to-end silicon installer & cord-cutting verification (provisions the NVMe target)
+  --verify-rebuild           Execute end-to-end in-system kernel self-rebuild verification (AI supervisor owned)
   --preserve-efi             Do not overwrite ESP/EFI/BOOT/BOOTX64.EFI with build output
 EOF
     exit 1
@@ -56,8 +61,9 @@ PRESERVE_EFI=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --mode) MODE="$2"; shift 2 ;;
-        --expect) EXPECT="$2"; shift 2 ;;
+        --expect) EXPECT="$2"; EXPECT_EXPLICIT=1; shift 2 ;;
         --fail) FAIL_PATTERN="$2"; shift 2 ;;
+        --forbid) FORBID_PATTERN="$2"; shift 2 ;;
         --screendump) SCREENDUMP="$2"; shift 2 ;;
         --screenshot) SCREENSHOT="$2"; shift 2 ;;
         --serial-log) SERIAL_LOG="$2"; shift 2 ;;
@@ -81,6 +87,14 @@ done
 
 # Silence shellcheck for options used across roadmap phases
 : "${SCREENDUMP}" "${SCREENSHOT}" "${MON_SOCK}" "${ISA_DEBUG}"
+
+# Only fall back to the per-mode sentinel when the caller did not pin one.
+if [[ "$EXPECT_EXPLICIT" -eq 0 ]]; then
+    case "$MODE" in
+        uefi) EXPECT="$UEFI_EXPECT" ;;
+        sandbox) EXPECT="$SANDBOX_EXPECT" ;;
+    esac
+fi
 
 if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "ERROR: qemu-system-x86_64 not found."
@@ -111,33 +125,31 @@ run_reboot_persistence_verification() {
     trap "rm -f '$log1' '$log2'" RETURN
 
     echo "========================================================"
-    echo " MicrOS Milestone 14: Sovereign Storage Persistence Test"
+    echo " MicrOS Sovereign Storage Persistence Test (CAS cache)"
     echo "========================================================"
-    echo "[persist-test] Stage 1: Initializing CAS and storing actor..."
+    echo "[persist-test] Stage 1: Cold boot on a wiped disk; force a demand-miss synthesis..."
 
     local stage1_input
-    stage1_input=$(printf 'store sys_serial_write("[SOVEREIGN-PERSIST-SENTINEL-42] active.");\nexit\n')
+    stage1_input=$(printf ':run persist_probe\na\nexit\n')
 
-    "$0" --mode uefi --disk "$disk" --wipe-disk --serial-log "$log1" --input "$stage1_input" --expect "Stored in CAS. Hash:" --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --disk "$disk" --wipe-disk --serial-log "$log1" --input "$stage1_input" --expect "[ush] Synthesized and cached to CAS" --timeout "$TIMEOUT_SEC"
 
-    local hash
-    hash=$(gawk '/Stored in CAS\. Hash: [0-9a-f]{64}/ { print $5 }' "$log1" | tr -d '\r\n')
-    if [[ -z "$hash" || ${#hash} -ne 64 ]]; then
-        echo "[persist-test] FAILED: Could not extract 64-char BLAKE3 hash from Stage 1 log."
+    if ! grep -F "[ush] Demand-miss for 'persist_probe'" "$log1" >/dev/null 2>&1; then
+        echo "[persist-test] FAILED: Stage 1 did not exercise the demand-miss synthesis path."
         cat "$log1"
         exit 1
     fi
-    echo "[persist-test] Stage 1 SUCCESS! Chunk stored in CAS with hash: $hash"
+    echo "[persist-test] Stage 1 SUCCESS! Actor synthesized, stored in CAS, and catalog root persisted."
 
-    echo "[persist-test] Stage 2: Rebooting QEMU from cold disk and spawning actor from CAS..."
+    echo "[persist-test] Stage 2: Cold reboot from the same disk; catalog and CAS cache must survive..."
     local stage2_input
-    stage2_input=$(printf 'spawn_cas %s\nstatus\nexit\n' "$hash")
+    stage2_input=$(printf ':run persist_probe\na\nexit\n')
 
-    "$0" --mode uefi --disk "$disk" --serial-log "$log2" --input "$stage2_input" --expect "[SOVEREIGN-PERSIST-SENTINEL-42] active." --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --disk "$disk" --serial-log "$log2" --input "$stage2_input" --forbid "Demand-miss" --expect "[ush] Demand-hit for 'persist_probe'" --timeout "$TIMEOUT_SEC"
 
-    echo "[persist-test] Stage 2 SUCCESS! Dynamic actor restored and executed from cold disk CAS across reboots!"
+    echo "[persist-test] Stage 2 SUCCESS! Catalog restored from the persisted CAS root across a cold reboot; no re-synthesis."
     echo "========================================================"
-    echo " Milestone 14 Sovereign Reboot Persistence VERIFIED."
+    echo " Sovereign Reboot Persistence VERIFIED."
     echo "========================================================"
     exit 0
 }
@@ -157,27 +169,27 @@ run_silicon_verification() {
     trap "rm -f '$log1' '$log2'" RETURN
 
     echo "========================================================"
-    echo " MicrOS Milestone 18: Standalone Silicon Deployment Test"
+    echo " MicrOS Sovereign Silicon Deployment & Cord-Cutting Test"
     echo "========================================================"
-    echo "[silicon-test] Stage 1: Cold boot live system and installing to physical NVMe..."
+    echo "[silicon-test] Stage 1: Provision a target NVMe from the live system..."
 
     rm -f "$nvme"
     mkdir -p "$BUILD_DIR"
-    truncate -s 512M "$nvme"
+    truncate -s 1G "$nvme"
 
     local stage1_input
-    stage1_input=$(printf 'install\nexit\n')
+    stage1_input=$(printf ':run installer\na\nexit\n')
 
-    "$0" --mode uefi --disk "$disk" --wipe-disk --nvme "$nvme" --serial-log "$log1" --input "$stage1_input" --expect "Deployment succeeded! Target silicon is standalone and verified." --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --disk "$disk" --wipe-disk --nvme "$nvme" --serial-log "$log1" --input "$stage1_input" --forbid '\\[install\\] Error' --expect "Deployment succeeded! Target silicon is standalone and verified." --timeout "$TIMEOUT_SEC"
 
-    echo "[silicon-test] Stage 1 SUCCESS! Bare-metal silicon partitioned, formatted, and staged!"
+    echo "[silicon-test] Stage 1 SUCCESS! Target partitioned, ESP formatted, standalone kernel staged."
+    echo "[silicon-test] Stage 2: Cord-cutting verification - booting the target with no host disk..."
 
-    echo "[silicon-test] Stage 2: Cord-cutting verification — Booting standalone NVMe silicon..."
     "$0" --mode uefi --nvme "$nvme" --serial-log "$log2" --expect "µShell" --timeout "$TIMEOUT_SEC"
 
-    echo "[silicon-test] Stage 2 SUCCESS! MicrOS booted directly from standalone physical NVMe drive!"
+    echo "[silicon-test] Stage 2 SUCCESS! MicrOS booted directly from the provisioned target."
     echo "========================================================"
-    echo " Milestone 18 Standalone Cord-Cutting VERIFIED."
+    echo " Sovereign Cord-Cutting VERIFIED."
     echo "========================================================"
     exit 0
 }
@@ -189,21 +201,22 @@ fi
 run_rebuild_verification() {
     local disk="${DISK_RAW:-$BUILD_DIR/micros-disk.raw}"
     local log1
-    log1=$(mktemp /tmp/micros-rebuild-s1-XXXXXX.log)
+    local ai_timeout=$((TIMEOUT_SEC > 45 ? TIMEOUT_SEC : 45))
+    log1=$(mktemp /tmp/micros-rebuild-XXXXXX.log)
     # shellcheck disable=SC2064
     trap "rm -f '$log1'" RETURN
 
     echo "========================================================"
-    echo " MicrOS Phase 4 / Track D: In-System Self-Rebuilding Pipeline"
+    echo " MicrOS In-System Self-Rebuild (owned by the AI supervisor)"
     echo "========================================================"
-    echo "[rebuild-test] Stage 1: Cold boot UEFI system and executing in-system rebuild..."
+    echo "[rebuild-test] Cold boot UEFI; the guest requests a rebuild, the supervisor performs it..."
 
     local stage1_input
-    stage1_input=$(printf 'rebuild\nstatus\nexit\n')
+    stage1_input=$(printf 'rebuild the system\nexit\n')
 
-    "$0" --mode uefi --disk "$disk" --serial-log "$log1" --input "$stage1_input" --expect "Rebuild complete! Candidate kernel staged successfully." --timeout "$TIMEOUT_SEC"
+    "$0" --mode uefi --disk "$disk" --serial-log "$log1" --input "$stage1_input" --forbid '\[rebuild\] Error' --expect "[rebuild] Rebuild complete! Candidate kernel staged successfully." --timeout "$ai_timeout"
 
-    echo "[rebuild-test] Stage 1 SUCCESS! In-system kernel synthesis and staging verified!"
+    echo "[rebuild-test] SUCCESS! In-system bundle repack, PE32+ kernel synthesis, and dual-slot ESP staging verified."
     echo "========================================================"
     echo " Phase 4 / Track D In-System Self-Rebuilding VERIFIED."
     echo "========================================================"
@@ -255,6 +268,11 @@ if [[ "$MODE" == "sandbox" ]]; then
         exit 1
     fi
 
+    if [[ -n "$FORBID_PATTERN" ]] && grep -E "$FORBID_PATTERN" "$TMP_SERIAL" >/dev/null 2>&1; then
+        echo "[micros-runner] FAILED: Forbidden pattern '$FORBID_PATTERN' present in serial log."
+        exit 1
+    fi
+
     if grep -F "$EXPECT" "$TMP_SERIAL" >/dev/null 2>&1; then
         echo "[micros-runner] SUCCESS: Milestone sentinel '$EXPECT' verified."
         exit 0
@@ -278,10 +296,6 @@ elif [[ "$MODE" == "uefi" ]]; then
     if [[ -z "$OVMF_IMAGE" ]]; then
         echo "ERROR: OVMF UEFI firmware image not found on host."
         exit 1
-    fi
-
-    if [[ "$EXPECT" == "Substrate self-test verified (Macros 20+22=42)" ]]; then
-        EXPECT="µShell"
     fi
 
     ESP_DIR="$BUILD_DIR/esp"
@@ -460,6 +474,11 @@ elif [[ "$MODE" == "uefi" ]]; then
 
     if grep -E "$FAIL_PATTERN" "$TMP_SERIAL" >/dev/null 2>&1; then
         echo "[micros-runner] FAILED: Matched fatal panic pattern."
+        exit 1
+    fi
+
+    if [[ -n "$FORBID_PATTERN" ]] && grep -E "$FORBID_PATTERN" "$TMP_SERIAL" >/dev/null 2>&1; then
+        echo "[micros-runner] FAILED: Forbidden pattern '$FORBID_PATTERN' present in serial log."
         exit 1
     fi
 

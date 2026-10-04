@@ -33,7 +33,8 @@ SCRIPTS := \
 	micros-runner.bash \
 	micros-spec-trace.bash \
 	micros-cluster.bash \
-	micros-rfc-gate.bash
+	micros-rfc-gate.bash \
+	micros-version-check.bash
 
 # Symlink launchers
 SYMLINKS := \
@@ -51,7 +52,8 @@ SYMLINKS := \
 	micros-virtio-bench \
 	micros-fiber-bench \
 	micros-rfc-gate \
-	micros-arch-gate
+	micros-arch-gate \
+	micros-version-check
 
 # Default goal
 .DEFAULT_GOAL := all
@@ -135,6 +137,7 @@ micros-arch-gate: $(BIN_DIR)/micros-arch-gate
 test: all
 	@echo "=> Running tools test suite..."
 	$(ZIG) test $(SRC_DIR)/lint.zig --cache-dir $(CACHE_DIR)
+	$(ZIG) test $(SRC_DIR)/arch_gate.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/fb_verify.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/sym.zig --cache-dir $(CACHE_DIR)
 	$(ZIG) test $(SRC_DIR)/telem.zig --cache-dir $(CACHE_DIR)

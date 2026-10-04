@@ -103,7 +103,22 @@ pub const Compiler = struct {
         };
     }
 
-    fn unescapeString(self: *Compiler, raw: []const u8) ![]const u8 {
+    /// Macros source is UTF-8, but VM string constants are Latin-1 code units:
+    /// the font glyph table, the serial Latin-1 to UTF-8 encoder, and the
+    /// keyboard UTF-8 decoder all agree on that model. Collapse every UTF-8
+    /// sequence that lands in U+0080..U+00FF into its single Latin-1 byte so
+    /// stored text round-trips instead of double-encoding. Codepoints above
+    /// U+00FF have no byte representation and pass through untouched.
+    fn decodeLatin1CodeUnit(raw: []const u8, i: usize) ?u8 {
+        if (i + 1 >= raw.len) return null;
+        const b1 = raw[i];
+        if (b1 != 0xC2 and b1 != 0xC3) return null;
+        const b2 = raw[i + 1];
+        if ((b2 & 0xC0) != 0x80) return null;
+        return ((b1 & 0x1F) << 6) | (b2 & 0x3F);
+    }
+
+    fn decodeLiteral(self: *Compiler, raw: []const u8) ![]const u8 {
         var buf = try self.allocator.alloc(u8, raw.len);
         errdefer self.allocator.free(buf);
         var src_i: usize = 0;
@@ -111,6 +126,9 @@ pub const Compiler = struct {
         while (src_i < raw.len) {
             if (raw[src_i] == '\\' and src_i + 1 < raw.len) {
                 buf[dst_i] = decodeEscape(raw[src_i + 1]);
+                src_i += 2;
+            } else if (decodeLatin1CodeUnit(raw, src_i)) |byte| {
+                buf[dst_i] = byte;
                 src_i += 2;
             } else {
                 buf[dst_i] = raw[src_i];
@@ -128,14 +146,8 @@ pub const Compiler = struct {
     }
 
     fn compileStringLiteral(self: *Compiler, str: ast.StringLiteral) anyerror!void {
-        var val = str.value;
-        if (std.mem.indexOfScalar(u8, val, '\\') != null) {
-            const decoded = try self.unescapeString(val);
-            val = try self.chunk.addAllocatedString(self.allocator, decoded);
-        } else {
-            const duped = try self.allocator.dupe(u8, val);
-            val = try self.chunk.addAllocatedString(self.allocator, duped);
-        }
+        const decoded = try self.decodeLiteral(str.value);
+        const val = try self.chunk.addAllocatedString(self.allocator, decoded);
         const idx = try self.chunk.addConstant(self.allocator, eval.Value{ .string = val });
         try self.chunk.writeChunk(self.allocator, @intFromEnum(OpCode.constant));
         try self.chunk.writeChunk(self.allocator, @intCast((idx >> 8) & 0xFF));
@@ -470,6 +482,26 @@ test "compiler unescapes string literals" {
     const val = ch.constants.items[0];
     try std.testing.expect(val == .string);
     try std.testing.expectEqualStrings("hello\nworld\t\"quotes\"", val.string);
+}
+
+test "compiler transcodes UTF-8 string literals to Latin-1 code units" {
+    const allocator = std.testing.allocator;
+    var ch = chunk.Chunk.init();
+    defer ch.deinit(allocator);
+
+    var comp = Compiler.init(allocator, &ch);
+
+    const str_node = try allocator.create(ast.Node);
+    defer allocator.destroy(str_node);
+    str_node.* = .{ .string_literal = .{ .value = "µShell ñ\t✓" } };
+
+    try comp.compile(str_node);
+    try std.testing.expectEqual(@as(usize, 1), ch.constants.items.len);
+    const val = ch.constants.items[0];
+    try std.testing.expect(val == .string);
+
+    // µ and ñ each collapse to a single Latin-1 byte; ✓ (U+2713) has no byte form.
+    try std.testing.expectEqualStrings("\xB5Shell \xF1\t\xE2\x9C\x93", val.string);
 }
 
 test "compiler compiles unary and multiplication expressions" {

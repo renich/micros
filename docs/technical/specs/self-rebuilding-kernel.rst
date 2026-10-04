@@ -71,7 +71,7 @@ Lifecycle Transitions:
 ====================================
 The autonomous rebuild pipeline is accessible through µShell (``ush``) and exposes low-level mechanisms through the Storage ABI:
 
-* ``sys_bundle_pack(entries)``: Packs array of ``[tag, content]`` pairs into 64-byte aligned MCB binary.
+* ``sys_bundle_pack(entries)``: Packs array of ``[tag, content]`` pairs into 64-byte aligned MCB binary. Bundle packing is excluded from the application ABI (Cozy Stage 1 cut the app surface from 61 to 24 syscalls); it is reachable only under ``rebuild_control``, held solely by the pristine ``rebuild`` actor.
 * ``sys_kernel_synthesize(bundle_bytes)``: Links substrate code and embedded MCB section into a valid PE32+ executable (requires ``rebuild_control`` WRITE|EXECUTE authority).
 * ``sys_kernel_stage_update(kernel_bytes, bundle_bytes)``: Atomically stages Generation N+1 into CAS and FAT32 ESP (requires ``rebuild_control`` WRITE authority).
 * ``sys_rebuild_status()``: Returns active manifest generation, trial flag, stable flag, and kernel content hash (requires ``rebuild_control`` READ authority).
@@ -82,19 +82,16 @@ The autonomous rebuild pipeline is accessible through µShell (``ush``) and expo
 =====================================================
 Self-rewrites execute through the structured RFC amendment lifecycle (``tools/micros-rfc-gate.bash``):
 1. **RFC Proposal**: Amendment author supplies patch manifest, target tunable or bytecode change, and justification.
-2. **Empirical Verification Gates**:
-   - **G-perf**: Zero regression in fiber context-switch throughput.
-   - **G-fault**: 100% test suite passing (>= 487 tests, zero dropped).
-   - **G-tail**: Fiber dispatch p99 tail latency strictly bounded (p99 <= 50.0 us).
+2. **Empirical Verification Gates**: G-perf (zero regression in fiber context-switch throughput), G-fault (100% suite passing, zero dropped), and G-tail (fiber dispatch p99 tail latency bounded at 50.0 us or better).
 3. **Host-Side Human Thaw**: Explicit human-in-the-loop authorization flag (``/tmp/micros-rfc-thaw.flag``) atomically consumed.
-4. **Watchdog Trial Boot**: Automated QEMU harness executes trial boot with 15s deadline (calibrated 2x baseline).
-   - **Verdict PASS**: Milestone sentinel (``µShell``) verified within deadline; candidate kernel promoted to ``last_known_good``.
-   - **Verdict FAIL**: Timeout, CPU exception (#UD, #GP, #PF), or kernel panic triggers automated fallback restoring ``last_known_good`` and archiving trial failure log in ``.agents/trials/``.
+4. **Watchdog Trial Boot**: Automated QEMU harness executes trial boot with 15s deadline (calibrated 2x baseline). Verdict PASS (milestone sentinel ``µShell`` verified within deadline) promotes the candidate kernel to ``last_known_good``; verdict FAIL (timeout, CPU exception, or panic) triggers automated fallback and archives the trial failure log under ``.agents/trials/``.
 
 6. Cryptographic Provenance Seal & Capability Control
 =====================================================
 To prevent unauthorized or untrusted binary execution:
+
 * **ArtifactProvenanceSeal**: A 256-byte sector-aligned structure (``src/kernel/provenance.zig``) embedded directly into the PE ``.prov`` section, containing:
+
   - Format magic (``MPRV``), schema version (1), timestamp cycles, builder ID, build hash, source hash, parent kernel hash, compiler flags hash, and 64-byte Ed25519 signature.
 * **Kernel Synthesizer Validation**: ``validatePeImage`` in ``src/kernel/storage/kernel_synthesizer.zig`` mathematically verifies PE headers, entry point bounds, and cryptographic Ed25519 signature before staging.
 * **Rebuild Control Capability**: Rebuild authority is isolated under ``CapType.rebuild_control = 0x000A`` (separate from ``storage_device = 0x0007``), enforcing least-privilege access.

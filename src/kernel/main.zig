@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const version_mod = @import("../version.zig");
 const boot_info_mod = @import("boot_info.zig");
 const BootInfo = boot_info_mod.BootInfo;
 const serial = @import("serial.zig");
@@ -43,6 +44,7 @@ const cas_mod = @import("storage/cas.zig");
 const cas_chunk_mod = @import("storage/chunk.zig");
 const rebuild_mod = @import("storage/rebuild.zig");
 const catalog_abi = @import("storage/catalog_abi.zig");
+const catalog_root_mod = @import("storage/catalog_root.zig");
 const net_mod = @import("net.zig");
 const spki_mod = @import("net/spki.zig");
 const ai_mod = @import("ai.zig");
@@ -103,7 +105,7 @@ fn kernelPanic(stage: []const u8) noreturn {
 }
 
 fn printBanner() void {
-    serial.writeString("\n\x1b[1;97muOS 0.1.0-dev\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
+    serial.writeString("\n\x1b[1;97muOS " ++ version_mod.version ++ "\x1b[0m \x1b[90m(x86_64-uefi)\x1b[0m\n\n");
     if (config.trial_canary) {
         serial.writeString("[trial] Trial slot candidate active (canary build, watchdog verdict pending)\n");
     } else {
@@ -409,6 +411,24 @@ fn casGetBridge(hex_hash: []const u8, out_buf: []u8) anyerror!usize {
     return try global_cas.?.getChunk(&raw_hash, out_buf, dev);
 }
 
+/// Exposed to storage provisioning so a target ESP receives a real synthesized kernel
+/// image (with the genesis bundle embedded) rather than a placeholder bootloader.
+fn genesisBundleBytes() []const u8 {
+    return EMBEDDED_GENESIS_BUNDLE;
+}
+
+fn persistCatalogRootBridge(root: *const [cas_chunk_mod.HASH_SIZE]u8) anyerror!void {
+    const cas = global_cas orelse return error.NoStorage;
+    const dev = if (global_block_device != null) &global_block_device.? else null;
+    try catalog_root_mod.persist(cas, dev, root);
+}
+
+fn restoreCatalogFromCas(allocator: std.mem.Allocator) bool {
+    const cas = global_cas orelse return false;
+    const dev = if (global_block_device != null) &global_block_device.? else null;
+    return catalog_root_mod.restore(cas, dev, allocator);
+}
+
 fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     if (global_cas == null) return error.NoStorage;
     const actor = global_registry.get(actor_id) orelse return error.ActorNotFound;
@@ -417,12 +437,9 @@ fn persistActorBridge(actor_id: u32, out_hex: *[64]u8) anyerror!void {
     const dev = if (global_block_device != null) &global_block_device.? else null;
     const hash = try global_cas.?.putChunk(.actor_source, src, dev);
     cas_chunk_mod.formatHexHash(&hash, out_hex);
-    if (actor_id == actor_mod.GENESIS_ACTOR_ID) {
-        try global_cas.?.setRootHash(&hash, dev);
-    }
     serial.writeString("  \x1b[90m[\x1b[92m  ok  \x1b[90m]\x1b[0m \x1b[96mpersist\x1b[90m: \x1b[97mActor \x1b[0m");
     serial.writeDec(actor_id);
-    serial.writeString(" \x1b[97mroot hash \x1b[0m");
+    serial.writeString(" \x1b[97mcas hash \x1b[0m");
     serial.writeString(out_hex);
     serial.writeString("\n");
 }
@@ -604,7 +621,10 @@ fn initStorage(boot_info: *const BootInfo, allocator: std.mem.Allocator) void {
     if (pci_mod.findNvmeDevice()) |nvme_dev| _ = initNvmeDevice(nvme_dev, boot_info);
     initStorageEngines(allocator);
     probe_ladder_mod.cas_put_transcript_fn = probeCasPutBridge;
+    abi_mod.storage_abi.boot_bundle_fn = genesisBundleBytes;
     catalog_abi.setStorageContext(casPutBridge, casGetBridge, abi_mod.checkCallerAuthority);
+    catalog_abi.persist_root_fn = persistCatalogRootBridge;
+    _ = restoreCatalogFromCas(allocator);
 }
 
 fn initNetwork(boot_info: *const BootInfo, cspace: *cspace_mod.CSpace) void {

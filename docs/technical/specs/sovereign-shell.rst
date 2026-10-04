@@ -34,9 +34,9 @@ The shell serves as the entry point for the "machine that makes machines":
 * When an application (e.g., ``novel_app``, ``desk``, ``vedit``) is requested via ``:run <app>`` and does not exist in the active workspace, the shell triggers a demand-miss synthesis workflow with the Resident AI.
 * **Milestone 39 Live AI Actor Synthesis**: When network connectivity is active with DNS, ``aid`` dispatches prompts over TLS 1.3 with SPKI pinning to Google Gemini (or uses recorded fixture in tests) to synthesize bespoke userland Macros actors; air-gapped systems fall back to deterministic offline synthesis with honest ``[mock]`` labeling.
 * The synthesized Macros program is compiled to bytecode, cached immutably into Content-Addressed Storage (CAS) by its BLAKE3 hash, and registered in the workspace catalog.
-* **O7 Consent Memory**: First launch triggers an interactive permission prompt (`caps.granted.<app>`), recorded for zero re-prompts on subsequent invocations.
+* **O7 Consent Memory**: First launch triggers an interactive permission prompt (`caps.granted.<app>`), recorded for the life of the session so subsequent invocations do not re-prompt. Consent is capability state, not persisted workspace state: a cold reboot re-prompts, and durability of `Allow Always` is deliberately out of scope.
 * **G7 Provenance Badges**: Every synthesized actor carries Ed25519 authorship tokens rendered on the window title bar and `:show <artifact>` inspection cards.
-* Subsequent invocations result in a sub-millisecond CAS cache hit, loading and executing the verified bytecode without network latency or re-synthesis overhead.
+* Subsequent invocations result in a sub-millisecond CAS cache hit, loading and executing the verified bytecode without network latency or re-synthesis overhead. Because the catalog root is persisted in the CAS root directory, this cache hit survives a cold reboot (verified by `tools/micros-runner.bash --verify-persistence`).
 
 2. Shell Grammar & Command Dispatch
 ===================================

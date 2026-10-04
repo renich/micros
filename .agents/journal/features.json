@@ -7,6 +7,13 @@
       "spec_ref": "docs/technical/specs/sovereign-ai-tool-synthesis.rst",
       "verification_cmd": "zig build test"
     },
+    "SPEC-TECH-ARCH-001": {
+      "last_checked": "2026-10-04T09:28:02.917Z",
+      "name": "Microkernel Tier Boundary Enforcement & Baseline Lock",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/microkernel-boundary-enforcement.rst",
+      "verification_cmd": "make check"
+    },
     "SPEC-TECH-COMPOSITOR-001": {
       "last_checked": "2026-09-17T20:42:58.420Z",
       "name": "Reactive Vector Compositor & Multi-Actor Windowing",
@@ -49,6 +56,20 @@
       "spec_ref": "docs/technical/specs/content-addressed-modules.rst",
       "verification_cmd": "zig build test"
     },
+    "SPEC-TECH-LANG-004": {
+      "last_checked": "2026-10-04T08:59:34.459Z",
+      "name": "Macros UTF-8 to Latin-1 Source Encoding & Boot Gate Coverage",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/macros-lang.rst",
+      "verification_cmd": "make check"
+    },
+    "SPEC-TECH-LINT-001": {
+      "last_checked": "2026-10-04T09:12:09.016Z",
+      "name": "Machine-Enforced Quality Waivers & Visible Lint Debt",
+      "passes": true,
+      "spec_ref": "AGENTS.md",
+      "verification_cmd": "make check"
+    },
     "SPEC-TECH-NET-002": {
       "last_checked": "2026-09-18T02:27:40.843Z",
       "name": "Fast-Path TCP Server Substrate",
@@ -70,12 +91,33 @@
       "spec_ref": "docs/technical/specs/microkernel-network-decoupling.rst",
       "verification_cmd": "zig build test"
     },
-    "SPEC-TECH-SILICON-001": {
-      "last_checked": "2026-09-17T22:43:23.538Z",
-      "name": "Sovereign Cord-Cutting & Silicon Deployment",
+    "SPEC-TECH-P2P-001": {
+      "last_checked": "2026-09-28T15:09:00.000Z",
+      "name": "Sovereign P2P Wire Protocol & Virtual Cluster Mesh",
       "passes": true,
+      "spec_ref": "docs/technical/specs/sovereign-p2p-wire-protocol.rst",
+      "verification_cmd": "make qemu-cluster-verify"
+    },
+    "SPEC-TECH-REBUILD-002": {
+      "last_checked": "2026-10-04T10:55:50.385Z",
+      "name": "AI-Supervised In-System Kernel Rebuild (capability-gated bundle packing)",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/self-rebuilding-kernel.rst",
+      "verification_cmd": "make test-rebuild"
+    },
+    "SPEC-TECH-SILICON-001": {
+      "last_checked": "2026-10-04T10:55:50.406Z",
+      "name": "Sovereign Cord-Cutting & Silicon Deployment",
+      "passes": false,
       "spec_ref": "docs/technical/specs/sovereign-cord-cutting.rst",
       "verification_cmd": "make check"
+    },
+    "SPEC-TECH-SILICON-002": {
+      "last_checked": "2026-10-04T10:55:50.450Z",
+      "name": "Sovereign Silicon Provisioning & Cord-Cutting Boot",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/sovereign-storage-substrate.rst",
+      "verification_cmd": "make test-silicon"
     },
     "SPEC-TECH-STORAGE-002": {
       "last_checked": "2026-09-18T08:28:19.160Z",
@@ -84,12 +126,12 @@
       "spec_ref": "docs/technical/specs/pure-microkernel-storage.rst",
       "verification_cmd": "make check"
     },
-    "SPEC-TECH-P2P-001": {
-      "last_checked": "2026-09-28T15:09:00.000Z",
-      "name": "Sovereign P2P Wire Protocol & Virtual Cluster Mesh",
+    "SPEC-TECH-STORAGE-003": {
+      "last_checked": "2026-10-04T09:48:51.451Z",
+      "name": "Cold-Reboot Catalog Durability via CAS Root Directory",
       "passes": true,
-      "spec_ref": "docs/technical/specs/sovereign-p2p-wire-protocol.rst",
-      "verification_cmd": "make qemu-cluster-verify"
+      "spec_ref": "docs/technical/specs/sovereign-storage-substrate.rst",
+      "verification_cmd": "make test-persistence"
     }
   },
   "version": "0.3.0"

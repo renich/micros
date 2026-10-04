@@ -39,6 +39,25 @@ Token Classes:
   - Assignment: ``=``
 - **Delimiters & Punctuation**: ``(``, ``)``, ``{``, ``}``, ``[``, ``]``, ``,``, ``;``, ``:``.
 
+Character Encoding
+------------------
+Source files are UTF-8, and the scanner translates them into the runtime string
+model: string constants hold Latin-1 code units. The substrate depends on that
+model from three directions, so the translation is normative rather than
+cosmetic:
+
+* ``src/kernel/serial.zig`` encodes Latin-1 code units to UTF-8 on output
+  (``writeChar``) and decodes UTF-8 keystrokes to Latin-1 on input
+  (``readChar``); the Spanish roundtrip test pins both directions.
+* ``src/kernel/font.zig`` indexes the 8x8 glyph table with a single byte.
+* ``char_to_str`` materializes one code unit per integer argument.
+
+Every UTF-8 sequence in the ``U+0080..U+00FF`` range therefore collapses into
+its single Latin-1 byte when a string token is produced, in both the host
+compiler (``src/macros/compiler.zig``) and the self-hosted tokenizer
+(``lib/macros/lexer.mx``). Codepoints above ``U+00FF`` have no byte
+representation and pass through verbatim.
+
 3. Syntax & Formal Grammar (EBNF)
 =================================
 

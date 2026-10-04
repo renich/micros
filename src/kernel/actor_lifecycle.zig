@@ -237,10 +237,32 @@ pub fn delegateInitialCaps(child: *actor_mod.Actor, name: []const u8, source: []
         });
         return;
     }
+    try grantVerifiedSystemCaps(child);
+
+    // P4-C6: kernel-replacement authority is granted only to the pristine self-rebuild actor,
+    // never to dynamic actors and never to the wider verified-script set.
+    if (isRebuildActor(name)) try grantRebuildCaps(child);
+}
+
+fn isRebuildActor(name: []const u8) bool {
+    return std.mem.eql(u8, name, "rebuild") or std.mem.eql(u8, name, "rebuild.mx");
+}
+
+fn grantVerifiedSystemCaps(child: *actor_mod.Actor) !void {
     _ = try child.insertCap(.{ .cap_type = .actor_control, .rights = cap_mod.Rights.ALL, .object_id = 6, .data_addr = 0, .data_size = 0 });
     // S3-F5: Explicit Genesis grant of storage_device (READ | WRITE) to ush at spawn
     _ = try child.insertCap(.{ .cap_type = .storage_device, .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE, .object_id = 5, .data_addr = 0, .data_size = 0 });
     _ = try child.insertCap(.{ .cap_type = .network_device, .rights = cap_mod.Rights.ALL, .object_id = 4, .data_addr = 0, .data_size = 0 });
+}
+
+fn grantRebuildCaps(child: *actor_mod.Actor) !void {
+    _ = try child.insertCap(.{
+        .cap_type = .rebuild_control,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE | cap_mod.Rights.EXECUTE,
+        .object_id = 0x0A,
+        .data_addr = 0,
+        .data_size = 0,
+    });
 }
 
 pub fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source: []const u8) anyerror!u32 {
@@ -274,6 +296,46 @@ pub fn spawnActorFromCode(allocator: std.mem.Allocator, name: []const u8, source
 
     logActorSpawn(child.id, name);
     return child.id;
+}
+
+var test_bundle_source: ?[]const u8 = null;
+
+fn testBundleRead(_: []const u8) ?[]const u8 {
+    return test_bundle_source;
+}
+
+test "rebuild authority is granted only to the pristine rebuild actor" {
+    const allocator = std.testing.allocator;
+    const rebuild_src = "fn main() { return 0; }";
+    test_bundle_source = rebuild_src;
+    bundle_read_fn = testBundleRead;
+    defer {
+        bundle_read_fn = null;
+        test_bundle_source = null;
+    }
+
+    const rebuild_actor = try actor_mod.Actor.init(allocator, 7, "rebuild", 16, 0);
+    defer rebuild_actor.deinit(allocator);
+    rebuild_actor.supervisor_id = actor_mod.GENESIS_ACTOR_ID;
+    try delegateInitialCaps(rebuild_actor, "rebuild", rebuild_src);
+    try std.testing.expect(rebuild_actor.cspace.lookupWithRights(.rebuild_control, cap_mod.Rights.WRITE | cap_mod.Rights.EXECUTE) != null);
+
+    // Another verified system script must not inherit kernel-replacement authority.
+    const desk_src = "sys_serial_write(\"desk\");";
+    test_bundle_source = desk_src;
+    const desk_actor = try actor_mod.Actor.init(allocator, 8, "desk", 16, 0);
+    defer desk_actor.deinit(allocator);
+    desk_actor.supervisor_id = actor_mod.GENESIS_ACTOR_ID;
+    try delegateInitialCaps(desk_actor, "desk", desk_src);
+    try std.testing.expect(desk_actor.cspace.lookup(.actor_control) != null);
+    try std.testing.expect(desk_actor.cspace.lookup(.rebuild_control) == null);
+
+    // Dynamic actors receive the attenuated set only.
+    const dynamic_actor = try actor_mod.Actor.init(allocator, 9, "dynamic_probe", 16, 0);
+    defer dynamic_actor.deinit(allocator);
+    dynamic_actor.supervisor_id = actor_mod.GENESIS_ACTOR_ID;
+    try delegateInitialCaps(dynamic_actor, "dynamic_probe", "sys_yield();");
+    try std.testing.expect(dynamic_actor.cspace.lookup(.rebuild_control) == null);
 }
 
 test "delegateInitialCaps attenuates capabilities for dynamic actors" {

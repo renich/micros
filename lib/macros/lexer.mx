@@ -149,6 +149,52 @@ fn process_greater(source, pos, src_len) {
     return [pos + 1, [19, ">"]];
 }
 
+fn is_latin1_lead(b) {
+    if (b >= 194) {
+        if (b <= 195) { return true; }
+    }
+    return false;
+}
+
+fn is_utf8_continuation(b) {
+    if (b >= 128) {
+        if (b <= 191) { return true; }
+    }
+    return false;
+}
+
+fn latin1_byte(b1, b2) {
+    return ((b1 - 192) * 64) + (b2 - 128);
+}
+
+// VM string constants are Latin-1 code units (fonts, serial, keyboard agree),
+// so collapse UTF-8 sequences in U+0080..U+00FF to one byte. Wider codepoints
+// have no byte representation and are kept verbatim.
+fn decode_unit(lexeme, i, llen) {
+    b1 = lexeme[i];
+    if (is_latin1_lead(b1)) {
+        if (i + 1 < llen) {
+            b2 = lexeme[i + 1];
+            if (is_utf8_continuation(b2)) {
+                return [latin1_byte(b1, b2), 2];
+            }
+        }
+    }
+    return [b1, 1];
+}
+
+fn collapse_utf8(lexeme) {
+    llen = len(lexeme);
+    acc = "";
+    i = 0;
+    while (i < llen) {
+        unit = decode_unit(lexeme, i, llen);
+        acc = acc + char_to_str(unit[0]);
+        i = i + unit[1];
+    }
+    return acc;
+}
+
 fn process_string(source, pos, src_len) {
     new_pos = pos + 1;
     cond = true;
@@ -164,7 +210,7 @@ fn process_string(source, pos, src_len) {
             cond = false;
         }
     }
-    lexeme = substr(source, pos + 1, new_pos);
+    lexeme = collapse_utf8(substr(source, pos + 1, new_pos));
     new_pos = new_pos + 1;
     return [new_pos, [2, lexeme]];
 }

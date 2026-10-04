@@ -107,7 +107,7 @@ Before committing or submitting a merge request, run the complete verification s
 
 .. code-block:: bash
 
-   # Run complete quality gate (tests, linters, formatting, traceability)
+   # Run complete quality gate (tests, linters, formatting, traceability, boot gates)
    make check
 
    # Run Zig unit test suite across kernel, substrate, and Macros runtime
@@ -122,6 +122,13 @@ Before committing or submitting a merge request, run the complete verification s
    # Audit specification traceability
    make spec-trace
 
+   # Verify microkernel tier boundary rules
+   make arch-gate
+
+   # Boot the direct-syscall sandbox and the bare-metal UEFI image in QEMU/KVM
+   make test-sandbox
+   make test-uefi
+
 Bare-Metal Hardware Emulation
 -----------------------------
 
@@ -132,16 +139,20 @@ Test the operating system in full x86_64 UEFI emulation via QEMU:
    # 1. Boot bare-metal UEFI with interactive graphical canvas (1280x800 GOP)
    make qemu-uefi
 
-   # 2. Run automated headless test with offline deterministic mock AI
-   tools/micros-runner.bash --mode uefi --timeout 20
+   # 2. Run automated headless boot gate with offline deterministic mock AI
+   make test-uefi
 
    # 3. Boot live with Resident AI provider (Gemini, OpenAI, Anthropic, or Local)
    export GEMINI_API_KEY="<YOUR_API_KEY>"  # never pass secrets on argv
    zig build -Dai-provider=gemini
    tools/micros-runner.bash --mode uefi --timeout 30
 
-   # 4. Verify two-stage cold reboot storage persistence across VirtIO-Blk & CAS
-   tools/micros-runner.bash --verify-persistence --timeout 15
+   # 4. Verify cold-reboot persistence of the workspace catalog and CAS cache
+   make test-persistence
+
+   # 5. Verify the AI-supervised in-system rebuild and silicon cord-cutting
+   make test-rebuild
+   make test-silicon
 
 Project Journaling Protocol (PJP)
 =================================

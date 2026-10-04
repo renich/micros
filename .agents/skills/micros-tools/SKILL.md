@@ -11,18 +11,18 @@ metadata:
 
 # MicrOS (µOS) Toolchain Protocol
 
-This skill governs the operational usage, CLI conventions, and agent workflows for the 7 development, maintenance, refactoring, planning, and verification tools located in [`tools/`](file:///home/renich/Projects/zig/micros/tools/).
+This skill governs the operational usage, CLI conventions, and agent workflows for the verification, audit, and post-mortem tools in [`tools/`](file:///home/renich/Projects/zig/micros/tools/); Section 1 is the authoritative catalog.
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          MICROS (µOS) SUBSTRATE TOOLCHAIN                   │
-├──────────────────────────────┬──────────────────────────────┬───────────────┤
-│ VERIFICATION & HARNESS       │ STATIC AUDIT & TRACEABILITY  │ POST-MORTEM   │
-├──────────────────────────────┼──────────────────────────────┼───────────────┤
-│ • micros-runner              │ • micros-lint                │ • micros-inspect
-│ • micros-fb-verify           │ • micros-spec-trace          │ • micros-sym   │
-│                              │                              │ • micros-telem │
-└──────────────────────────────┴──────────────────────────────┴───────────────┘
+┌──────────────────────────────┬──────────────────────────────┬──────────────────┐
+│                        MICROS (µOS) SUBSTRATE TOOLCHAIN                          │
+├──────────────────────────────┼──────────────────────────────┼──────────────────┤
+│ VERIFICATION & HARNESS       │ STATIC AUDIT & TRACEABILITY  │ POST-MORTEM      │
+├──────────────────────────────┼──────────────────────────────┼──────────────────┤
+│ • micros-runner              │ • micros-lint                │ • micros-inspect │
+│ • micros-fb-verify           │ • micros-spec-trace          │ • micros-sym     │
+│ • micros-fiber-bench         │ • micros-arch-gate           │ • micros-telem   │
+└──────────────────────────────┴──────────────────────────────┴──────────────────┘
 ```
 
 ---
@@ -38,13 +38,13 @@ This skill governs the operational usage, CLI conventions, and agent workflows f
   ./tools/micros-runner [options]
   ```
 * **Options**:
-  * `--mode [uefi|sandbox]`: Execution mode (default: `uefi`).
-  * `--expect <pattern>`: Success regex sentinel to wait for before exiting. Default for UEFI is `All Phase 1 substrate invariants verified.`. Default for sandbox is `PID 1 self-test verified successfully.`.
+  * `--mode [uefi|sandbox]`: Execution mode (default: `sandbox`).
+  * `--expect <pattern>`: Success regex sentinel to wait for before exiting. UEFI mode defaults to the resident shell banner `µShell`; sandbox mode defaults to `Substrate self-test verified (Macros 20+22=42)`.
   * `--fail <pattern>`: Regex marking catastrophic kernel panics (`KERNEL FATAL|CPU Exception|Kernel Panic|panic:`).
   * `--screendump <path.ppm>`: Captures QEMU GOP framebuffer via monitor socket upon success.
   * `--screenshot <path.png>`: Automatically converts captured PPM to PNG.
   * `--serial-log <path>`: Destination file for serial console capture.
-  * `--timeout <seconds>`: Maximum execution duration (default: `10`s).
+  * `--timeout <seconds>`: Maximum execution duration (default: `10`s). On this host a cold UEFI boot needs ~25s, so boot gates pass `--timeout 30`.
   * `--monitor-sock <path>`: Unix socket path for QEMU monitor (default: `/tmp/micros-qemu-mon.sock`).
   * `--isa-debug-exit`: Enables QEMU `isa-debug-exit` device on port `0xf4`.
   * `--no-kvm`: Disables KVM hardware acceleration (uses TCG).
@@ -54,7 +54,7 @@ This skill governs the operational usage, CLI conventions, and agent workflows f
   ./tools/micros-runner --mode uefi --screendump /tmp/micros_screendump.ppm
 
   # Direct-syscall Linux sandbox test
-  ./tools/micros-runner --mode sandbox --expect "PID 1 self-test verified"
+  ./tools/micros-runner --mode sandbox
   ```
 
 ---
@@ -88,23 +88,28 @@ This skill governs the operational usage, CLI conventions, and agent workflows f
 * **Source**: [`tools/src/lint.zig`](file:///home/renich/Projects/zig/micros/tools/src/lint.zig)
 * **Launcher**: [`tools/micros-lint`](file:///home/renich/Projects/zig/micros/tools/micros-lint)
 * **Purpose**: Native Zig AST static analysis engine parsing code using `std.zig.Ast` to enforce the Ten Commandments of Code Quality from [`AGENTS.md`](file:///home/renich/Projects/zig/micros/AGENTS.md) and [`ADR-006`](file:///home/renich/Projects/zig/micros/docs/adrs/ADR-006-code-quality-and-context-window-limits.rst).
-* **Checks Enforced**:
-  * Max file lines $\le 1000$
-  * Max function lines $\le 50$
-  * Max nesting depth $\le 3$
-  * Zero forbidden names (`utils.zig`, `common.zig`, `helpers.zig`)
-  * Prohibits `catch unreachable` in kernel subsystems
+* **Checks Enforced** (rule id in parentheses):
+  * Max file lines $\le 1000$ (`file-length`)
+  * Max function lines $\le 40$, raised to $\le 150$ when the function contains a `switch` dispatch (`function-length`, `dispatch-length`)
+  * Max nesting depth $\le 3$ (`nesting`)
+  * Zero forbidden names (`utils.zig`, `common.zig`, `helpers.zig`) (`forbidden-name`)
+  * Prohibits `catch unreachable` unless an inline invariant proof documents why it cannot fire (`catch-unreachable`)
+* **Quality Waivers**: A rule may only be waived through a standalone comment line inside the offending file:
+  ```text
+  // lint-waiver: <rule>[,<rule>...] [max=N] <reason>
+  ```
+  The reason is mandatory, `max` (default `1`) caps how many findings of each named rule that waiver may suppress, and growth beyond it fails the run. Every waiver is echoed with `used/max` counters so suppressed debt stays visible. A malformed waiver, or one naming an unknown rule, is itself reported as a violation. See [`AGENTS.md`](file:///home/renich/Projects/zig/micros/AGENTS.md) for the governing doctrine.
 * **CLI Syntax**:
   ```bash
-  ./tools/micros-lint [options] <files/directories...>
+  ./tools/micros-lint <files/directories...>
   ```
-* **Options**:
-  * `--format [text|json]`: Output display format (default: `text`).
-  * `--strict`: Fails with exit code 1 on warnings as well as errors.
 * **Usage Examples**:
   ```bash
   # Lint all substrate sources
   ./tools/micros-lint src/
+
+  # Inspect one file's waivers and their counters
+  ./tools/micros-lint src/kernel/net/tls_client.zig
   ```
 
 ---
@@ -238,6 +243,31 @@ This skill governs the operational usage, CLI conventions, and agent workflows f
 
 ---
 
+### 1.9. `micros-arch-gate` — Microkernel Tier Boundary Gate & Baseline Lock
+* **Source**: [`tools/src/arch_gate.zig`](file:///home/renich/Projects/zig/micros/tools/src/arch_gate.zig)
+* **Launcher**: [`tools/micros-arch-gate`](file:///home/renich/Projects/zig/micros/tools/micros-arch-gate)
+* **Purpose**: Enforces the architectural tier boundary over `@import` edges per [`SPEC-TECH-ARCH-001`](file:///home/renich/Projects/zig/micros/docs/technical/specs/microkernel-boundary-enforcement.rst). Kernel code may not import concrete userland implementations; userland may import only the public capability surface (`capability.zig`, `ipc/ring.zig`, `boot_info.zig`); the Macros VM may not import drivers or arch state.
+* **Exemptions**: Enumerated per edge in `isKernelSideExemption`/`isUserlandSideExemption`, never per daemon or directory, each carrying its M42 Ring-3 excision pointer. A previously unseen import by an exempted daemon fails the gate.
+* **Disclosure**: Every run prints the imports scanned and the exemptions granted, on pass and on fail. A green gate never hides how much it excused.
+* **CLI Syntax**:
+  ```bash
+  ./tools/micros-arch-gate [options] <root-path>
+  ```
+* **Options**:
+  * `--baseline <path>`: Fail when an architectural edge is absent from the recorded baseline.
+  * `--dump-baseline <path>`: Write the deduplicated current edge set to a snapshot file (regenerate only as a reviewed act).
+  * `-h, --help`: Show usage.
+* **Usage Examples**:
+  ```bash
+  # Gate the tree exactly as make check does
+  ./tools/micros-arch-gate src/ --baseline docs/project/deliberations/stage4/import-baseline.txt
+
+  # Re-record the edge set after an intentional, reviewed architectural change
+  ./tools/micros-arch-gate src/ --dump-baseline docs/project/deliberations/stage4/import-baseline.txt
+  ```
+
+---
+
 ## 2. Multi-Agent Operational Workflows
 
 All engineering agents defined in [`AGENTS.md`](file:///home/renich/Projects/zig/micros/AGENTS.md) MUST invoke the appropriate tools based on their role:
@@ -266,10 +296,13 @@ The toolchain is fully integrated into the repository build infrastructure:
 * **GNUmakefile Targets**:
   * `make tools`: Compiles all native tools.
   * `make spec-trace`: Runs `./tools/micros-spec-trace --check`.
+  * `make arch-gate`: Runs `./tools/micros-arch-gate src/ --baseline docs/project/deliberations/stage4/import-baseline.txt` to enforce tier boundaries and reject unrecorded edges.
   * `make lint`: Runs `micros-lint src/` and `shellcheck scripts/*.bash tools/*.bash`.
   * `make fmt`: Runs `zig fmt src/ tools/src/ build.zig`.
   * `make fmt-check`: Verifies formatting without modification.
-  * `make check`: Runs `test lint fmt-check spec-trace test-sandbox test-uefi`.
+  * `make test-sandbox`: Boots the direct-syscall sandbox in QEMU/KVM.
+  * `make test-uefi`: Boots the bare-metal UEFI image in QEMU/KVM and awaits the `µShell` prompt.
+  * `make check`: Runs `test lint fmt-check spec-trace arch-gate test-sandbox test-uefi`.
 
 ---
 

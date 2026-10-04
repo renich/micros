@@ -20,6 +20,8 @@ const supervisor_mod = @import("supervisor.zig");
 const ps2_mod = @import("drivers/ps2_kbd.zig");
 const fiber_mod = @import("../macros/fiber.zig");
 const ai_mod = @import("ai.zig");
+const bundle_mod = @import("bundle.zig");
+const bundle_pack = @import("storage/bundle_pack.zig");
 const compositor_mod = @import("compositor.zig");
 const WindowManager = compositor_mod.WindowManager;
 const WindowMode = compositor_mod.WindowMode;
@@ -422,6 +424,34 @@ fn nativeSysBundleRead(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .string = "" };
 }
 
+/// Pack `[tag, content]` pairs into a deterministic MCB bundle.
+///
+/// Bundle packing is deliberately absent from the application ABI (Cozy Stage 1 cut it with
+/// the other 13 syscalls); it is restored here under `rebuild_control`, the same authority the
+/// self-rebuilding specification requires for kernel synthesis and staging, and which only the
+/// pristine rebuild actor holds.
+fn nativeSysBundlePack(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+    if (args.len != 1 or args[0] != .array) return error.InvalidArgs;
+    if (!checkCallerAuthority(.rebuild_control, cap_mod.Rights.WRITE | cap_mod.Rights.EXECUTE)) {
+        return error.PermissionDenied;
+    }
+
+    const values = args[0].array;
+    if (values.len == 0) return Value{ .string = "" };
+    if (values.len > bundle_pack.MAX_BUNDLE_ENTRIES) return error.TooManyBundleEntries;
+
+    const entries = try vm.allocator.alloc(bundle_pack.Entry, values.len);
+    defer vm.allocator.free(entries);
+    for (values, 0..) |value, i| {
+        if (value != .array or value.array.len != 2) return error.InvalidArgs;
+        if (value.array[0] != .string or value.array[1] != .string) return error.InvalidArgs;
+        entries[i] = .{ .tag = value.array[0].string, .content = value.array[1].string };
+    }
+
+    return Value{ .string = try bundle_pack.pack(vm.gcAllocator(), entries) };
+}
+
 pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_actor_spawn", Value{ .native = nativeSysActorSpawn });
     try vm.globals.put("sys_actor_terminate", Value{ .native = nativeSysActorTerminate });
@@ -440,6 +470,7 @@ pub fn registerSyscalls(vm: *VM) !void {
     try vm.globals.put("sys_cas_put", Value{ .native = nativeSysCasPut });
     try vm.globals.put("sys_cas_get", Value{ .native = nativeSysCasGet });
     try vm.globals.put("sys_bundle_read", Value{ .native = nativeSysBundleRead });
+    try vm.globals.put("sys_bundle_pack", Value{ .native = nativeSysBundlePack });
     try vm.globals.put("sys_window_create", Value{ .native = window_abi.nativeSysWindowCreate });
     try vm.globals.put("sys_window_close", Value{ .native = window_abi.nativeSysWindowClose });
     try vm.globals.put("sys_window_focus", Value{ .native = window_abi.nativeSysWindowFocus });
@@ -787,16 +818,16 @@ test "abi ipc_ring type confusion and framebuffer negative coordinate rejection"
     try std.testing.expectError(error.InvalidArgs, fb_abi.nativeSysFbClear(&vm, &neg_clear));
 }
 
-test "ABI excision: 14 cut syscalls are absent from VM globals" {
+test "ABI excision: 13 cut syscalls are absent from VM globals" {
     var env = try TestEnv.init(std.testing.allocator);
     defer env.deinit();
     try env.activate();
 
     const cut_syscalls = [_][]const u8{
-        "sys_fb_clear",         "sys_fb_draw_string", "sys_fb_draw_rect",  "sys_kbd_layout",
-        "sys_ai_extract_code",  "sys_bundle_pack",    "sys_actor_count",   "sys_actor_name",
-        "sys_actor_spawn_code", "sys_actor_wait",     "sys_actor_persist", "sys_actor_spawn_cas",
-        "sys_git_get_head",     "sys_git_cat_file",
+        "sys_fb_clear",        "sys_fb_draw_string", "sys_fb_draw_rect",    "sys_kbd_layout",
+        "sys_ai_extract_code", "sys_actor_count",    "sys_actor_name",      "sys_actor_spawn_code",
+        "sys_actor_wait",      "sys_actor_persist",  "sys_actor_spawn_cas", "sys_git_get_head",
+        "sys_git_cat_file",
     };
     for (cut_syscalls) |name| {
         try std.testing.expect(env.vm.globals.get(name) == null);
@@ -907,4 +938,38 @@ test "G4 Gas Budget: sys_actor_set_budget, inheritance, state visibility, and Ou
     bounded_vm.setGasLimit(100);
     try bounded_vm.run(0);
     try std.testing.expect(bounded_vm.getGasRemaining().? > 0);
+}
+
+test "bundle pack requires rebuild_control authority" {
+    var env = try TestEnv.init(std.testing.allocator);
+    defer env.deinit();
+    try env.activate();
+
+    var pair = [_]Value{ Value{ .string = "probe.mx" }, Value{ .string = "sys_serial_write(\"hi\");" } };
+    var entries = [_]Value{Value{ .array = pair[0..] }};
+    var pack_args = [_]Value{Value{ .array = entries[0..] }};
+
+    // The genesis supervisor holds actor_control only: packing must be denied.
+    try std.testing.expectError(error.PermissionDenied, nativeSysBundlePack(&env.vm, pack_args[0..]));
+
+    _ = try env.supervisor.cspace.insert(cap_mod.Capability{
+        .cap_type = .rebuild_control,
+        .rights = cap_mod.Rights.READ | cap_mod.Rights.WRITE | cap_mod.Rights.EXECUTE,
+        .object_id = 0x0A,
+        .data_addr = 0,
+        .data_size = 0,
+    });
+
+    const packed_val = try nativeSysBundlePack(&env.vm, pack_args[0..]);
+    try std.testing.expect(packed_val == .string);
+    defer env.allocator.free(packed_val.string);
+
+    var reader = try bundle_mod.BundleReader.init(packed_val.string);
+    try std.testing.expectEqual(@as(u32, 1), reader.header.entry_count);
+    try std.testing.expectEqualStrings("sys_serial_write(\"hi\");", reader.findData("probe.mx").?);
+
+    var no_entries: [0]Value = .{};
+    var no_entries_args = [_]Value{Value{ .array = no_entries[0..] }};
+    const empty_packed = try nativeSysBundlePack(&env.vm, no_entries_args[0..]);
+    try std.testing.expectEqualStrings("", empty_packed.string);
 }

@@ -11,7 +11,7 @@ MicrOS (µOS)
 :Project: MicrOS (µOS)
 :Substrate: Zig 0.16.0 (Zero-Libc Microkernel)
 :Applications: Macros (Statically Typed, Immix Mark-Region GC, Green Fibers)
-:Status: Operational Hardening, Pure Microkernel Daemon Handoff & Virtual Cluster Mesh (Phase 10 / Milestone 38)
+:Status: Operational Hardening, Verified Sovereign Gates & Silicon Cord-Cutting (v0.16.0, Milestone 41 complete)
 :License: GPLv3 or later
 
 |
@@ -152,7 +152,8 @@ Booting the Sovereign Machine
    make lint
 
    # 3. Boot bare-metal UEFI in QEMU (offline deterministic mock AI)
-   tools/micros-runner.bash --mode uefi --timeout 20
+   #    Gates on the resident shell banner sentinel, so a successful boot exits 0
+   make test-uefi
 
    # 4. Boot live with Resident AI provider (Gemini, OpenAI, Anthropic, or Local)
    export GEMINI_API_KEY="<YOUR_API_KEY>"  # never pass secrets on argv
@@ -162,10 +163,16 @@ Booting the Sovereign Machine
    # 5. Launch interactive Sovereign Harness (1280x800 GOP Vector Display & Serial)
    make qemu-uefi
 
-   # 6. Verify two-stage cold reboot storage persistence across VirtIO-Blk & CAS
-   tools/micros-runner.bash --verify-persistence --timeout 15
+   # 6. Verify cold-reboot persistence of the workspace catalog and CAS cache
+   make test-persistence
 
-   # 7. Benchmark VirtIO split-virtqueue batching and validate geometries
+   # 7. Verify the AI-supervised in-system kernel rebuild and staging
+   make test-rebuild
+
+   # 8. Provision a target NVMe from the live system, then cord-cut boot from it
+   make test-silicon
+
+   # 9. Benchmark VirtIO split-virtqueue batching and validate geometries
    tools/micros-virtio-bench
 
 --------------------------------------------------------------------------------

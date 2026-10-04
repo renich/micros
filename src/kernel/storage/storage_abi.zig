@@ -109,16 +109,16 @@ fn nativeSysBlockDevIsBoot(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return Value{ .boolean = dev.is_boot_media };
 }
 
-fn writeEspBootloader(allocator: std.mem.Allocator, part: *block.PartitionBlockDevice) !void {
-    const emitter = pe_emitter.PeEmitter.init(allocator, .{
-        .entry_point_rva = pe_emitter.SECTION_ALIGNMENT,
-    });
-    const mock_code = [_]u8{ 0x48, 0x31, 0xC0, 0xC3 };
-    const mock_rodata = "MicrOS Silicon UEFI Kernel";
-    const mock_data = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
-    const mock_relocs = [_]u32{ 0x1002, 0x2000 };
+/// The active genesis bundle, provided by the boot substrate. Provisioning embeds it into
+/// a synthesized kernel image so the target ESP boots standalone with no host assistance.
+pub var boot_bundle_fn: ?*const fn () []const u8 = null;
 
-    const pe_bin = try emitter.synthesizeBootloader(&mock_code, mock_rodata, &mock_data, &mock_relocs);
+fn writeEspBootloader(allocator: std.mem.Allocator, part: *block.PartitionBlockDevice) !void {
+    const bundle_fn = boot_bundle_fn orelse return error.BootBundleUnavailable;
+    const bundle_bytes = bundle_fn();
+    if (bundle_bytes.len == 0) return error.BootBundleUnavailable;
+
+    const pe_bin = try kernel_synthesizer.synthesizeKernel(allocator, bundle_bytes);
     defer allocator.free(pe_bin);
 
     try fat32.writeFile(part.blockDevice(), "/EFI/BOOT/BOOTX64.EFI", pe_bin);
@@ -133,7 +133,12 @@ fn nativeSysDiskProvision(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const dev = getBlockDevice(idx) orelse return error.DeviceNotFound;
     if (dev.is_boot_media) return error.LiveBootMedia;
 
-    const esp_sectors: u64 = 262144;
+    // FAT32 refuses volumes below 65,525 clusters; with the substrate's 4 KiB clusters that
+    // sets a floor of roughly 256 MiB for the ESP, so provisioning reserves it with margin and
+    // fails loudly when the target cannot also hold a CAS partition.
+    const esp_sectors: u64 = 700_000;
+    const min_cas_sectors: u64 = 400_000;
+    if (dev.total_sectors < esp_sectors + min_cas_sectors) return error.TargetTooSmall;
     try gpt.formatDisk(dev, esp_sectors);
 
     const tbl = try gpt.readGptTable(dev);
@@ -375,7 +380,8 @@ test "storage abi excised syscalls absent from vm globals" {
     defer vm.deinit();
 
     try registerStorageSyscalls(&vm);
-    try std.testing.expect(!vm.globals.contains("sys_bundle_pack"));
+    // sys_bundle_pack is no longer excised: it is registered by abi.registerSyscalls under
+    // rebuild_control authority (see nativeSysBundlePack).
     try std.testing.expect(!vm.globals.contains("sys_disk_gpt_format"));
     try std.testing.expect(!vm.globals.contains("sys_disk_esp_format"));
     try std.testing.expect(!vm.globals.contains("sys_disk_esp_write"));

@@ -66,12 +66,15 @@ The MicrOS codebase is partitioned into three strictly segregated architectural 
 To prevent architectural backsliding and eliminate manual oversight, the boundary rule is enforced via a dedicated verification tool: `tools/src/arch_gate.zig` (wrapped as `tools/micros-arch-gate` and integrated into `GNUmakefile` under `make check`).
 
 ### 3.1 Scanner Mechanics
-1. **Tree Walk**: Recursively inspects all `.zig` source files across `src/kernel/`, `src/userland/`, `src/macros/`, and `src/sys/`.
-2. **Import Parsing**: Extracts all `@import("...")` string literals and resolves relative paths to normalized repository canonical paths.
+1. **Tree Walk**: Recursively inspects all `.zig` source files under the scan root (`src/` by default).
+2. **Import Parsing**: Extracts `@import("...")` targets per line; lines whose first non-whitespace characters are `//` are comments and contribute no edge.
 3. **Rule Verification**:
-   - Rejects any import from `src/kernel/` pointing to `src/userland/*` that does not target an authorized ABI bridge.
-   - Rejects any import from `src/userland/*` pointing into `src/kernel/` outside of authorized public ABI types (`capability.zig`, `ipc/ring.zig`, `boot_info.zig`).
-4. **Baseline Lock**: The initial scan state is recorded in `docs/project/deliberations/stage4/import-baseline.txt`. Any unauthorized new edge immediately causes a non-zero exit code, failing `make check`.
+   - Rejects any import from `src/kernel/` pointing to `src/userland/*` unless it is an enumerated boot/ABI exemption (`userland/pkgd/package.zig` is never exempt).
+   - Rule 2 is an allow-list: `src/userland/*` may import only `capability.zig`, `ipc/ring.zig`, or `boot_info.zig` from the substrate. Every other kernel target is a violation unless it appears in the enumerated M42 excision inventory.
+   - Exemptions are enumerated per edge, never per daemon, so a new import by an already-exempted daemon fails the gate.
+4. **Baseline Lock**: The reviewed edge set is recorded in `docs/project/deliberations/stage4/import-baseline.txt` (98 unique edges). Edges are compared on normalized `importer -> target` identity, so line numbers never invalidate the baseline. An edge present in the scan but absent from the baseline fails `make check`; an edge that disappeared is reported as `removed` and passes. Regeneration is deliberate: `./tools/micros-arch-gate src/ --dump-baseline <path>`.
+5. **Disclosure**: Every run prints the number of imports scanned and the number of exemptions granted, including on success, so a green gate never hides how much it excused.
+6. **Governing Specification**: `docs/technical/specs/microkernel-boundary-enforcement.rst` (SPEC-TECH-ARCH-001).
 
 ---
 

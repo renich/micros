@@ -22,6 +22,12 @@
 //   key derivation (early/handshake/application keys), and AEAD record-level encryption/decryption. Fragmenting this
 //   linear state machine across fragmented sub-files would severely impair local reasoning, introduce unnecessary
 //   indirection across hot crypto paths, and risk state desynchronization in freestanding execution.
+//
+// MACHINE-ENFORCED WAIVERS (ratcheted at the counts below; any growth fails `make lint`):
+// lint-waiver: file-length max=1 AGENTS.md Rule 1: cohesion supersedes the line metric for one monolithic TLS 1.3 state machine
+// lint-waiver: dispatch-length max=2 AGENTS.md Rule 2: declarative switch dispatch over the record and handshake state machines
+// lint-waiver: nesting max=65 AGENTS.md Rule 2: linear protocol state machine and dense AEAD/RSA cryptographic bounds
+// lint-waiver: catch-unreachable max=9 AGENTS.md Rule 6: each site is preceded by a successful peek on the same reader, see the inline already-peeked proof
 
 const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();

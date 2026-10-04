@@ -2,7 +2,7 @@
 // Runs as the root genesis actor under CSpace 0.
 // Initializes system environment and launches ush.mx.
 
-print("uOS 0.15.0: System supervisor online.");
+print("uOS 0.16.0: System supervisor online.");
 
 fn supervisor_loop(child_id) {
     while (true) {

@@ -4,7 +4,7 @@
 project = 'MicrOS (µOS)'
 copyright = '2026, Rénich Bon Ćirić'
 author = 'Rénich Bon Ćirić & Antigravity'
-release = '0.1.0'
+release = '0.16.0'
 
 extensions = [
     'sphinx_rtd_theme',

@@ -7,6 +7,7 @@ const cas_mod = @import("cas.zig");
 const chunk_mod = @import("chunk.zig");
 const block = @import("../drivers/block.zig");
 const fat32 = @import("fat32.zig");
+const root_dir = @import("root_dir.zig");
 
 pub const SYSTEM_MANIFEST_MAGIC: u32 = 0x4D49434D; // "MICM"
 pub const SYSTEM_MANIFEST_ABI_VERSION: u32 = 1;
@@ -64,9 +65,8 @@ pub const RebuildEngine = struct {
     }
 
     pub fn getActiveManifest(self: *RebuildEngine) !SystemManifest {
-        const root = self.cas.getRootHash();
-        const zero_hash = [_]u8{0} ** 32;
-        if (std.mem.eql(u8, &root, &zero_hash)) return error.NoActiveManifest;
+        const root = root_dir.load(self.cas, self.dev).system_manifest_hash;
+        if (std.mem.eql(u8, &root, &root_dir.RootDirectory.ZERO_HASH)) return error.NoActiveManifest;
 
         var buf align(@alignOf(SystemManifest)) = [_]u8{0} ** SYSTEM_MANIFEST_SIZE;
         const len = try self.cas.getChunk(&root, &buf, self.dev);
@@ -122,7 +122,7 @@ pub const RebuildEngine = struct {
         var prev_hash = [_]u8{0} ** 32;
         if (self.getActiveManifest()) |manifest| {
             prev_gen = manifest.generation;
-            prev_hash = self.cas.getRootHash();
+            prev_hash = root_dir.load(self.cas, self.dev).system_manifest_hash;
         } else |_| {}
 
         var manifest = SystemManifest{
@@ -145,7 +145,7 @@ pub const RebuildEngine = struct {
 
         if (self.esp_dev) |edev| try stageEspKernel(edev, kernel_data, self.cas.cache.allocator);
 
-        try self.cas.setRootHash(&manifest_hash, self.dev);
+        try root_dir.setSystemManifestHash(self.cas, self.dev, &manifest_hash);
         return manifest_hash;
     }
 
@@ -169,7 +169,7 @@ pub const RebuildEngine = struct {
             try fat32.writeFile(edev, "/EFI/BOOT/TRIAL.DAT", &trial_marker);
         }
 
-        try self.cas.setRootHash(&updated_hash, self.dev);
+        try root_dir.setSystemManifestHash(self.cas, self.dev, &updated_hash);
         return true;
     }
 
@@ -204,7 +204,7 @@ pub const RebuildEngine = struct {
             try fat32.writeFile(edev, "/EFI/BOOT/TRIAL.DAT", &trial_marker);
         }
 
-        try self.cas.setRootHash(&active.prev_manifest_hash, self.dev);
+        try root_dir.setSystemManifestHash(self.cas, self.dev, &active.prev_manifest_hash);
     }
 };
 
@@ -244,6 +244,7 @@ test "rebuild engine state machine lifecycle" {
     try std.testing.expectEqual(@as(u64, 1), man1_confirmed.generation);
     try std.testing.expect(!man1_confirmed.isTrial());
     try std.testing.expect(man1_confirmed.isStable());
+    const confirmed_hash = root_dir.load(&cas, null).system_manifest_hash;
 
     // Stage Generation 2 update
     const mock_k2 = "KERNEL_GEN_2_FAULTY_IMAGE";
@@ -259,5 +260,10 @@ test "rebuild engine state machine lifecycle" {
     try engine.rollbackToPrevious(allocator);
     const rolled_back = try engine.getActiveManifest();
     try std.testing.expectEqual(@as(u64, 1), rolled_back.generation);
-    try std.testing.expect(std.mem.eql(u8, &cas.getRootHash(), &m1_hash) or rolled_back.isStable());
+    try std.testing.expect(rolled_back.isStable());
+
+    // The root directory, not the raw superblock slot, owns the system manifest pointer.
+    const dir = root_dir.load(&cas, null);
+    try std.testing.expectEqualSlices(u8, &confirmed_hash, &dir.system_manifest_hash);
+    try std.testing.expect(!std.mem.eql(u8, &cas.getRootHash(), &m1_hash));
 }

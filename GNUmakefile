@@ -31,16 +31,16 @@ CACHE_DIR := .zig-cache
 # Default goal
 .DEFAULT_GOAL := all
 
-.PHONY: all clean test help run run-ush qemu-ush uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace check
+.PHONY: all clean test test-sandbox test-qemu test-uki test-uefi test-persistence test-rebuild test-silicon help run run-ush qemu-ush uefi-boot uefi-disk-image qemu-uefi qemu-cluster qemu-cluster-verify tools fmt fmt-check lint spec-trace arch-gate check
 
 ## all: Compile the substrate toolchain and MicrOS Init binary
 all: tools src/kernel/genesis.mcb
 	@echo "=> Building MicrOS..."
 	@$(ZIG) build $(ZIG_BUILD_FLAGS)
 
-src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/ush.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx lib/macros/bundle.mx lib/macros/rebuild.mx lib/macros/ast.mx lib/macros/eval_shim.mx | tools
+src/kernel/genesis.mcb: lib/macros/init.mx lib/macros/ush.mx lib/macros/lexer.mx lib/macros/parser.mx lib/macros/compiler.mx lib/macros/compiler_main.mx lib/macros/bundle.mx lib/macros/rebuild.mx lib/macros/ast.mx lib/macros/eval_shim.mx lib/macros/installer.mx | tools
 	@echo "=> Packaging Genesis MCB bundle..."
-	./tools/micros-bundle $@ init.mx=lib/macros/init.mx ush.mx=lib/macros/ush.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx ast.mx=lib/macros/ast.mx eval_shim.mx=lib/macros/eval_shim.mx
+	./tools/micros-bundle $@ init.mx=lib/macros/init.mx ush.mx=lib/macros/ush.mx lexer.mx=lib/macros/lexer.mx parser.mx=lib/macros/parser.mx compiler.mx=lib/macros/compiler.mx compiler_main.mx=lib/macros/compiler_main.mx bundle.mx=lib/macros/bundle.mx rebuild.mx=lib/macros/rebuild.mx installer.mx=lib/macros/installer.mx ast.mx=lib/macros/ast.mx eval_shim.mx=lib/macros/eval_shim.mx
 
 ## test: Execute the unit and integration test suite
 test: src/kernel/genesis.mcb
@@ -55,6 +55,26 @@ test-sandbox: all
 
 ## test-qemu: Alias for test-sandbox
 test-qemu: test-sandbox
+
+## test-uefi: Boot the bare-metal UEFI image in QEMU/KVM and await the shell prompt
+test-uefi: all
+	@echo "=> Booting bare-metal UEFI image in QEMU/KVM..."
+	./tools/micros-runner --mode uefi --timeout 30
+
+## test-persistence: Verify the workspace catalog and CAS cache across a cold reboot
+test-persistence: all
+	@echo "=> Verifying cold-reboot storage persistence in QEMU/KVM..."
+	./tools/micros-runner --verify-persistence --timeout 45
+
+## test-rebuild: Verify the AI-supervised in-system kernel rebuild and staging
+test-rebuild: all
+	@echo "=> Verifying in-system self-rebuild in QEMU/KVM..."
+	./tools/micros-runner --verify-rebuild --timeout 60
+
+## test-silicon: Provision a target NVMe and cord-cut boot from it
+test-silicon: all
+	@echo "=> Verifying silicon deployment and cord-cutting in QEMU/KVM..."
+	./tools/micros-runner --verify-silicon --timeout 60
 
 ## clean: Remove build artifacts, Zig caches, and ephemeral outputs
 clean:
@@ -169,13 +189,13 @@ spec-trace:
 	@echo "=> Running specification traceability auditor..."
 	./tools/micros-spec-trace --check
 
-## arch-gate: Verify microkernel architectural boundary rules
+## arch-gate: Verify microkernel architectural boundary rules and the recorded edge baseline
 arch-gate: tools
 	@echo "=> Checking architectural boundary rules..."
-	./tools/micros-arch-gate src/
+	./tools/micros-arch-gate src/ --baseline docs/project/deliberations/stage4/import-baseline.txt
 
-## check: Run all verifications (test, lint, fmt-check, spec-trace, arch-gate)
-check: test lint fmt-check spec-trace arch-gate
+## check: Run all verifications (test, lint, fmt-check, spec-trace, arch-gate, sandbox boot, UEFI boot)
+check: test lint fmt-check spec-trace arch-gate test-sandbox test-uefi
 	@echo "=> All checks passed successfully."
 
 ## help: Print this help message

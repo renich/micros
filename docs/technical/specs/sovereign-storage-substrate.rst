@@ -95,7 +95,28 @@ Sector 0 (512 bytes) stores the Sovereign CAS Superblock:
        padding: [416]u8 = [_]u8{0} ** 416,
    };
 
-4.2 Chunk Envelope Structure
+4.2 CAS Root Directory
+----------------------
+``root_hash`` points at exactly one magic-tagged object that names every persisted
+sub-tree, so independent subsystems never contend for the superblock slot:
+
+.. code-block:: zig
+
+   pub const ROOT_DIRECTORY_MAGIC: u32 = 0x4D494344; // "MICD"
+   pub const ROOT_DIRECTORY_VERSION: u32 = 1;
+
+   pub const RootDirectory = extern struct {
+       magic: u32,
+       version: u32,
+       system_manifest_hash: [32]u8,
+       catalog_manifest_hash: [32]u8,
+   };
+
+* **Exclusive ownership**: the rebuild and trial-boot chain owns ``system_manifest_hash``; the workspace catalog owns ``catalog_manifest_hash``. Updating one sub-root is a read-modify-write that preserves the other.
+* **Atomic advance**: the directory is written as a CAS chunk and the superblock slot is advanced in a single generation step, preserving the A/B superblock ping-pong.
+* **Graceful degradation**: a root slot holding anything that is not a valid root directory (an object written by an older build, or a foreign chunk) resolves to an empty directory rather than being misread. Subsystems then behave exactly as they did before the directory existed.
+
+4.3 Chunk Envelope Structure
 ----------------------------
 Chunks are written sequentially to the append-only high-water mark starting at Sector 1:
 
@@ -142,7 +163,13 @@ The microkernel exposes storage primitives to Actor 0 and authorized child actor
 ===============================
 1. **Unit Test Gate**: 100% pass rate in `zig build test` for VirtIO-Blk request generation, sector caching, and BLAKE3 chunk hashing.
 2. **Ten Commandments Compliance**: File sizes <= 1,000 lines, function lengths <= 40 lines, nesting depth <= 3, zero libc, explicit allocators, 4096-byte page alignment.
-3. **Two-Stage Reboot Persistence Gate**:
-   * *Stage 1*: Boot QEMU, store actor script to CAS via REPL, record emitted hash, halt VM.
-   * *Stage 2*: Boot fresh QEMU with the same persistent disk image, run `spawn_cas <hash>`, asserting live execution on hardware without host or network interaction.
-4. **Specification Traceability**: Full bidirectional traceability verified by `tools/micros-spec-trace.bash`.
+3. **Silicon Provisioning Gate** (``tools/micros-runner.bash --verify-silicon``):
+   * ``sys_disk_provision`` refuses boot media, requires the ``CONFIRM OVERWRITE`` phrase, writes a GPT layout, formats the ESP as FAT32, and stages a synthesized kernel image (with the genesis bundle embedded) as ``/EFI/BOOT/BOOTX64.EFI``.
+   * The ESP reservation is 700,000 sectors because FAT32 rejects volumes below 65,525 clusters, which the substrate's 4 KiB clusters place at roughly 256 MiB. Targets too small for an ESP plus a CAS partition are rejected with ``TargetTooSmall``.
+   * Stage 2 boots the provisioned target with no host disk attached: cord-cutting is verified only when the shell prompt appears from the target alone.
+
+4. **Two-Stage Reboot Persistence Gate** (``tools/micros-runner.bash --verify-persistence``):
+   * *Stage 1*: Boot QEMU on a wiped disk, force a demand-miss synthesis with ``:run persist_probe``, and assert the synthesized actor is cached to CAS and the catalog root is persisted.
+   * *Stage 2*: Cold-reboot the same disk image and repeat ``:run persist_probe``. The catalog must be restored from the persisted root directory and the run must report a demand-hit with no re-synthesis; the runner enforces this with ``--forbid "Demand-miss"``.
+   * Stage 1 doubles as the negative control: without the persisted root, the same input produces a demand-miss.
+5. **Specification Traceability**: Full bidirectional traceability verified by `tools/micros-spec-trace.bash`.

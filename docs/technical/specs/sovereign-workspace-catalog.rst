@@ -20,6 +20,7 @@ POSIX filesystems intertwine path resolution, inode allocation, discretionary ac
 * **Canonical Workspace Manifests**: A workspace state is represented by a bounded, deterministic Merkle manifest (``WorkspaceManifest``) recording sorted path strings, content byte sizes, and BLAKE3 payload hashes.
 * **Single-Pass Path Sanitization**: Path identifiers are bounded strings (up to 64 bytes) strictly validated against path traversal (``..``), backslashes (``\``), double slashes (``//``), control characters, and leading/trailing slashes.
 * **Optimistic Concurrency Control (OCC)**: Concurrent edits across human terminal sessions, autonomous AI agents, and remote Git push ingestions stage changes independently and commit atomically via compare-and-swap generation counters without blocking locks.
+* **Cold-Reboot Durability**: Every mutation records the active manifest hash as the catalog sub-root of the CAS root directory (``root_dir.zig``), and boot restores the manifest from that root before actors spawn. A named artifact therefore resolves to its CAS payload across cold reboots instead of degrading to a cache miss.
 
 1.2 The Object-Capability Security Gate
 ---------------------------------------

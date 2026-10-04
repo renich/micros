@@ -21,65 +21,11 @@ var manifest_serialize_scratch: [MAX_SERIALIZED_MANIFEST_SIZE]u8 = undefined;
 var catalog_read_scratch: [64 * 1024]u8 = undefined;
 var catalog_list_scratch: [manifest_mod.MAX_WORKSPACE_ENTRIES * 160]u8 = undefined;
 
-pub const MAX_SNAPSHOT_GENERATIONS: usize = 16;
+const snapshot_mod = @import("catalog_snapshot.zig");
 
-pub const GenerationSnapshot = struct {
-    generation: u64 = 0,
-    manifest_cas_hash: [chunk_mod.HASH_SIZE]u8 = [_]u8{0} ** chunk_mod.HASH_SIZE,
-    manifest: WorkspaceManifest = .{},
-    valid: bool = false,
-};
-
-pub const SnapshotRing = struct {
-    snapshots: [MAX_SNAPSHOT_GENERATIONS]GenerationSnapshot = [_]GenerationSnapshot{.{}} ** MAX_SNAPSHOT_GENERATIONS,
-    head: usize = 0,
-    count: usize = 0,
-
-    pub fn push(self: *SnapshotRing, manifest: *const WorkspaceManifest, cas_hash: *const [chunk_mod.HASH_SIZE]u8) void {
-        const slot = self.head;
-        self.snapshots[slot] = .{
-            .generation = manifest.header.generation,
-            .manifest_cas_hash = cas_hash.*,
-            .manifest = manifest.*,
-            .valid = true,
-        };
-        self.head = (self.head + 1) % MAX_SNAPSHOT_GENERATIONS;
-        if (self.count < MAX_SNAPSHOT_GENERATIONS) {
-            self.count += 1;
-        }
-    }
-
-    pub fn getOldestLiveGeneration(self: *const SnapshotRing) u64 {
-        if (self.count == 0) return 1;
-        if (self.count < MAX_SNAPSHOT_GENERATIONS) {
-            return self.snapshots[0].generation;
-        }
-        return self.snapshots[self.head].generation;
-    }
-
-    pub fn findSnapshot(self: *const SnapshotRing, gen: u64) ?*const GenerationSnapshot {
-        if (self.count == 0) return null;
-        for (0..self.count) |i| {
-            const idx = if (self.count < MAX_SNAPSHOT_GENERATIONS)
-                i
-            else
-                (self.head + i) % MAX_SNAPSHOT_GENERATIONS;
-            if (self.snapshots[idx].valid and self.snapshots[idx].generation == gen) {
-                return &self.snapshots[idx];
-            }
-        }
-        return null;
-    }
-
-    pub fn getPreviousSnapshot(self: *const SnapshotRing) ?*const GenerationSnapshot {
-        if (self.count <= 1) return null;
-        const prev_idx = (self.head + MAX_SNAPSHOT_GENERATIONS - 2) % MAX_SNAPSHOT_GENERATIONS;
-        if (self.snapshots[prev_idx].valid) {
-            return &self.snapshots[prev_idx];
-        }
-        return null;
-    }
-};
+pub const MAX_SNAPSHOT_GENERATIONS = snapshot_mod.MAX_SNAPSHOT_GENERATIONS;
+pub const GenerationSnapshot = snapshot_mod.GenerationSnapshot;
+pub const SnapshotRing = snapshot_mod.SnapshotRing;
 
 pub const CatalogBroker = struct {
     workspace: WorkspaceManifest = WorkspaceManifest.init(1, &([_]u8{0} ** chunk_mod.HASH_SIZE)),
@@ -90,6 +36,24 @@ pub const CatalogBroker = struct {
         if (self.ring.count == 0) {
             self.ring.push(&self.workspace, &self.active_manifest_hash);
         }
+    }
+
+    /// Record the active manifest hash as the persisted CAS catalog root so the
+    /// workspace survives a cold reboot. Errors propagate: a catalog change that
+    /// cannot be made durable is reported to the caller rather than silently kept
+    /// in RAM only.
+    fn persistRoot(self: *CatalogBroker) !void {
+        const persist_fn = persist_root_fn orelse return;
+        try persist_fn(&self.active_manifest_hash);
+    }
+
+    /// Rehydrate broker state from a manifest recorded in the persisted CAS root.
+    pub fn restoreFromManifest(self: *CatalogBroker, manifest_bytes: []const u8, root: *const [chunk_mod.HASH_SIZE]u8) !void {
+        const restored = try WorkspaceManifest.deserialize(manifest_bytes);
+        self.workspace = restored;
+        self.active_manifest_hash = root.*;
+        self.ring = .{};
+        self.ring.push(&self.workspace, &self.active_manifest_hash);
     }
 
     pub fn writeBlob(
@@ -125,6 +89,7 @@ pub const CatalogBroker = struct {
         try chunk_mod.parseHexHash(&manifest_hex, &self.active_manifest_hash);
 
         self.ring.push(&self.workspace, &self.active_manifest_hash);
+        try self.persistRoot();
     }
 
     pub fn readBlobGen(
@@ -283,6 +248,7 @@ pub const CatalogBroker = struct {
         self.workspace.header.generation += 1;
 
         self.ring.push(&self.workspace, &self.active_manifest_hash);
+        try self.persistRoot();
     }
 
     pub fn undo(self: *CatalogBroker) bool {
@@ -302,6 +268,7 @@ pub const CatalogBroker = struct {
 
         self.workspace = restored;
         self.ring.push(&self.workspace, &self.active_manifest_hash);
+        self.persistRoot() catch return false;
         return true;
     }
 
@@ -324,6 +291,7 @@ pub const CatalogBroker = struct {
 
 pub var global_catalog: CatalogBroker = .{};
 pub var cas_put_fn: ?*const fn (data: []const u8, out_hex: *[64]u8) anyerror!void = null;
+pub var persist_root_fn: ?*const fn (root: *const [chunk_mod.HASH_SIZE]u8) anyerror!void = null;
 pub var cas_get_fn: ?*const fn (hex_hash: []const u8, out_buf: []u8) anyerror!usize = null;
 pub var caller_auth_fn: ?*const fn (cap_type: CapType, rights: u16) bool = null;
 
@@ -340,6 +308,7 @@ pub fn setStorageContext(
 pub fn clearCatalogContext() void {
     cas_put_fn = null;
     cas_get_fn = null;
+    persist_root_fn = null;
     caller_auth_fn = null;
     global_catalog = .{};
 }
@@ -914,4 +883,69 @@ test "O5: writeProbeTranscript indexes transcript under probe.transcript tag" {
     try std.testing.expect(entry != null);
     try std.testing.expectEqual(@as(u32, dummy_data.len), entry.?.size);
     try std.testing.expectEqual(maybe_hash.?, entry.?.hash);
+}
+
+var test_persisted_roots: [8][chunk_mod.HASH_SIZE]u8 = undefined;
+var test_persisted_count: usize = 0;
+
+fn testCaptureRoot(root: *const [chunk_mod.HASH_SIZE]u8) anyerror!void {
+    if (test_persisted_count < 8) {
+        test_persisted_roots[test_persisted_count] = root.*;
+        test_persisted_count += 1;
+    }
+}
+
+test "catalog mutations publish the persisted root for cold-reboot restore" {
+    clearCatalogContext();
+    defer clearCatalogContext();
+    test_persisted_count = 0;
+
+    var cache = try @import("block_cache.zig").BlockCache.init(std.testing.allocator);
+    defer cache.deinit();
+    var cas = try cas_mod.CasEngine.init(&cache, null, 1000);
+    test_real_cas = &cas;
+    defer {
+        test_real_cas = null;
+    }
+
+    setStorageContext(testRealCasPut, testRealCasGet, testAllowAuth);
+    persist_root_fn = testCaptureRoot;
+
+    var hex_out: [chunk_mod.HEX_HASH_SIZE]u8 = undefined;
+    try global_catalog.writeBlob("persist.spec", "cold reboot sentinel", &hex_out);
+    try std.testing.expectEqual(@as(usize, 1), test_persisted_count);
+    try std.testing.expectEqualSlices(u8, &global_catalog.active_manifest_hash, &test_persisted_roots[0]);
+
+    try std.testing.expect(global_catalog.undo());
+    try std.testing.expect(test_persisted_count >= 2);
+}
+
+test "catalog restore rehydrates entries from a persisted manifest blob" {
+    clearCatalogContext();
+    defer clearCatalogContext();
+
+    var cache = try @import("block_cache.zig").BlockCache.init(std.testing.allocator);
+    defer cache.deinit();
+    var cas = try cas_mod.CasEngine.init(&cache, null, 1000);
+    test_real_cas = &cas;
+    defer {
+        test_real_cas = null;
+    }
+
+    setStorageContext(testRealCasPut, testRealCasGet, testAllowAuth);
+
+    var hex_out: [chunk_mod.HEX_HASH_SIZE]u8 = undefined;
+    try global_catalog.writeBlob("restore.spec", "payload survives", &hex_out);
+
+    const root = global_catalog.active_manifest_hash;
+    const manifest_len = try global_catalog.workspace.serialize(&manifest_serialize_scratch);
+
+    // Simulate a cold boot: broker state is empty until the persisted root is restored.
+    global_catalog = .{};
+    try global_catalog.restoreFromManifest(manifest_serialize_scratch[0..manifest_len], &root);
+
+    var read_buf: [256]u8 = undefined;
+    const read_len = try global_catalog.readBlob("restore.spec", &read_buf);
+    try std.testing.expectEqualStrings("payload survives", read_buf[0..read_len]);
+    try std.testing.expectEqualSlices(u8, &root, &global_catalog.active_manifest_hash);
 }

@@ -51,8 +51,7 @@ pub fn main() !void {
     var shell = try ush.Shell.init(allocator, 0, 1);
     defer shell.deinit();
 
-    shell.executeLine("echo µShell initialized by PID 1.");
-    shell.executeLine("ready = 1");
+    shell.executeLine(":ps");
 
     _ = sys.io.write(1, "[micros-init] Execution completed. Halting.\n") catch {};
     if (sys.process.getpid() == 1) {

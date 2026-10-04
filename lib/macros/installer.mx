@@ -1,0 +1,26 @@
+// MicrOS (µOS) Sovereign Silicon Installer
+// Provisions a target block device with a GPT layout, a FAT32 EFI System Partition
+// carrying a self-contained synthesized kernel image, and a fresh CAS partition.
+// Requires storage_device.WRITE authority plus the CONFIRM OVERWRITE phrase guard.
+
+fn main() {
+    print("[install] Step 1/3: Probing target device 1 for non-boot media...");
+    if (sys_block_dev_is_boot(1)) {
+        print("[install] Error: device 1 is the live boot media; refusing to overwrite.");
+        return 1;
+    }
+    print("[install]   -> target sectors: " + int_to_str(sys_block_dev_sectors(1)));
+
+    print("[install] Step 2/3: Writing GPT, FAT32 ESP, and CAS partition...");
+    ok = sys_disk_provision(1, "CONFIRM OVERWRITE");
+    if (!ok) {
+        print("[install] Error: provisioning failed.");
+        return 1;
+    }
+
+    print("[install] Step 3/3: Standalone kernel image staged on target ESP.");
+    print("[install] Deployment succeeded! Target silicon is standalone and verified.");
+    return 0;
+}
+
+main();

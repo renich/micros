@@ -284,7 +284,7 @@ Before submitting changes, run the mandatory verification sequence:
    zig build test
 
    # 6. Execute headless bare-metal boot in QEMU (or 'make qemu-uefi' for interactive)
-   ./tools/micros-runner --mode uefi
+   make test-uefi
 
    # 7. Execute direct-syscall sandbox test
    make test-sandbox

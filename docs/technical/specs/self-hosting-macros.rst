@@ -201,5 +201,5 @@ The implementation must adhere strictly to the MicrOS Ten Commandments (``AGENTS
 * **Zero Libc**: All code generator and GC routines operate entirely freestanding without C library dependencies.
 * **Automated Verification**:
 
-   * ``make check``: 100% unit tests, tools tests, Ten Commandments linting, formatting, and spec traceability.
-   * ``tools/micros-runner.bash``: QEMU headless boot verifying self-hosted compiler execution and stage verification.
+   * ``make check``: 100% unit tests, tools tests, Ten Commandments linting, formatting, spec traceability, microkernel boundary gating, and sandbox + UEFI boot verification.
+   * ``tools/micros-runner.bash``: QEMU headless boot verifying self-hosted compiler execution and stage verification, gated by the ``µShell`` banner sentinel in UEFI mode.
