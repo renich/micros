@@ -132,6 +132,13 @@
       "passes": true,
       "spec_ref": "docs/technical/specs/sovereign-storage-substrate.rst",
       "verification_cmd": "make test-persistence"
+    },
+    "SPEC-TECH-TOOL-002": {
+      "last_checked": "2026-10-04T11:09:08.203Z",
+      "name": "Version Consistency Gate",
+      "passes": true,
+      "spec_ref": "docs/technical/specs/toolchain.rst",
+      "verification_cmd": "make version-check"
     }
   },
   "version": "0.3.0"
