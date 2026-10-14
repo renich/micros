@@ -305,16 +305,16 @@ elif [[ "$MODE" == "uefi" ]]; then
     fi
     cp "$ROOT_DIR/src/kernel/genesis.mcb" "$ESP_DIR/genesis.mcb"
 
-    HOST_PORT="${MICROS_HOST_PORT:-8080}"
+    HOST_PORT="${MICROS_HOST_PORT:-8123}"
     if ss -tln 2>/dev/null | grep -q ":${HOST_PORT} "; then
-        HOST_PORT=18080
+        HOST_PORT=18123
     fi
 
     QEMU_ARGS=(
         -m 512M
         -drive "if=pflash,format=raw,readonly=on,file=$OVMF_IMAGE"
         -drive "format=raw,file=fat:rw:$ESP_DIR"
-        -netdev "user,id=net0,hostfwd=tcp::${HOST_PORT}-:8080"
+        -netdev "user,id=net0,hostfwd=tcp::${HOST_PORT}-:8123"
         -device "virtio-net-pci,netdev=net0"
         -display none
         -no-reboot

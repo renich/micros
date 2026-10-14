@@ -77,8 +77,7 @@ pub fn calculateChecksum(src_ip: [4]u8, dst_ip: [4]u8, tcp_packet: []const u8) u
     while ((sum >> 16) != 0) {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
-    const csum = @as(u16, @intCast(~sum & 0xFFFF));
-    return if (csum == 0) 0xFFFF else csum;
+    return @intCast(~sum & 0xFFFF);
 }
 
 pub fn parseHeader(data: []const u8) ?TcpHeader {
@@ -587,6 +586,9 @@ test "tcp packet generation and parse" {
     try std.testing.expectEqual(@as(u32, 1000), parsed.seq_num);
     try std.testing.expectEqual(@as(u32, 2000), parsed.ack_num);
     try std.testing.expectEqual(FLAG_ACK | FLAG_PSH, parsed.flags);
+    try std.testing.expectEqual(@as(u16, 0), calculateChecksum(src_ip, dst_ip, buf[0..len]));
+    buf[TCP_HEADER_MIN_LEN] ^= 0xFF;
+    try std.testing.expect(calculateChecksum(src_ip, dst_ip, buf[0..len]) != 0);
 }
 
 test "tcp client handshake state transitions" {

@@ -109,9 +109,17 @@ pub fn writeChar(c: u8) void {
 }
 
 pub fn writeString(str: []const u8) void {
-    for (str) |c| {
+    var i: usize = 0;
+    while (i < str.len) : (i += 1) {
+        const c = str[i];
         if (c == '\n') {
-            writeChar('\r');
+            writeRawChar('\r');
+        }
+        if (i + 1 < str.len and decodeUtf8ToLatin1(c, str[i + 1]) != null) {
+            writeRawChar(c);
+            writeRawChar(str[i + 1]);
+            i += 1;
+            continue;
         }
         writeChar(c);
     }

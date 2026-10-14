@@ -223,16 +223,31 @@ pub const WindowManager = struct {
         }
     }
 
+    fn propagateSurfaceDamage(self: *WindowManager, canvas: *Canvas) void {
+        var i: usize = 0;
+        while (i < self.window_count) : (i += 1) {
+            const win = self.windows[i].?;
+            if (!win.visible or win.surface.damage.isEmpty()) continue;
+            const d = win.surface.damage;
+            const sx: u32 = @intCast(@max(0, win.surface.pos_x));
+            const sy: u32 = @intCast(@max(0, win.surface.pos_y));
+            canvas.damage.addRect(sx + d.min_x, sy + d.min_y, d.width(), d.height(), self.desktop_w, self.desktop_h);
+            win.surface.damage.reset();
+        }
+    }
+
     pub fn compose(self: *WindowManager, canvas: *Canvas) void {
-        if (self.needs_full_redraw) {
+        const is_full = self.needs_full_redraw;
+        if (is_full) {
             canvas.damage = DamageRect.full(self.desktop_w, self.desktop_h);
             self.needs_full_redraw = false;
         }
+        self.propagateSurfaceDamage(canvas);
 
         const active_damage = canvas.damage;
         if (active_damage.isEmpty()) return;
 
-        clearBackgroundDamage(canvas, self.desktop_w, self.desktop_h);
+        if (is_full) clearBackgroundDamage(canvas, self.desktop_w, self.desktop_h);
 
         var i: usize = 0;
         while (i < self.window_count) : (i += 1) {
@@ -249,7 +264,7 @@ pub const WindowManager = struct {
             };
 
             if (win_rect.intersects(active_damage)) {
-                self.drawWindowFrame(canvas, win);
+                if (is_full) self.drawWindowFrame(canvas, win);
                 win.surface.blitToCanvas(canvas, active_damage);
             }
         }

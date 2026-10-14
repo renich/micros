@@ -147,7 +147,7 @@ qemu-uefi: uefi-boot
 		-drive format=raw,file=fat:rw:build/esp \
 		-drive id=disk0,if=none,format=raw,file=build/micros-disk.raw \
 		-device virtio-blk-pci,drive=disk0 \
-		-netdev user,id=net0,hostfwd=tcp::8080-:8080 \
+		-netdev user,id=net0,hostfwd=tcp::8123-:8123 \
 		-device virtio-net-pci,netdev=net0 \
 		-device virtio-vga,xres=1280,yres=800 \
 		-display gtk,zoom-to-fit=on \

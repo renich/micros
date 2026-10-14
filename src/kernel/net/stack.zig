@@ -100,7 +100,7 @@ pub const NetworkStack = struct {
 
         switch (ip_hdr.protocol) {
             ipv4_mod.PROTO_ICMP => self.processIcmp(ip_hdr.src_ip, payload),
-            ipv4_mod.PROTO_UDP => self.processUdp(ip_hdr.src_ip, payload),
+            ipv4_mod.PROTO_UDP => self.processUdp(ip_hdr.src_ip, ip_hdr.dst_ip, payload),
             ipv4_mod.PROTO_TCP => self.processTcp(src_mac, ip_hdr.src_ip, payload),
             else => {},
         }
@@ -250,12 +250,13 @@ pub const NetworkStack = struct {
         }
     }
 
-    fn processUdp(self: *NetworkStack, src_ip: [4]u8, payload: []const u8) void {
+    fn processUdp(self: *NetworkStack, src_ip: [4]u8, dst_ip: [4]u8, payload: []const u8) void {
         const udp_hdr = udp_mod.parseHeader(payload) orelse return;
         const my_ip = if (self.dhcp_config.bound) self.dhcp_config.ip else IP_ZERO;
         // Environmental noise defense: validate UDP checksum if non-zero; drop if corrupted
         if (udp_hdr.checksum != 0) {
-            if (udp_mod.calculateChecksum(src_ip, my_ip, payload[0..udp_hdr.length]) != 0) return;
+            const pkt = payload[0..udp_hdr.length];
+            if (!udp_mod.verifyChecksum(src_ip, dst_ip, pkt) and !udp_mod.verifyChecksum(src_ip, my_ip, pkt)) return;
         }
 
         if (udp_hdr.dst_port == dhcp_mod.PORT_CLIENT) {
@@ -267,7 +268,7 @@ pub const NetworkStack = struct {
             if (dns_mod.parseResponse(dns_data, self.dns_xid)) |ip| {
                 self.dns_result = ip;
             }
-        } else if (udp_hdr.dst_port == 8080 or udp_hdr.dst_port == 8081) {
+        } else if (udp_hdr.dst_port == 8123 or udp_hdr.dst_port == 8080 or udp_hdr.dst_port == 8081) {
             if (self.udp_beacon_handler) |handler| {
                 const udp_data = payload[udp_mod.UDP_HEADER_LEN..];
                 handler(self.udp_beacon_ctx, src_ip, udp_data);
@@ -848,7 +849,7 @@ fn testBeaconCallback(_: ?*anyopaque, src_ip: [4]u8, payload: []const u8) void {
     _ = payload;
 }
 
-test "processUdp dispatches port 8080 packets to registered udp_beacon_handler" {
+test "processUdp dispatches port 8123 packets to registered udp_beacon_handler" {
     var dummy_dev: virtio_net_mod.VirtioNetDevice = undefined;
     dummy_dev.initialized = false;
     var stack = NetworkStack.init(&dummy_dev);
@@ -858,11 +859,16 @@ test "processUdp dispatches port 8080 packets to registered udp_beacon_handler" 
     test_beacon_received = false;
     stack.setUdpBeaconHandler(null, testBeaconCallback);
 
+    const src_ip = [_]u8{ 192, 168, 100, 2 };
+    const dst_ip = [_]u8{ 255, 255, 255, 255 };
     var udp_packet: [16]u8 = undefined;
-    _ = try udp_mod.writeHeader(&udp_packet, 8080, 8080, 8);
+    _ = try udp_mod.writeHeader(&udp_packet, 8123, 8123, 8);
     @memcpy(udp_packet[8..16], "BEACON01");
+    const csum = udp_mod.calculateChecksum(src_ip, dst_ip, &udp_packet);
+    udp_packet[6] = @intCast((csum >> 8) & 0xFF);
+    udp_packet[7] = @intCast(csum & 0xFF);
 
-    stack.processUdp([_]u8{ 192, 168, 100, 2 }, &udp_packet);
+    stack.processUdp(src_ip, dst_ip, &udp_packet);
     try std.testing.expect(test_beacon_received);
-    try std.testing.expectEqual([_]u8{ 192, 168, 100, 2 }, test_beacon_src_ip);
+    try std.testing.expectEqual(src_ip, test_beacon_src_ip);
 }

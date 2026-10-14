@@ -1,10 +1,10 @@
 {
-  "current_phase": 0,
+  "current_phase": 4,
   "journal_version": "0.2.0",
   "last_report": "msg-017",
-  "objective": "Sovereign OS Stage 4 (Milestone 41 FINAL: self-rewrite + emission) per /tmp/micros-sovereign-stage4-orders.rst",
+  "objective": "Operational Hardening, Live TLS 1.3 SPKI Chain Pinning & GOP Sovereign Shell (v0.16.0)",
   "pjp_version": "0.10.1",
-  "stage": "Stage 4 (Milestone 41) Kickoff",
-  "status": "Phase 0 Designs Ready for Checker Review / Stamp",
-  "tests_passing": 468
+  "stage": "Stage 4 (Milestone 41) Complete · Milestone 42 Roadmap Ready",
+  "status": "All Sovereign Gates Verified",
+  "tests_passing": 469
 }

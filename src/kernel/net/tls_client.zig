@@ -26,7 +26,7 @@
 // MACHINE-ENFORCED WAIVERS (ratcheted at the counts below; any growth fails `make lint`):
 // lint-waiver: file-length max=1 AGENTS.md Rule 1: cohesion supersedes the line metric for one monolithic TLS 1.3 state machine
 // lint-waiver: dispatch-length max=2 AGENTS.md Rule 2: declarative switch dispatch over the record and handshake state machines
-// lint-waiver: nesting max=65 AGENTS.md Rule 2: linear protocol state machine and dense AEAD/RSA cryptographic bounds
+// lint-waiver: nesting max=64 AGENTS.md Rule 2: linear protocol state machine and dense AEAD/RSA cryptographic bounds
 // lint-waiver: catch-unreachable max=9 AGENTS.md Rule 6: each site is preceded by a successful peek on the same reader, see the inline already-peeked proof
 
 const builtin = @import("builtin");
@@ -674,9 +674,6 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             };
                             const subject = try subject_cert.parse();
                             if (cert_index == 0) {
-                                if (options.spki_pin_verifier) |verifier| {
-                                    verifier(host, certd.rest()) catch return error.CertificatePinMismatch;
-                                }
                                 // Verify the host on the first certificate.
                                 switch (options.host) {
                                     .no_verification => {},
@@ -691,7 +688,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             }
 
                             switch (options.ca) {
-                                .no_verification => {
+                                .no_verification => if (verifyOptionalSpkiPin(options.spki_pin_verifier, host, certd.rest())) {
                                     handshake_state = .trust_chain_established;
                                     break :cert;
                                 },
@@ -716,6 +713,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             prev_cert = subject;
                             cert_index += 1;
                         }
+                        if (options.spki_pin_verifier != null) return error.CertificatePinMismatch;
 
                         if (Certificate.Chain != void) {
                             certs_decoder = certs;
@@ -1702,3 +1700,13 @@ else
         .AES_256_GCM_SHA384,
         .ECDHE_RSA_WITH_AES_256_GCM_SHA384,
     });
+
+fn verifyOptionalSpkiPin(
+    verifier_opt: ?*const fn (hostname: []const u8, leaf_cert_der: []const u8) anyerror!void,
+    host: []const u8,
+    cert_der: []const u8,
+) bool {
+    const verifier = verifier_opt orelse return true;
+    verifier(host, cert_der) catch return false;
+    return true;
+}

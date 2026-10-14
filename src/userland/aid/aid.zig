@@ -227,7 +227,30 @@ pub const AiDaemon = struct {
         if (read_bytes == 0) return 0;
 
         const body = extractResponseBody(resp_buf[0..read_bytes], chunk_buf) orelse return 0;
-        return AiDaemon.extractResponseText(self.config.provider_type, body, out_buf) orelse 0;
+        if (AiDaemon.extractResponseText(self.config.provider_type, body, out_buf)) |len| return len;
+        logProviderStatus(resp_buf[0..read_bytes], body);
+        return 0;
+    }
+
+    pub fn extractErrorMessage(body: []const u8, out_buf: []u8) ?[]const u8 {
+        const idx = std.mem.indexOf(u8, body, "\"message\":") orelse return null;
+        var p = idx + 10;
+        while (p < body.len and (body[p] == ' ' or body[p] == '\t')) : (p += 1) {}
+        if (p >= body.len or body[p] != '"') return null;
+        const mlen = ai_provider.unescapeJsonString(body[p + 1 ..], out_buf);
+        return if (mlen > 0) out_buf[0..mlen] else null;
+    }
+
+    fn logProviderStatus(raw_data: []const u8, body: []const u8) void {
+        const resp = http_mod.parseResponseHeaders(raw_data, raw_data.len) catch return;
+        serial.writeString("[aid] Provider HTTP ");
+        serial.writeDec(resp.status_code);
+        var msg_buf: [160]u8 = undefined;
+        if (extractErrorMessage(body, &msg_buf)) |msg| {
+            serial.writeString(": ");
+            serial.writeString(msg);
+        }
+        serial.writeString("\n");
     }
 
     pub fn step(self: *AiDaemon) void {
@@ -576,4 +599,11 @@ test "aid extract exact gemini resident ai response" {
     try std.testing.expect(std.mem.indexOf(u8, code_buf[0..len.?], "Kernel Directives") == null);
     try std.testing.expect(std.mem.startsWith(u8, code_buf[0..len.?], "sys_serial_write"));
     try std.testing.expect(std.mem.endsWith(u8, code_buf[0..len.?], "sys_yield();\n"));
+}
+
+test "aid extract upstream json error message" {
+    const err_json = "{\"error\":{\"code\":400,\"message\": \"API key not valid. Please pass a valid API key.\",\"status\":\"INVALID_ARGUMENT\"}}";
+    var buf: [160]u8 = undefined;
+    const msg = AiDaemon.extractErrorMessage(err_json, &buf).?;
+    try std.testing.expectEqualStrings("API key not valid. Please pass a valid API key.", msg);
 }

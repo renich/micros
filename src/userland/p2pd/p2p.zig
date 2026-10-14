@@ -158,7 +158,7 @@ pub const NodeIdentity = struct {
 pub const DiscoveryBeacon = extern struct {
     magic: u32 align(1) = BEACON_MAGIC,
     version: u16 align(1) = PROTOCOL_VERSION,
-    port: u16 align(1) = 8080,
+    port: u16 align(1) = 8123,
     node_id: [NODE_ID_LEN]u8 align(1),
     pubkey: [PUBKEY_LEN]u8 align(1),
     capability_mask: u16 align(1) = 0x0003,

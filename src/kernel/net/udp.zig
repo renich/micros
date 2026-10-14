@@ -51,7 +51,7 @@ pub fn writeHeader(
     return UDP_HEADER_LEN;
 }
 
-pub fn calculateChecksum(src_ip: [4]u8, dst_ip: [4]u8, udp_packet: []const u8) u16 {
+fn computeRawComplement(src_ip: [4]u8, dst_ip: [4]u8, udp_packet: []const u8) u16 {
     var sum: u64 = 0;
     // Pseudo-header: src_ip (4) + dst_ip (4) + zero (1) + proto (1) + udp_len (2)
     sum += ((@as(u64, src_ip[0]) << 8) | src_ip[1]);
@@ -73,8 +73,16 @@ pub fn calculateChecksum(src_ip: [4]u8, dst_ip: [4]u8, udp_packet: []const u8) u
     while ((sum >> 16) != 0) {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
-    const csum = @as(u16, @intCast(~sum & 0xFFFF));
+    return @as(u16, @intCast(~sum & 0xFFFF));
+}
+
+pub fn calculateChecksum(src_ip: [4]u8, dst_ip: [4]u8, udp_packet: []const u8) u16 {
+    const csum = computeRawComplement(src_ip, dst_ip, udp_packet);
     return if (csum == 0) 0xFFFF else csum;
+}
+
+pub fn verifyChecksum(src_ip: [4]u8, dst_ip: [4]u8, udp_packet: []const u8) bool {
+    return computeRawComplement(src_ip, dst_ip, udp_packet) == 0;
 }
 
 test "udp header parse and serialize" {
@@ -86,6 +94,22 @@ test "udp header parse and serialize" {
     try std.testing.expectEqual(@as(u16, 68), parsed.src_port);
     try std.testing.expectEqual(@as(u16, 67), parsed.dst_port);
     try std.testing.expectEqual(@as(u16, 18), parsed.length);
+}
+
+test "udp checksum calculation and verification" {
+    const src_ip = [_]u8{ 10, 0, 2, 2 };
+    const dst_ip = [_]u8{ 10, 0, 2, 15 };
+    var pkt: [16]u8 = undefined;
+    _ = try writeHeader(&pkt, 53, 49153, 8);
+    @memcpy(pkt[8..16], "DNSREPLY");
+
+    const csum = calculateChecksum(src_ip, dst_ip, &pkt);
+    pkt[6] = @intCast((csum >> 8) & 0xFF);
+    pkt[7] = @intCast(csum & 0xFF);
+
+    try std.testing.expect(verifyChecksum(src_ip, dst_ip, &pkt));
+    pkt[8] ^= 0xFF;
+    try std.testing.expect(!verifyChecksum(src_ip, dst_ip, &pkt));
 }
 
 test "udp truncated packet and invalid length rejected" {

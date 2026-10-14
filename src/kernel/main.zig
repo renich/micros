@@ -56,7 +56,7 @@ const p2pd_mod = @import("../userland/p2pd/p2p.zig");
 const compositor_mod = @import("compositor.zig");
 const config = @import("config");
 const EMBEDDED_GENESIS_BUNDLE: []const u8 = @embedFile("genesis.mcb");
-const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
+const KERNEL_HEAP_SIZE: usize = 32 * 1024 * 1024;
 var kernel_heap: [KERNEL_HEAP_SIZE]u8 align(4096) = undefined;
 const COLOR_BG: u32 = 0x000000;
 const CAP_OBJ_FRAMEBUFFER: u32 = 1;
@@ -331,12 +331,12 @@ fn initP2pDaemon(allocator: std.mem.Allocator) void {
     if (global_virtio_net) |vdev| {
         for (vdev.mac, 0..) |m, i| seed[i] ^= m;
     }
-    global_p2pd = p2pd_mod.P2pDaemon.init(allocator, seed, 8080) catch null;
+    global_p2pd = p2pd_mod.P2pDaemon.init(allocator, seed, 8123) catch null;
     if (global_p2pd != null) {
         if (global_netd) |*netd| {
             netd.setUdpBeaconHandler(null, p2pBeaconBridge);
         }
-        serial.writeStatusOk("p2pd", "P2P mesh discovery daemon active (Noise/mTLS :8080)");
+        serial.writeStatusOk("p2pd", "P2P mesh discovery daemon active (Noise/mTLS :8123)");
     }
 }
 

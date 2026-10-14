@@ -17,7 +17,7 @@ pub const BUFFER_SIZE_WRITER: usize = 32768;
 pub const BUFFER_SIZE_TLS_READ: usize = 65536;
 pub const BUFFER_SIZE_TLS_WRITE: usize = 32768;
 pub const ENTROPY_LEN: usize = std.crypto.tls.Client.Options.entropy_len;
-pub const DEFAULT_TIMESTAMP_SEC: i64 = 1789624912;
+pub const DEFAULT_TIMESTAMP_SEC: i64 = 1790680000;
 const DRAIN_TIMEOUT_ITERS: usize = 20_000_000;
 
 pub const TlsClientType = @import("tls_client.zig");
@@ -84,7 +84,7 @@ pub const TcpStreamAdapter = struct {
             serial.writeStatusOk("tls ", "TLS 1.3 SPKI pinning active");
         }
 
-        self.tls_client = try TlsClientType.init(
+        self.tls_client = TlsClientType.init(
             &self.reader_interface,
             &self.writer_interface,
             .{
@@ -97,7 +97,14 @@ pub const TcpStreamAdapter = struct {
                 .realtime_now = now_ts,
                 .allow_truncation_attacks = true,
             },
-        );
+        ) catch |err| {
+            if (err == error.CertificatePinMismatch) {
+                serial.writeString("[FATAL] tls: SPKI PIN MISMATCH for ");
+                serial.writeString(hostname);
+                serial.writeString("! Connection aborted.\n");
+            }
+            return err;
+        };
         self.connected = true;
     }
 

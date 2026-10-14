@@ -8,8 +8,9 @@ fn init_ush() {
     CLR_WARN = 15774780;
     CLR_CYAN = 3800806;
     CLR_BG = 0;
-    ush_cur_x = 20;
-    ush_cur_y = 36;
+    ush_win = sys_window_create("uOS Sovereign Shell (ush)", 1280, 800, 0);
+    ush_cur_x = 12;
+    ush_cur_y = 12;
 }
 
 init_ush();
@@ -19,20 +20,83 @@ fn ush_draw_header() {
 }
 
 fn ush_clear_screen() {
+    if (ush_win > 0) {
+        sys_window_draw_rect(ush_win, 0, 0, 1278, 782, CLR_BG);
+    }
+    ush_cur_x = 12;
+    ush_cur_y = 12;
     return 0;
 }
 
 fn ush_newline() {
+    ush_cur_x = 12;
+    ush_cur_y = ush_cur_y + 14;
+    if (ush_cur_y > 750) {
+        ush_clear_screen();
+    }
+    return 0;
+}
+
+fn ush_draw_text(str, fg) {
+    if (ush_win <= 0) { return 0; }
+    slen = len(str);
+    if (slen == 0) { return 0; }
+    sys_window_draw_string(ush_win, ush_cur_x, ush_cur_y, str, fg, CLR_BG);
+    ush_cur_x = ush_cur_x + (slen * 8);
     return 0;
 }
 
 fn console_write(str) {
     sys_serial_write(str);
+    if (ush_win <= 0) { return 0; }
+    rem = str;
+    while (len(rem) > 0) {
+        nl = find_str(rem, "\n");
+        if (nl < 0) {
+            cr = find_str(rem, "\r");
+            if (cr >= 0) {
+                rem = substr(rem, 0, cr);
+            }
+            ush_draw_text(rem, CLR_TEXT);
+            return 0;
+        }
+        line = substr(rem, 0, nl);
+        cr = find_str(line, "\r");
+        if (cr >= 0) {
+            line = substr(line, 0, cr);
+        }
+        ush_draw_text(line, CLR_TEXT);
+        ush_newline();
+        rem = substr(rem, nl + 1, len(rem));
+    }
     return 0;
 }
 
 fn console_writeln(str) {
-    console_write(str + "\r\n");
+    sys_serial_write(str + "\r\n");
+    if (ush_win <= 0) { return 0; }
+    if (find_str(str, "\n") < 0) {
+        ush_draw_text(str, CLR_TEXT);
+        ush_newline();
+        return 0;
+    }
+    rem = str;
+    while (len(rem) > 0) {
+        nl = find_str(rem, "\n");
+        if (nl < 0) {
+            ush_draw_text(rem, CLR_TEXT);
+            ush_newline();
+            return 0;
+        }
+        line = substr(rem, 0, nl);
+        cr = find_str(line, "\r");
+        if (cr >= 0) {
+            line = substr(line, 0, cr);
+        }
+        ush_draw_text(line, CLR_TEXT);
+        ush_newline();
+        rem = substr(rem, nl + 1, len(rem));
+    }
     return 0;
 }
 
@@ -222,8 +286,8 @@ fn cmd_mesh(arg) {
         return 0;
     }
     console_writeln("-- P2P Virtual Cluster Mesh --------------------");
-    console_writeln("* Transport : Noise/mTLS on TCP port 8080");
-    console_writeln("* Discovery : UDP beacon port 8080 (Ed25519 identity)");
+    console_writeln("* Transport : Noise/mTLS on TCP port 8123");
+    console_writeln("* Discovery : UDP beacon port 8123 (Ed25519 identity)");
     count = sys_peer_count();
     if (count <= 0) {
         console_writeln("* Peers     : 0 connected (beacon active)");
@@ -374,6 +438,7 @@ fn cmd_run(path) {
             if (cons == 0) {
                 console_writeln("[consent] Actor '" + path + "' requests CAP_WINDOW and CAP_STORAGE_READ.");
                 console_writeln("Grant permissions? [A]lways / [S]ession Only / [D]eny");
+                if (ush_win > 0) { sys_window_commit(); }
                 choice = read_consent();
                 if (choice == "always") {
                     sys_consent_record(path, 1);
@@ -412,6 +477,7 @@ fn cmd_ai(prompt) {
         return 0;
     }
     console_writeln("[ai] Querying Resident AI...");
+    if (ush_win > 0) { sys_window_commit(); }
     resp = sys_ai_prompt(prompt);
     if (len(resp) == 0) {
         console_writeln("[ai] No response or network error.");
@@ -517,18 +583,27 @@ fn eval_command(cmd) {
 
 fn draw_prompt() {
     sys_serial_write("ush> ");
+    if (ush_win > 0) {
+        ush_draw_text("ush> ", CLR_CYAN);
+        sys_window_commit();
+    }
     return 0;
 }
 
 fn handle_newline(buf) {
     sys_serial_write("\r\n");
+    if (ush_win > 0) {
+        ush_newline();
+    }
     if (len(buf) > 0) {
         if (buf == "exit") {
             console_writeln("Exiting µShell.");
+            if (ush_win > 0) { sys_window_close(ush_win); }
             return false;
         }
         if (buf == "quit") {
             console_writeln("Exiting µShell.");
+            if (ush_win > 0) { sys_window_close(ush_win); }
             return false;
         }
         eval_command(buf);
@@ -539,6 +614,13 @@ fn handle_newline(buf) {
 fn handle_backspace(buf) {
     if (len(buf) > 0) {
         sys_serial_write(char_to_str(8) + " " + char_to_str(8));
+        if (ush_win > 0) {
+            if (ush_cur_x >= 20) {
+                ush_cur_x = ush_cur_x - 8;
+                sys_window_draw_rect(ush_win, ush_cur_x, ush_cur_y, 8, 8, CLR_BG);
+                sys_window_commit();
+            }
+        }
         return substr(buf, 0, len(buf) - 1);
     }
     return buf;
@@ -547,6 +629,10 @@ fn handle_backspace(buf) {
 fn handle_printable(buf, c) {
     ch_str = char_to_str(c);
     sys_serial_write(ch_str);
+    if (ush_win > 0) {
+        ush_draw_text(ch_str, CLR_TEXT);
+        sys_window_commit();
+    }
     return buf + ch_str;
 }
 
@@ -588,7 +674,6 @@ fn ush_loop() {
 
 fn ush_main() {
     ush_draw_header();
-    ush_clear_screen();
     console_writeln("µShell 0.16.0");
     console_writeln("Type 'help' for commands.");
     console_writeln("");
